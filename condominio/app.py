@@ -1,386 +1,505 @@
 import sqlite3
-import pandas as pd
+import os
 import streamlit as st
 from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # ==========================================
 # 1. BASE DE DATOS Y CONFIGURACIÓN INICIAL
 # ==========================================
-st.set_page_config(page_title="Sistema de Condominio", page_icon="🏢", layout="wide")
+DB_NAME = "condominio.db"
 
-def obtener_conexion():
-    return sqlite3.connect("condominio.db")
+def get_db_connection():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def inicializar_db():
-    conn = obtener_conexion()
+def init_db():
+    conn = get_db_connection()
     cursor = conn.cursor()
-
-    # Tabla Configuración del Edificio (Permite editar datos desde la Web)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS configuracion (
-            id INTEGER PRIMARY KEY,
+    
+    # Tabla de Apartamentos
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS apartamentos (
+            id TEXT PRIMARY KEY,
+            propietario TEXT,
+            telefono TEXT,
+            alicuota REAL
+        )
+    ''')
+    
+    # Tabla de Gastos Comunes
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS gastos_comunes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mes INTEGER,
+            anio INTEGER,
+            descripcion TEXT,
+            monto REAL
+        )
+    ''')
+    
+    # Tabla de Gastos No Comunes
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS gastos_no_comunes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mes INTEGER,
+            anio INTEGER,
+            apartamento_id TEXT,
+            descripcion TEXT,
+            monto REAL
+        )
+    ''')
+    
+    # Tabla de Proveedores
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS proveedores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT,
             rif TEXT,
-            direccion TEXT,
-            logo_url TEXT
+            contacto TEXT
         )
-    """)
-
-    # Cargar datos por defecto del edificio si está vacía
-    cursor.execute("SELECT COUNT(*) FROM configuracion")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("""
-            INSERT INTO configuracion (id, nombre, rif, direccion, logo_url)
-            VALUES (1, 'Residencias El Roble', 'J-12345678-9', 'Av. Principal, Urb. Los Palos Grandes', 'https://cdn-icons-png.flaticon.com/512/25/25694.png')
-        """)
-
-    # Tabla Usuarios (Admin + 13 Apartamentos)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS usuarios (
-            usuario TEXT PRIMARY KEY,
-            clave TEXT,
-            propietario TEXT,
-            rol TEXT,
-            apto TEXT
-        )
-    """)
-
-    # Tabla Gastos Comunes
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS gastos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT,
-            concepto TEXT,
-            monto REAL,
-            proveedor TEXT
-        )
-    """)
-
-    # Tabla Pagos a Proveedores (Egresos)
-    cursor.execute("""
+    ''')
+    
+    # Tabla de Pagos a Proveedores
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS pagos_proveedores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proveedor_id INTEGER,
             fecha TEXT,
-            proveedor TEXT,
-            concepto TEXT,
+            descripcion TEXT,
             monto REAL,
-            referencia TEXT
+            metodo TEXT
         )
-    """)
-
-    # Tabla Pagos de Propietarios (Ingresos)
-    cursor.execute("""
+    ''')
+    
+    # Tabla de Pagos de Propietarios
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS pagos_propietarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            apto TEXT,
+            apartamento_id TEXT,
+            mes INTEGER,
+            anio INTEGER,
             fecha TEXT,
-            referencia TEXT,
             monto REAL,
-            metodo TEXT,
+            referencia TEXT,
             estado TEXT DEFAULT 'Pendiente'
         )
-    """)
+    ''')
+    
+    try:
+        cursor.execute("ALTER TABLE pagos_propietarios ADD COLUMN estado TEXT DEFAULT 'Pendiente'")
+    except sqlite3.OperationalError:
+        pass
 
-    # Usuarios iniciales
-    cursor.execute("SELECT COUNT(*) FROM usuarios")
+    # Cargar los 13 apartamentos con sus alícuotas correspondientes
+    cursor.execute("SELECT COUNT(*) FROM apartamentos")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO usuarios VALUES ('admin', 'admin123', 'Administrador General', 'Admin', 'N/A')")
-        
-        aptos_6 = ["1A", "1B", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B"]
-        for a in aptos_6:
-            cursor.execute("INSERT INTO usuarios VALUES (?, '123456', ?, 'Propietario', ?)", 
-                           (f"apto_{a.lower()}", f"Propietario Apt {a}", a))
-        
-        cursor.execute("INSERT INTO usuarios VALUES ('apto_2', '123456', 'Propietario Apt 2', 'Propietario', '2')")
-        cursor.execute("INSERT INTO usuarios VALUES ('apto_7', '123456', 'Propietario Apt 7', 'Propietario', '7')")
-        cursor.execute("INSERT INTO usuarios VALUES ('apto_ph', '123456', 'Propietario PH', 'Propietario', 'PH')")
-
+        apts_iniciales = [
+            ('1A', 'Propietario 1A', '+584140000000', 0.06),
+            ('1B', 'Propietario 1B', '+584140000000', 0.06),
+            ('3A', 'Propietario 3A', '+584140000000', 0.06),
+            ('3B', 'Propietario 3B', '+584140000000', 0.06),
+            ('4A', 'Propietario 4A', '+584140000000', 0.06),
+            ('4B', 'Propietario 4B', '+584140000000', 0.06),
+            ('5A', 'Propietario 5A', '+584140000000', 0.06),
+            ('5B', 'Propietario 5B', '+584140000000', 0.06),
+            ('6A', 'Propietario 6A', '+584140000000', 0.06),
+            ('6B', 'Propietario 6B', '+584140000000', 0.06),
+            ('2',  'Propietario 2',  '+584140000000', 0.12),
+            ('7',  'Propietario 7',  '+584140000000', 0.12),
+            ('PH', 'Propietario PH', '+584140000000', 0.16)
+        ]
+        cursor.executemany("INSERT INTO apartamentos VALUES (?,?,?,?)", apts_iniciales)
+    
     conn.commit()
     conn.close()
 
-def obtener_datos_edificio():
-    conn = obtener_conexion()
-    cursor = conn.cursor()
-    cursor.execute("SELECT nombre, rif, direccion, logo_url FROM configuracion WHERE id = 1")
-    row = cursor.fetchone()
+init_db()
+
+# ==========================================
+# 2. GENERACIÓN DE RECIBOS EN PDF
+# ==========================================
+def generar_pdf_recibo(apt_id, mes, anio, edif_nombre, edif_rif, logo_path, estado_pago="Pendiente"):
+    conn = get_db_connection()
+    apt = conn.execute("SELECT * FROM apartamentos WHERE id = ?", (apt_id,)).fetchone()
+    gastos_comunes = conn.execute("SELECT * FROM gastos_comunes WHERE mes = ? AND anio = ?", (mes, anio)).fetchall()
+    gastos_no_comunes = conn.execute("SELECT * FROM gastos_no_comunes WHERE mes = ? AND anio = ? AND apartamento_id = ?", (mes, anio, apt_id)).fetchall()
     conn.close()
-    if row:
-        return {"nombre": row[0], "rif": row[1], "direccion": row[2], "logo_url": row[3]}
-    return {"nombre": "Condominio", "rif": "N/A", "direccion": "", "logo_url": ""}
 
-inicializar_db()
+    filename = f"Recibo_{apt_id}_{mes}_{anio}.pdf"
+    doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    styles = getSampleStyleSheet()
 
-# Alícuotas
-ALICUOTAS = {
-    "1A": 0.06, "1B": 0.06,
-    "3A": 0.06, "3B": 0.06,
-    "4A": 0.06, "4B": 0.06,
-    "5A": 0.06, "5B": 0.06,
-    "6A": 0.06, "6B": 0.06,
-    "2": 0.12,
-    "7": 0.12,
-    "PH": 0.16
-}
+    header_data = []
+    info_text = f"<b>{edif_nombre}</b><br/>RIF: {edif_rif}<br/><b>RECIBO DE CONDOMINIO</b><br/>Período: {mes}/{anio}"
+    p_info = Paragraph(info_text, styles['Normal'])
+    
+    if logo_path and os.path.exists(logo_path):
+        img = Image(logo_path, width=70, height=70)
+        header_data.append([img, p_info])
+    else:
+        header_data.append(["", p_info])
+
+    header_table = Table(header_data, colWidths=[90, 450])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT')
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 15))
+
+    p_datos = f"<b>Apartamento:</b> {apt['id']} | <b>Propietario:</b> {apt['propietario']} | <b>Alícuota:</b> {apt['alicuota']*100:.1f}%"
+    story.append(Paragraph(p_datos, styles['Normal']))
+    story.append(Spacer(1, 10))
+
+    if estado_pago == "Verificado":
+        p_estado = Paragraph("<font color='#2E7D32'><b>STATUS: CANCELADO / VERIFICADO ✅</b></font>", styles['Heading2'])
+    else:
+        p_estado = Paragraph("<font color='#C62828'><b>STATUS: PENDIENTE DE PAGO ⏳</b></font>", styles['Heading2'])
+    story.append(p_estado)
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("<b><u>Gastos Comunes del Mes</u></b>", styles['Heading3']))
+    t_comunes_data = [["Descripción", "Monto Total", f"Cuota Apt ({apt['alicuota']*100:.1f}%)"]]
+    total_comun_global = 0
+    total_comun_apt = 0
+
+    for g in gastos_comunes:
+        m_apt = g['monto'] * apt['alicuota']
+        total_comun_global += g['monto']
+        total_comun_apt += m_apt
+        t_comunes_data.append([g['descripcion'], f"${g['monto']:.2f}", f"${m_apt:.2f}"])
+
+    t_comunes_data.append(["TOTAL GASTOS COMUNES", f"${total_comun_global:.2f}", f"${total_comun_apt:.2f}"])
+    
+    t_comunes = Table(t_comunes_data, colWidths=[300, 120, 120])
+    t_comunes.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#0288D1")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold')
+    ]))
+    story.append(t_comunes)
+    story.append(Spacer(1, 15))
+
+    total_no_comun = 0
+    if gastos_no_comunes:
+        story.append(Paragraph("<b><u>Gastos No Comunes (Individuales)</u></b>", styles['Heading3']))
+        t_nocomun_data = [["Descripción", "Monto"]]
+        for gnc in gastos_no_comunes:
+            total_no_comun += gnc['monto']
+            t_nocomun_data.append([gnc['descripcion'], f"${gnc['monto']:.2f}"])
+        t_nocomun_data.append(["TOTAL GASTOS NO COMUNES", f"${total_no_comun:.2f}"])
+
+        t_nocomun = Table(t_nocomun_data, colWidths=[420, 120])
+        t_nocomun.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#7CB342")),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold')
+        ]))
+        story.append(t_nocomun)
+        story.append(Spacer(1, 15))
+
+    total_pagar = total_comun_apt + total_no_comun
+    total_style = ParagraphStyle('TotalStyle', parent=styles['Normal'], fontSize=12, leading=14, textColor=colors.HexColor("#D32F2F"))
+    p_total = Paragraph(f"<b>TOTAL A CANCELAR: ${total_pagar:.2f}</b>", total_style)
+    story.append(p_total)
+
+    doc.build(story)
+    return filename, total_pagar
 
 # ==========================================
-# 2. ENCABEZADO Y AUTENTICACIÓN
+# 3. INTERFAZ GRÁFICA (STREAMLIT)
 # ==========================================
-datos_edificio = obtener_datos_edificio()
+st.set_page_config(page_title="Residencias El Roble", layout="wide")
 
-col_logo, col_header = st.columns([1, 4])
-with col_logo:
-    if datos_edificio["logo_url"]:
-        st.image(datos_edificio["logo_url"], width=100)
-with col_header:
-    st.title(datos_edificio["nombre"])
-    st.caption(f"**RIF:** {datos_edificio['rif']} | **Dirección:** {datos_edificio['direccion']}")
+st.sidebar.title("🏢 Menú Principal")
+opcion = st.sidebar.radio("Seleccione una opción:", [
+    "Configuración Edificio",
+    "Apartamentos",
+    "Registrar Gastos",
+    "Generar Recibos y WhatsApp",
+    "Registrar Pago de Propietario",
+    "Verificar Pagos (Administrador)",
+    "Consulta de Propietario",
+    "Proveedores y Sus Pagos",
+    "Reportes"
+])
 
-st.divider()
+if opcion == "Configuración Edificio":
+    st.header("⚙️ Configuración del Edificio")
+    nombre_edif = st.text_input("Nombre del Edificio", value=st.session_state.get('edif_nombre', 'Residencias El Roble'))
+    rif_edif = st.text_input("RIF del Edificio", value=st.session_state.get('edif_rif', 'J-12345678-9'))
+    logo = st.file_uploader("Cargar Logo (PNG o JPG)", type=["png", "jpg", "jpeg"])
+    
+    if logo:
+        with open("logo_temp.png", "wb") as f:
+            f.write(logo.getbuffer())
+        st.success("Logo cargado con éxito.")
+        st.image("logo_temp.png", width=150)
+    
+    if st.button("Guardar Datos"):
+        st.session_state['edif_nombre'] = nombre_edif
+        st.session_state['edif_rif'] = rif_edif
+        st.success("Configuración guardada correctamente.")
 
-if "usuario_actual" not in st.session_state:
-    st.session_state.usuario_actual = None
-
-def validar_login(usr, pwd):
-    conn = obtener_conexion()
-    cursor = conn.cursor()
-    cursor.execute("SELECT usuario, clave, propietario, rol, apto FROM usuarios WHERE usuario = ? AND clave = ?", (usr, pwd))
-    res = cursor.fetchone()
+elif opcion == "Apartamentos":
+    st.header("🏠 Gestión de Apartamentos")
+    conn = get_db_connection()
+    apts = conn.execute("SELECT id, propietario, telefono, alicuota FROM apartamentos").fetchall()
     conn.close()
-    return res
-
-if st.session_state.usuario_actual is None:
-    st.subheader("🔐 Acceso a la Plataforma Web")
-
-    col_form, col_info = st.columns([1, 1])
-    with col_form:
-        with st.form("form_login"):
-            u_input = st.text_input("Usuario")
-            p_input = st.text_input("Contraseña", type="password")
-            btn_submit = st.form_submit_button("Entrar", type="primary")
-
-            if btn_submit:
-                user_data = validar_login(u_input, p_input)
-                if user_data:
-                    st.session_state.usuario_actual = {
-                        "usuario": user_data[0],
-                        "nombre": user_data[2],
-                        "rol": user_data[3],
-                        "apto": user_data[4]
-                    }
-                    st.success("¡Bienvenido!")
-                    st.rerun()
-                else:
-                    st.error("Usuario o contraseña incorrectos.")
     
-    with col_info:
-        st.info("""
-        🔑 **Credenciales de prueba:**
-        - **Admin:** Usuario `admin` | Clave `admin123`
-        - **Propietarios:** Clave genérica `123456`
-        """)
-    st.stop()
-
-# Usuario en sesión
-user = st.session_state.usuario_actual
-st.sidebar.write(f"👤 **{user['nombre']}**")
-st.sidebar.write(f"Rol: **{user['rol']}**")
-if user["apto"] != "N/A":
-    st.sidebar.write(f"Apartamento: **{user['apto']}**")
-
-if st.sidebar.button("🚪 Cerrar Sesión"):
-    st.session_state.usuario_actual = None
-    st.rerun()
-
-# ==========================================
-# 3. VISTA ADMINISTRADOR
-# ==========================================
-if user["rol"] == "Admin":
-    st.title("⚙️ Panel de Control de Administración")
+    tabla_apts = [{"Apt": a['id'], "Propietario": a['propietario'], "Teléfono": a['telefono'], "Alícuota (%)": f"{a['alicuota']*100:.1f}%"} for a in apts]
+    st.table(tabla_apts)
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📝 Cargar Gastos", 
-        "💳 Conciliar Pagos Propietarios", 
-        "🚚 Pagos a Proveedores", 
-        "📊 Resumen del Mes", 
-        "👥 Usuarios y Claves",
-        "🏢 Editar Datos del Edificio"
-    ])
+    st.subheader("Editar Datos de un Propietario")
+    lista_ids = [a['id'] for a in apts]
+    apt_sel = st.selectbox("Seleccione el Apartamento:", lista_ids)
+    nuevo_prop = st.text_input("Nombre del Propietario")
+    nuevo_tel = st.text_input("Teléfono (ej. +584141234567)")
+    
+    if st.button("Actualizar Propietario"):
+        if nuevo_prop and nuevo_tel:
+            conn = get_db_connection()
+            conn.execute("UPDATE apartamentos SET propietario = ?, telefono = ? WHERE id = ?", (nuevo_prop, nuevo_tel, apt_sel))
+            conn.commit()
+            conn.close()
+            st.success("Propietario actualizado.")
+            st.rerun()
 
-    # 1. CARGAR GASTOS
-    with tab1:
-        st.subheader("Registrar nuevo gasto común")
-        with st.form("form_gasto", clear_on_submit=True):
-            concepto = st.text_input("Concepto del gasto")
-            proveedor = st.text_input("Nombre del Proveedor / Empresa")
-            monto = st.number_input("Monto total ($)", min_value=0.01, step=10.0, format="%.2f")
-            fecha = st.date_input("Fecha", datetime.now())
+elif opcion == "Registrar Gastos":
+    st.header("💸 Cargar Gastos del Mes")
+    col1, col2 = st.columns(2)
+    with col1:
+        mes = st.number_input("Mes (1-12)", min_value=1, max_value=12, value=datetime.now().month)
+    with col2:
+        anio = st.number_input("Año", min_value=2020, max_value=2030, value=datetime.now().year)
+
+    tipo_gasto = st.radio("Tipo de Gasto:", ["Común (Aplica para todos por Alícuota)", "No Común (Específico para un Apt)"])
+    desc = st.text_input("Descripción del Gasto")
+    monto = st.number_input("Monto ($)", min_value=0.0, format="%.2f")
+
+    apt_destino = None
+    if tipo_gasto == "No Común (Específico para un Apt)":
+        conn = get_db_connection()
+        apts = [r['id'] for r in conn.execute("SELECT id FROM apartamentos").fetchall()]
+        conn.close()
+        apt_destino = st.selectbox("Apartamento Responsable:", apts)
+
+    if st.button("Guardar Gasto"):
+        if desc and monto > 0:
+            conn = get_db_connection()
+            if tipo_gasto.startswith("Común"):
+                conn.execute("INSERT INTO gastos_comunes (mes, anio, descripcion, monto) VALUES (?,?,?,?)", (mes, anio, desc, monto))
+            else:
+                conn.execute("INSERT INTO gastos_no_comunes (mes, anio, apartamento_id, descripcion, monto) VALUES (?,?,?,?,?)", (mes, anio, apt_destino, desc, monto))
+            conn.commit()
+            conn.close()
+            st.success("Gasto registrado exitosamente.")
+
+elif opcion == "Generar Recibos y WhatsApp":
+    st.header("📄 Recibos y Envío por WhatsApp")
+    col1, col2 = st.columns(2)
+    with col1:
+        mes = st.number_input("Mes", min_value=1, max_value=12, value=datetime.now().month)
+    with col2:
+        anio = st.number_input("Año", min_value=2020, max_value=2030, value=datetime.now().year)
+
+    conn = get_db_connection()
+    apts = conn.execute("SELECT * FROM apartamentos").fetchall()
+
+    edif_n = st.session_state.get('edif_nombre', 'Residencias El Roble')
+    edif_r = st.session_state.get('edif_rif', 'J-12345678-9')
+    logo_p = "logo_temp.png" if os.path.exists("logo_temp.png") else None
+
+    for apt in apts:
+        pago = conn.execute("SELECT estado FROM pagos_propietarios WHERE apartamento_id = ? AND mes = ? AND anio = ?", (apt['id'], mes, anio)).fetchone()
+        estado_pago = pago['estado'] if pago else "Pendiente"
+
+        with st.expander(f"Apartamento {apt['id']} - {apt['propietario']} | Status: {'✅ CANCELADO' if estado_pago == 'Verificado' else '⏳ PENDIENTE'}"):
+            filename, total = generar_pdf_recibo(apt['id'], mes, anio, edif_n, edif_r, logo_p, estado_pago)
             
-            if st.form_submit_button("Guardar Gasto", type="primary"):
-                if concepto and monto > 0:
-                    conn = obtener_conexion()
-                    c = conn.cursor()
-                    c.execute("INSERT INTO gastos (fecha, concepto, monto, proveedor) VALUES (?, ?, ?, ?)", 
-                              (str(fecha), concepto, monto, proveedor))
-                    conn.commit()
-                    conn.close()
-                    st.success("Gasto registrado correctamente.")
-                    st.rerun()
+            col_a, col_b = st.columns(2)
+            with col_a:
+                with open(filename, "rb") as pdf_file:
+                    st.download_button(
+                        label=f"📥 Descargar PDF ({apt['id']})",
+                        data=pdf_file,
+                        file_name=filename,
+                        mime="application/pdf"
+                    )
+            with col_b:
+                tel_clean = apt['telefono'].replace("+", "").replace(" ", "")
+                mensaje = f"Hola {apt['propietario']}, adjunto su recibo de condominio {apt['id']} del mes {mes}/{anio}. Total a pagar: ${total:.2f}. Status: {estado_pago.upper()}."
+                mensaje_encoded = mensaje.replace(" ", "%20")
+                url_wa = f"https://wa.me/{tel_clean}?text={mensaje_encoded}"
+                st.markdown(f"[📲 Enviar por WhatsApp]({url_wa})", unsafe_allow_html=True)
+                
+    conn.close()
 
-    # 2. PAGOS DE PROPIETARIOS
-    with tab2:
-        st.subheader("Reportes de Pago Recibidos de los Propietarios")
-        conn = obtener_conexion()
-        df_pagos = pd.read_sql_query("SELECT * FROM pagos_propietarios ORDER BY id DESC", conn)
-        conn.close()
-        
-        if not df_pagos.empty:
-            st.dataframe(df_pagos, use_container_width=True)
+elif opcion == "Registrar Pago de Propietario":
+    st.header("💵 Registrar Pago Recibido de Propietario")
+    conn = get_db_connection()
+    apts = [r['id'] for r in conn.execute("SELECT id FROM apartamentos").fetchall()]
+    conn.close()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        apt_sel = st.selectbox("Apartamento:", apts)
+        mes = st.number_input("Mes Pagado", min_value=1, max_value=12, value=datetime.now().month)
+        anio = st.number_input("Año Pagado", min_value=2020, max_value=2030, value=datetime.now().year)
+    with col2:
+        monto_pago = st.number_input("Monto Recibido ($)", min_value=0.0, format="%.2f")
+        fecha_pago = st.date_input("Fecha de Pago")
+        ref_pago = st.text_input("Número de Referencia/Transferencia")
+
+    if st.button("Registrar Pago"):
+        if monto_pago > 0:
+            conn = get_db_connection()
+            conn.execute("INSERT INTO pagos_propietarios (apartamento_id, mes, anio, fecha, monto, referencia, estado) VALUES (?,?,?,?,?,?,'Pendiente')",
+                         (apt_sel, mes, anio, str(fecha_pago), monto_pago, ref_pago))
+            conn.commit()
+            conn.close()
+            st.success("Pago registrado. Estado inicial: Pendiente de verificación por el Administrador.")
+
+elif opcion == "Verificar Pagos (Administrador)":
+    st.header("🔍 Panel de Verificación de Pagos")
+    st.write("Revise las referencias bancarias y apruebe los pagos de los propietarios.")
+    
+    conn = get_db_connection()
+    pagos_pendientes = conn.execute("SELECT * FROM pagos_propietarios WHERE estado = 'Pendiente'").fetchall()
+
+    if not pagos_pendientes:
+        st.info("🎉 ¡No hay pagos pendientes por verificar en este momento!")
+    else:
+        for p in pagos_pendientes:
+            col1, col2, col3 = st.columns([3, 2, 2])
+            with col1:
+                st.markdown(f"**Apt {p['apartamento_id']}** | Período: {p['mes']}/{p['anio']}")
+                st.caption(f"Ref: {p['referencia']} | Fecha: {p['fecha']}")
+            with col2:
+                st.subheader(f"${p['monto']:.2f}")
+            with col3:
+                if st.button(f"✅ Aprobar Pago #{p['id']}", key=f"btn_{p['id']}"):
+                    conn.execute("UPDATE pagos_propietarios SET estado = 'Verificado' WHERE id = ?", (p['id'],))
+                    conn.commit()
+                    st.success(f"¡Pago de Apt {p['apartamento_id']} verificado con éxito!")
+                    st.rerun()
+            st.divider()
+    conn.close()
+
+elif opcion == "Consulta de Propietario":
+    st.header("🔎 Consultar Recibo / Estado de Cuenta")
+    st.write("Consulte el estado de su apartamento y descargue su recibo verificado.")
+    
+    conn = get_db_connection()
+    apts = [r['id'] for r in conn.execute("SELECT id FROM apartamentos").fetchall()]
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        apt_sel = st.selectbox("Seleccione su Apartamento:", apts)
+    with col2:
+        mes = st.number_input("Mes a consultar", min_value=1, max_value=12, value=datetime.now().month)
+    with col3:
+        anio = st.number_input("Año a consultar", min_value=2020, max_value=2030, value=datetime.now().year)
+
+    pago = conn.execute("SELECT * FROM pagos_propietarios WHERE apartamento_id = ? AND mes = ? AND anio = ?", (apt_sel, mes, anio)).fetchone()
+    conn.close()
+
+    edif_n = st.session_state.get('edif_nombre', 'Residencias El Roble')
+    edif_r = st.session_state.get('edif_rif', 'J-12345678-9')
+    logo_p = "logo_temp.png" if os.path.exists("logo_temp.png") else None
+
+    if pago:
+        estado = pago['estado']
+        if estado == "Verificado":
+            st.success("🟢 SU PAGO HA SIDO VERIFICADO Y SU RECIBO SE ENCUENTRA CANCELADO.")
         else:
-            st.info("No hay pagos reportados por propietarios aún.")
+            st.warning("🟡 SU PAGO HA SIDO REGISTRADO Y ESTÁ PENDIENTE POR REVISIÓN DEL ADMINISTRADOR.")
+    else:
+        estado = "Pendiente"
+        st.error("🔴 NO SE HA REGISTRADO NINGÚN PAGO PARA ESTE PERÍODO AÚN.")
 
-    # 3. PAGOS A PROVEEDORES
-    with tab3:
-        st.subheader("Registrar Pago Saliente a Proveedor")
-        with st.form("form_prov", clear_on_submit=True):
-            prov = st.text_input("Proveedor")
-            conc = st.text_input("Concepto del Pago")
-            monto_p = st.number_input("Monto Pagado ($)", min_value=0.01, format="%.2f")
-            ref_p = st.text_input("Número de Referencia Bancaria")
-            fecha_p = st.date_input("Fecha de Pago", datetime.now())
+    filename, total = generar_pdf_recibo(apt_sel, mes, anio, edif_n, edif_r, logo_p, estado)
+    
+    with open(filename, "rb") as pdf_file:
+        st.download_button(
+            label=f"📥 Descargar Recibo Oficial (Apt {apt_sel})",
+            data=pdf_file,
+            file_name=filename,
+            mime="application/pdf"
+        )
 
-            if st.form_submit_button("Registrar Egreso", type="primary"):
-                if prov and monto_p > 0:
-                    conn = obtener_conexion()
-                    c = conn.cursor()
-                    c.execute("INSERT INTO pagos_proveedores (fecha, proveedor, concepto, monto, referencia) VALUES (?, ?, ?, ?, ?)",
-                              (str(fecha_p), prov, conc, monto_p, ref_p))
-                    conn.commit()
-                    conn.close()
-                    st.success("Pago a proveedor guardado.")
-                    st.rerun()
-        
-        st.divider()
-        st.write("### Historial de Pagos a Proveedores")
-        conn = obtener_conexion()
-        df_prov = pd.read_sql_query("SELECT * FROM pagos_proveedores ORDER BY id DESC", conn)
-        conn.close()
-        st.dataframe(df_prov, use_container_width=True)
-
-    # 4. RESUMEN DEL MES
-    with tab4:
-        st.subheader("Cálculo de Cuotas y Alícuotas")
-        conn = obtener_conexion()
-        df_gastos = pd.read_sql_query("SELECT * FROM gastos", conn)
-        conn.close()
-
-        total_gastos = df_gastos["monto"].sum() if not df_gastos.empty else 0.0
-        st.metric("Total Gastos del Mes", f"${total_gastos:,.2f} USD")
-        
-        if not df_gastos.empty:
-            cuotas = []
-            for apto, alicuota in ALICUOTAS.items():
-                cuotas.append({
-                    "Apartamento": apto,
-                    "Alícuota": f"{int(alicuota*100)}%",
-                    "Monto a Pagar ($)": round(total_gastos * alicuota, 2)
-                })
-            st.table(pd.DataFrame(cuotas))
-
-    # 5. GESTIÓN DE USUARIOS Y CLAVES
-    with tab5:
-        st.subheader("Lista de Propietarios y Credenciales")
-        conn = obtener_conexion()
-        df_users = pd.read_sql_query("SELECT usuario, propietario, rol, apto, clave FROM usuarios", conn)
-        conn.close()
-        st.dataframe(df_users, use_container_width=True)
-
-    # 6. CONFIGURACIÓN DE DATOS DEL EDIFICIO (NUEVA PESTAÑA)
-    with tab6:
-        st.subheader("Modificar Información General del Condominio")
-        with st.form("form_edificio"):
-            nuevo_nombre = st.text_input("Nombre del Edificio / Condominio", value=datos_edificio["nombre"])
-            nuevo_rif = st.text_input("RIF / Documento de Identificación Fiscal", value=datos_edificio["rif"])
-            nueva_direccion = st.text_area("Dirección Física", value=datos_edificio["direccion"])
-            nuevo_logo = st.text_input("Enlace / URL de la Imagen o Logo", value=datos_edificio["logo_url"])
-
-            if st.form_submit_button("Guardar Cambios", type="primary"):
-                conn = obtener_conexion()
-                c = conn.cursor()
-                c.execute("""
-                    UPDATE configuracion 
-                    SET nombre = ?, rif = ?, direccion = ?, logo_url = ?
-                    WHERE id = 1
-                """, (nuevo_nombre, nuevo_rif, nueva_direccion, nuevo_logo))
+elif opcion == "Proveedores y Sus Pagos":
+    st.header("🚚 Proveedores y Pagos")
+    sub_menu = st.tabs(["Registrar Proveedor", "Registrar Pago a Proveedor"])
+    
+    with sub_menu[0]:
+        prov_nombre = st.text_input("Nombre / Razón Social")
+        prov_rif = st.text_input("RIF / Identificación")
+        prov_contacto = st.text_input("Teléfono o Contacto")
+        if st.button("Guardar Proveedor"):
+            if prov_nombre:
+                conn = get_db_connection()
+                conn.execute("INSERT INTO proveedores (nombre, rif, contacto) VALUES (?,?,?)", (prov_nombre, prov_rif, prov_contacto))
                 conn.commit()
                 conn.close()
-                st.success("¡Datos del edificio actualizados en la base de datos!")
-                st.rerun()
-
-# ==========================================
-# 4. VISTA PROPIETARIO
-# ==========================================
-else:
-    apto_user = user["apto"]
-    alicuota_user = ALICUOTAS[apto_user]
-    st.title(f"🏠 Panel del Apartamento {apto_user}")
-    
-    tab1, tab2, tab3 = st.tabs(["📄 Mi Recibo de Condominio", "💳 Reportar Pago", "🔑 Cambiar Mi Clave"])
-    
-    conn = obtener_conexion()
-    df_gastos = pd.read_sql_query("SELECT * FROM gastos", conn)
-    conn.close()
-
-    total_gastos = df_gastos["monto"].sum() if not df_gastos.empty else 0.0
-    cuota_personal = total_gastos * alicuota_user
-    
-    with tab1:
-        st.subheader(f"Recibo Mensual - Apt {apto_user}")
-        col1, col2 = st.columns(2)
-        col1.metric("Alícuota Asignada", f"{int(alicuota_user * 100)}%")
-        col2.metric("Total a Pagar", f"${cuota_personal:,.2f} USD")
+                st.success("Proveedor registrado.")
+                
+    with sub_menu[1]:
+        conn = get_db_connection()
+        provs = conn.execute("SELECT * FROM proveedores").fetchall()
+        conn.close()
         
-        st.divider()
-        st.write("### Desglose de Gastos Comunes")
-        if not df_gastos.empty:
-            df_gastos["Mi Cuota ($)"] = df_gastos["monto"] * alicuota_user
-            st.dataframe(df_gastos[["fecha", "concepto", "proveedor", "monto", "Mi Cuota ($)"]], use_container_width=True)
-        else:
-            st.info("No hay gastos registrados este mes.")
+        if provs:
+            prov_dict = {f"{p['nombre']} ({p['rif']})": p['id'] for p in provs}
+            prov_sel = st.selectbox("Seleccionar Proveedor:", list(prov_dict.keys()))
+            monto_prov = st.number_input("Monto Pagado ($)", min_value=0.0, format="%.2f")
+            desc_prov = st.text_input("Concepto / Descripción del Pago")
+            metodo_prov = st.selectbox("Método de Pago", ["Transferencia", "Efectivo", "Pago Móvil", "Otro"])
+            fecha_prov = st.date_input("Fecha")
 
-    with tab2:
-        st.subheader("Reportar Pago Realizado")
-        with st.form("form_pago_prop", clear_on_submit=True):
-            ref = st.text_input("Número de Referencia / Transacción")
-            monto_pagado = st.number_input("Monto Pagado ($)", value=float(cuota_personal), format="%.2f")
-            metodo = st.selectbox("Método de Pago", ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo USD"])
-            
-            if st.form_submit_button("Enviar Reporte de Pago", type="primary"):
-                if ref and monto_pagado > 0:
-                    conn = obtener_conexion()
-                    c = conn.cursor()
-                    c.execute("""
-                        INSERT INTO pagos_propietarios (apto, fecha, referencia, monto, metodo, estado)
-                        VALUES (?, ?, ?, ?, ?, 'Pendiente')
-                    """, (apto_user, str(datetime.now().strftime("%Y-%m-%d")), ref, monto_pagado, metodo))
+            if st.button("Registrar Pago a Proveedor"):
+                if monto_prov > 0:
+                    conn = get_db_connection()
+                    conn.execute("INSERT INTO pagos_proveedores (proveedor_id, fecha, descripcion, monto, metodo) VALUES (?,?,?,?,?)",
+                                 (prov_dict[prov_sel], str(fecha_prov), desc_prov, monto_prov, metodo_prov))
                     conn.commit()
                     conn.close()
-                    st.success("¡Pago reportado con éxito!")
-                else:
-                    st.warning("Escribe el número de referencia.")
+                    st.success("Pago a proveedor registrado.")
 
-    with tab3:
-        st.subheader("Cambiar Contraseña de Acceso")
-        with st.form("form_cambio_clave", clear_on_submit=True):
-            nueva_clave = st.text_input("Nueva Contraseña", type="password")
-            confirmar = st.text_input("Confirmar Nueva Contraseña", type="password")
+elif opcion == "Reportes":
+    st.header("📊 Reportes y Consultas")
+    tipo_rep = st.selectbox("Seleccione el reporte:", ["Pagos de Propietarios", "Pagos a Proveedores"])
+    conn = get_db_connection()
+
+    if tipo_rep == "Pagos de Propietarios":
+        pagos = conn.execute("SELECT apartamento_id, mes, anio, fecha, monto, referencia, estado FROM pagos_propietarios").fetchall()
+        datos_tabla = [{"Apt": p['apartamento_id'], "Mes": p['mes'], "Año": p['anio'], "Fecha": p['fecha'], "Monto ($)": f"${p['monto']:.2f}", "Referencia": p['referencia'], "Estado": p['estado']} for p in pagos]
+        st.subheader("Historial de Pagos Recibidos")
+        st.table(datos_tabla)
+        total = sum([p['monto'] for p in pagos])
+        st.metric("Total Registrado", f"${total:.2f}")
             
-            if st.form_submit_button("Actualizar Clave"):
-                if nueva_clave and nueva_clave == confirmar:
-                    conn = obtener_conexion()
-                    c = conn.cursor()
-                    c.execute("UPDATE usuarios SET clave = ? WHERE usuario = ?", (nueva_clave, user["usuario"]))
-                    conn.commit()
-                    conn.close()
-                    st.success("Contraseña actualizada correctamente.")
-                else:
-                    st.error("Las contraseñas no coinciden.")
+    elif tipo_rep == "Pagos a Proveedores":
+        query = """
+        SELECT p.nombre as proveedor, p.rif as rif, pp.fecha as fecha, pp.descripcion as descripcion, pp.monto as monto, pp.metodo as metodo
+        FROM pagos_proveedores pp
+        JOIN proveedores p ON pp.proveedor_id = p.id
+        """
+        pagos_p = conn.execute(query).fetchall()
+        datos_tabla = [{"Proveedor": p['proveedor'], "RIF": p['rif'], "Fecha": p['fecha'], "Concepto": p['descripcion'], "Monto ($)": f"${p['monto']:.2f}", "Método": p['metodo']} for p in pagos_p]
+        st.subheader("Historial de Pagos a Proveedores")
+        st.table(datos_tabla)
+        total = sum([p['monto'] for p in pagos_p])
+        st.metric("Total Pagado a Proveedores", f"${total:.2f}")
+
+    conn.close()
