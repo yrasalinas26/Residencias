@@ -66,11 +66,16 @@ def inicializar_bd():
         );
         """)
 
+        # VERIFICACIÓN Y MIGRACIÓN DE COLUMNAS EN 'gastos'
         cursor.execute("PRAGMA table_info(gastos)")
         columnas = [col[1] for col in cursor.fetchall()]
+        
+        if 'periodo' not in columnas:
+            cursor.execute("ALTER TABLE gastos ADD COLUMN periodo TEXT")
         if 'apto_no_comun' not in columnas:
             cursor.execute("ALTER TABLE gastos ADD COLUMN apto_no_comun TEXT")
 
+        # Datos iniciales si la BD está vacía
         cursor.execute("SELECT COUNT(*) FROM edificio")
         if cursor.fetchone()[0] == 0:
             cursor.execute("INSERT INTO edificio VALUES (1, 'RESIDENCIAS EL PARQUE', 'J-12345678-9', 'Av. Principal, Calle 4')")
@@ -105,17 +110,15 @@ def get_apartamentos():
     with get_connection() as conn:
         return pd.read_sql("SELECT * FROM apartamentos ORDER BY id", conn)
 
-# --- SISTEMA DE AUTENTICACIÓN (LOGIN) ---
+# --- LOGIN ---
 if 'autenticado' not in st.session_state:
     st.session_state['autenticado'] = False
     st.session_state['rol'] = None
 
 if not st.session_state['autenticado']:
     st.title("🔐 Acceso al Sistema de Condominio")
-    
     tipo_usuario = st.radio("Seleccione el tipo de usuario:", ["Administrador", "Vecino / Propietario"])
     clave = st.text_input("Ingrese la clave de acceso:", type="password")
-    
     if st.button("Iniciar Sesión"):
         if tipo_usuario == "Administrador" and clave == "admin123":
             st.session_state['autenticado'] = True
@@ -129,7 +132,7 @@ if not st.session_state['autenticado']:
             st.error("❌ Clave incorrecta para el perfil seleccionado.")
     st.stop()
 
-# --- MENÚ SEGÚN ROL ---
+# --- MENÚ DE NAVEGACIÓN ---
 st.sidebar.title("🏢 Menú Condominio")
 st.sidebar.write(f"**Usuario:** {st.session_state['rol']}")
 
@@ -154,16 +157,14 @@ else:
 
 edificio = get_edificio()
 
-# --- MÓDULO 1: GASTOS ---
+# --- MÓDULO 1: REGISTRAR GASTOS ---
 if opcion == "1. Registrar Gastos del Mes":
     st.header("📝 Cargar Gastos Comunes y No Comunes")
-    
     col1, col2 = st.columns(2)
     with col1:
         periodo = st.text_input("Período (Año-Mes):", "2026-05")
         descripcion = st.text_input("Descripción del Gasto:")
         monto = st.number_input("Monto ($):", min_value=0.0, step=10.0)
-    
     with col2:
         tipo_gasto = st.selectbox("Tipo de Gasto:", ["Común (Aplica a todos por alícuota)", "No Común (Aplica a un solo Apto)"])
         apto_destino = None
@@ -190,10 +191,9 @@ if opcion == "1. Registrar Gastos del Mes":
         df_gastos = pd.read_sql("SELECT * FROM gastos WHERE periodo = ?", conn, params=(periodo,))
     st.dataframe(df_gastos, use_container_width=True)
 
-# --- MÓDULO 2: RECIBOS & WHATSAPP / IMPRESIÓN PDF ---
+# --- MÓDULO 2: RECIBOS ---
 elif opcion == "2. Generar Recibo & WhatsApp / PDF":
     st.header("📄 Generador de Recibos de Condominio")
-    
     col_p, col_a = st.columns(2)
     with col_p:
         periodo = st.text_input("Período a consultar (Año-Mes):", "2026-05")
@@ -203,7 +203,6 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         
     if not aptos_df.empty:
         apto_info = aptos_df[aptos_df['numero'] == apto_sel].iloc[0]
-        
         with get_connection() as conn:
             gastos_comunes = pd.read_sql("SELECT * FROM gastos WHERE periodo = ? AND es_comun = 1", conn, params=(periodo,))
             gastos_no_comunes = pd.read_sql("SELECT * FROM gastos WHERE periodo = ? AND es_comun = 0 AND apto_no_comun = ?", conn, params=(periodo, apto_sel))
@@ -218,7 +217,6 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         estado_pago = "✅ PAGADO" if not pago_registrado.empty else "⏳ PENDIENTE"
         
         st.markdown("---")
-        
         c1, c2 = st.columns([3, 1])
         with c1:
             st.subheader(f"🏢 {edificio['nombre']}")
@@ -226,7 +224,7 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         with c2:
             st.metric("Estatus del Pago", estado_pago)
 
-        st.info(f"**Propietario:** {apto_info['propietario']}  |  **Apto:** {apto_sel}  |  **Alícuota:** {alicuota_pct*100:.2f}%  |  **Teléfono:** {apto_info['telefono']}")
+        st.info(f"**Propietario:** {apto_info['propietario']} | **Apto:** {apto_sel} | **Alícuota:** {alicuota_pct*100:.2f}% | **Teléfono:** {apto_info['telefono']}")
         
         st.write("#### 1. Gastos Comunes del Edificio")
         if not gastos_comunes.empty:
@@ -238,16 +236,9 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
             st.write("#### 2. Gastos Individuales / No Comunes")
             st.dataframe(gastos_no_comunes[['descripcion', 'monto']].rename(columns={'descripcion': 'Descripción', 'monto': 'Monto ($)'}), use_container_width=True)
 
-        st.markdown(f"""
-            <div style="background-color: #f0fdf4; border: 2px solid #16a34a; padding: 15px; border-radius: 10px; text-align: center; margin: 15px 0;">
-                <h4 style="color: #15803d; margin: 0;">TOTAL A CANCELAR — APTO {apto_sel}</h4>
-                <h1 style="color: #166534; margin: 5px 0;">${monto_total:.2f}</h1>
-                <p style="color: #4b5563; font-size: 13px; margin: 0;">(Cuota Común: ${cuota_comun:.2f} + Gastos No Comunes: ${total_no_comun:.2f})</p>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"### TOTAL A CANCELAR: ${monto_total:.2f}")
         
         col_pdf, col_wa = st.columns(2)
-        
         with col_pdf:
             st.write("### 🖨️ Formato de Impresión / PDF")
             html_recibo = f"""
@@ -255,13 +246,11 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
             <html>
             <head>
                 <style>
-                    body {{ font-family: 'Helvetica', 'Arial', sans-serif; padding: 10px; color: #333; }}
+                    body {{ font-family: Arial, sans-serif; padding: 10px; color: #333; }}
                     .header {{ border-bottom: 2px solid #2563eb; padding-bottom: 8px; margin-bottom: 12px; }}
                     .card {{ background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px; margin-bottom: 12px; }}
                     .total-box {{ background-color: #eff6ff; border: 2px dashed #2563eb; padding: 12px; text-align: center; border-radius: 8px; }}
-                    @media print {{
-                        .no-print {{ display: none; }}
-                    }}
+                    @media print {{ .no-print {{ display: none; }} }}
                 </style>
             </head>
             <body>
@@ -309,14 +298,8 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
             encoded_msg = urllib.parse.quote(msg_wa)
             wa_url = f"https://wa.me/{phone_clean}?text={encoded_msg}"
             
-            st.info("Presiona el botón para abrir WhatsApp con la plantilla prellenada:")
-            st.markdown(f"""
-                <a href="{wa_url}" target="_blank" style="text-decoration: none;">
-                    <div style="background-color: #25D366; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold;">
-                        📲 Enviar Recibo vía WhatsApp
-                    </div>
-                </a>
-            """, unsafe_allow_html=True)
+            st.info("Presiona el botón para abrir WhatsApp:")
+            st.markdown(f"[📲 Enviar Recibo vía WhatsApp]({wa_url})")
 
 # --- MÓDULO 3: REGISTRO DE PAGOS ---
 elif opcion == "3. Registrar Pago de Apartamento":
@@ -344,15 +327,14 @@ elif opcion == "3. Registrar Pago de Apartamento":
             conn.commit()
         st.success("Pago registrado con éxito.")
 
-# --- MÓDULO 4: REPORTE DE MOROSIDAD ---
+# --- MÓDULO 4: MOROSIDAD ---
 elif opcion == "4. Reporte de Morosidad":
     st.header("📊 Reporte de Morosidad")
     periodo = st.text_input("Filtrar por Período (Año-Mes):", "2026-05")
-    
     aptos_df = get_apartamentos()
     
     with get_connection() as conn:
-        res_gastos = pd.read_sql("SELECT SUM(monto) as total FROM gastos WHERE periodo = ? AND es_comun = 1", conn, params=(periodo,))
+        res_gastos = pd.read_sql("SELECT SUM(monto) as total FROM gastos WHERE periodo = ?", conn, params=(periodo,))
         gastos_comunes = float(res_gastos.iloc[0]['total']) if not res_gastos.empty and res_gastos.iloc[0]['total'] is not None else 0.0
         
         pagos_df = pd.read_sql("SELECT apartamento, SUM(monto) as pagado FROM pagos_propietarios WHERE periodo = ? GROUP BY apartamento", conn, params=(periodo,))
@@ -367,7 +349,6 @@ elif opcion == "4. Reporte de Morosidad":
             no_com = float(res_nocom.iloc[0]['total']) if not res_nocom.empty and res_nocom.iloc[0]['total'] is not None else 0.0
             
             deben = cuota + no_com
-            
             pagado_row = pagos_df[pagos_df['apartamento'] == a_num] if not pagos_df.empty else pd.DataFrame()
             pagado = float(pagado_row.iloc[0]['pagado']) if not pagado_row.empty else 0.0
             saldo = deben - pagado
