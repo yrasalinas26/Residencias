@@ -26,7 +26,8 @@ def inicializar_bd():
         numero TEXT UNIQUE,
         propietario TEXT,
         telefono TEXT,
-        alicuota REAL
+        alicuota REAL,
+        clave TEXT DEFAULT '1234'
     );
 
     CREATE TABLE IF NOT EXISTS gastos (
@@ -63,29 +64,30 @@ def inicializar_bd():
     );
     """)
 
-    # Datos iniciales si está vacío
+    # Datos iniciales del edificio si está vacío
     cursor.execute("SELECT COUNT(*) FROM edificio")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO edificio VALUES (1, 'RESIDENCIAS EL PARQUE', 'J-12345678-9', 'Av. Principal, Calle 4')")
 
+    # Registro de apartamentos con clave por defecto '1234'
     cursor.execute("SELECT COUNT(*) FROM apartamentos")
     if cursor.fetchone()[0] == 0:
         aptos_data = [
-            ('1A', 'Carlos Mendoza', '+584141234567', 0.06),
-            ('1B', 'María Rodríguez', '+584122345678', 0.06),
-            ('2',  'Alejandro Silva', '+584163456789', 0.12),
-            ('3A', 'Patricia Gómez',  '+584244567890', 0.06),
-            ('3B', 'Roberto Fernández','+584145678901', 0.06),
-            ('4A', 'Elena Benítez',   '+584126789012', 0.06),
-            ('4B', 'Javier Morales',  '+584167890123', 0.06),
-            ('5A', 'Carmen Castillo', '+584248901234', 0.06),
-            ('5B', 'Diego Torres',    '+584149012345', 0.06),
-            ('6A', 'Sofía Vargas',    '+584120123456', 0.06),
-            ('6B', 'Gabriel Ruiz',    '+584161234567', 0.06),
-            ('7',  'Ricardo Alarcón', '+584242345678', 0.12),
-            ('PH', 'Fernando Delgado','+584143456789', 0.16)
+            ('1A', 'Carlos Mendoza', '+584141234567', 0.06, '1234'),
+            ('1B', 'María Rodríguez', '+584122345678', 0.06, '1234'),
+            ('2',  'Alejandro Silva', '+584163456789', 0.12, '1234'),
+            ('3A', 'Patricia Gómez',  '+584244567890', 0.06, '1234'),
+            ('3B', 'Roberto Fernández','+584145678901', 0.06, '1234'),
+            ('4A', 'Elena Benítez',   '+584126789012', 0.06, '1234'),
+            ('4B', 'Javier Morales',  '+584167890123', 0.06, '1234'),
+            ('5A', 'Carmen Castillo', '+584248901234', 0.06, '1234'),
+            ('5B', 'Diego Torres',    '+584149012345', 0.06, '1234'),
+            ('6A', 'Sofía Vargas',    '+584120123456', 0.06, '1234'),
+            ('6B', 'Gabriel Ruiz',    '+584161234567', 0.06, '1234'),
+            ('7',  'Ricardo Alarcón', '+584242345678', 0.12, '1234'),
+            ('PH', 'Fernando Delgado','+584143456789', 0.16, '1234')
         ]
-        cursor.executemany("INSERT INTO apartamentos (numero, propietario, telefono, alicuota) VALUES (?, ?, ?, ?)", aptos_data)
+        cursor.executemany("INSERT INTO apartamentos (numero, propietario, telefono, alicuota, clave) VALUES (?, ?, ?, ?, ?)", aptos_data)
 
     conn.commit()
     conn.close()
@@ -103,21 +105,77 @@ def get_edificio():
 def get_apartamentos():
     return pd.read_sql("SELECT * FROM apartamentos ORDER BY id", conn)
 
-# --- NAVEGACIÓN PRINCIPAL ---
-st.title("🏢 Sistema de Gestión de Condominio")
-st.sidebar.title("Menú Principal")
+# --- SISTEMA DE AUTENTICACIÓN / INICIO DE SESIÓN ---
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+    st.session_state.rol = None
+    st.session_state.apto_usuario = None
 
-opcion = st.sidebar.radio("Navegación:", [
-    "1. Registrar Gastos del Mes",
-    "2. Generar Recibo & WhatsApp / PDF",
-    "3. Registrar Pago de Apartamento",
-    "4. Reporte de Morosidad",
-    "5. Reporte de Proveedores"
-])
+def login():
+    st.title("🔑 Control de Acceso — Condominio")
+    rol_seleccionado = st.radio("Seleccione el Tipo de Usuario:", ["Propietario / Vecino", "Administrador"])
+    
+    if rol_seleccionado == "Administrador":
+        clave_admin = st.text_input("Contraseña de Administrador:", type="password")
+        if st.button("Ingresar como Administrador"):
+            # Clave predeterminada de Administrador
+            if clave_admin == "admin123":
+                st.session_state.autenticado = True
+                st.session_state.rol = "Admin"
+                st.rerun()
+            else:
+                st.error("Contraseña de administrador incorrecta (Clave por defecto: admin123).")
+                
+    else:
+        aptos_df = get_apartamentos()
+        apto_sel = st.selectbox("Seleccione su Apartamento:", aptos_df['numero'].tolist())
+        clave_vecino = st.text_input("Contraseña de Propietario:", type="password")
+        
+        if st.button("Ingresar"):
+            apto_info = aptos_df[aptos_df['numero'] == apto_sel].iloc[0]
+            # Validar la clave grabada en la base de datos (por defecto '1234')
+            if str(clave_vecino) == str(apto_info['clave']):
+                st.session_state.autenticado = True
+                st.session_state.rol = "Vecino"
+                st.session_state.apto_usuario = apto_sel
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta (Clave por defecto para todos los aptos: 1234).")
 
+if not st.session_state.autenticado:
+    login()
+    st.stop()
+
+# --- BARRA LATERAL CON BOTÓN DE CERRAR SESIÓN ---
+st.sidebar.title("🏢 Menú Principal")
+st.sidebar.write(f"**Usuario:** {st.session_state.rol}")
+if st.session_state.apto_usuario:
+    st.sidebar.write(f"**Apartamento:** {st.session_state.apto_usuario}")
+
+if st.sidebar.button("🔒 Cerrar Sesión"):
+    st.session_state.autenticado = False
+    st.session_state.rol = None
+    st.session_state.apto_usuario = None
+    st.rerun()
+
+# --- NAVEGACIÓN SEGÚN ROL ---
+if st.session_state.rol == "Admin":
+    opciones_menu = [
+        "1. Registrar Gastos del Mes",
+        "2. Generar Recibo & WhatsApp / PDF",
+        "3. Registrar Pago de Apartamento",
+        "4. Reporte de Morosidad",
+        "5. Reporte de Proveedores"
+    ]
+else:
+    opciones_menu = [
+        "2. Generar Recibo & WhatsApp / PDF"
+    ]
+
+opcion = st.sidebar.radio("Navegación:", opciones_menu)
 edificio = get_edificio()
 
-# --- MÓDULO 1: GASTOS ---
+# --- MÓDULO 1: GASTOS (Solo Admin) ---
 if opcion == "1. Registrar Gastos del Mes":
     st.header("📝 Cargar Gastos Comunes y No Comunes")
     
@@ -154,7 +212,11 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         periodo = st.text_input("Período a consultar (Año-Mes):", "2026-05")
     with col2:
         aptos_df = get_apartamentos()
-        apto_sel = st.selectbox("Seleccionar Apartamento:", aptos_df['numero'].tolist())
+        if st.session_state.rol == "Admin":
+            apto_sel = st.selectbox("Seleccionar Apartamento:", aptos_df['numero'].tolist())
+        else:
+            apto_sel = st.session_state.apto_usuario
+            st.info(f"Consultando recibo asignado al Apartamento: **{apto_sel}**")
         
     apto_info = aptos_df[aptos_df['numero'] == apto_sel].iloc[0]
     
@@ -184,7 +246,7 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         st.write("### Gastos No Comunes")
         st.dataframe(gastos_no_comunes[['descripcion', 'monto']], use_container_width=True)
         
-    # Recuadro resaltado del monto a pagar
+    # Recuadro resaltado con el monto a pagar
     st.markdown(f'''
         <div style="background-color: #eff6ff; border: 2px dashed #2563eb; padding: 18px; border-radius: 8px; text-align: center; margin: 15px 0;">
             <h4 style="color: #1e40af; margin: 0;">MONTO TOTAL A CANCELAR ({apto_sel})</h4>
@@ -195,7 +257,6 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
     col_pdf, col_wa = st.columns(2)
     
     with col_pdf:
-        # Generación e Impresión nativa a PDF
         html_recibo = f"""
         <html>
         <head>
@@ -211,7 +272,7 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
             <h2>{edificio['nombre']} - RIF: {edificio['rif']}</h2>
             <p><b>Propietario:</b> {apto_info['propietario']} | <b>Apartamento:</b> {apto_sel} | <b>Alícuota:</b> {apto_info['alicuota']*100:.1f}%</p>
             <p><b>Período:</b> {periodo}</p>
-            <h3>Gastos Comunes Totales del Edificio: ${total_comun:.2f}</h3>
+            <h3>Gastos Comunes Totales: ${total_comun:.2f}</h3>
             <h3>Cuota por Alícuota: ${cuota_comun:.2f}</h3>
             <div class="box">
                 <h3 style="color: #1e40af; margin: 0;">TOTAL A CANCELAR: ${monto_total:.2f}</h3>
@@ -247,7 +308,7 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         wa_url = f"https://wa.me/{phone_clean}?text={encoded_msg}"
         st.markdown(f"[📲 Enviar por WhatsApp]({wa_url})", unsafe_allow_html=True)
 
-# --- MÓDULO 3: REGISTRO DE PAGOS ---
+# --- MÓDULO 3: REGISTRO DE PAGOS (Solo Admin) ---
 elif opcion == "3. Registrar Pago de Apartamento":
     st.header("💳 Registrar Pago Recibido")
     col1, col2 = st.columns(2)
@@ -272,7 +333,7 @@ elif opcion == "3. Registrar Pago de Apartamento":
         conn.commit()
         st.success("Pago registrado con éxito.")
 
-# --- MÓDULO 4: REPORTE DE MOROSIDAD ---
+# --- MÓDULO 4: REPORTE DE MOROSIDAD (Solo Admin) ---
 elif opcion == "4. Reporte de Morosidad":
     st.header("📊 Reporte de Morosidad")
     periodo = st.text_input("Filtrar por Período (Año-Mes):", "2026-05")
@@ -306,7 +367,7 @@ elif opcion == "4. Reporte de Morosidad":
         
     st.dataframe(pd.DataFrame(reporte), use_container_width=True)
 
-# --- MÓDULO 5: PROVEEDORES ---
+# --- MÓDULO 5: PROVEEDORES (Solo Admin) ---
 elif opcion == "5. Reporte de Proveedores":
     st.header("💸 Reporte de Pagos a Proveedores por Período")
     col1, col2 = st.columns(2)
