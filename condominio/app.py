@@ -66,14 +66,23 @@ def inicializar_bd():
         );
         """)
 
-        # VERIFICACIÓN Y MIGRACIÓN DE COLUMNAS EN 'gastos'
+        # MIGRACIÓN AUTOMÁTICA EN 'gastos'
         cursor.execute("PRAGMA table_info(gastos)")
-        columnas = [col[1] for col in cursor.fetchall()]
-        
-        if 'periodo' not in columnas:
+        cols_gastos = [col[1] for col in cursor.fetchall()]
+        if 'periodo' not in cols_gastos:
             cursor.execute("ALTER TABLE gastos ADD COLUMN periodo TEXT")
-        if 'apto_no_comun' not in columnas:
+        if 'apto_no_comun' not in cols_gastos:
             cursor.execute("ALTER TABLE gastos ADD COLUMN apto_no_comun TEXT")
+
+        # MIGRACIÓN AUTOMÁTICA EN 'pagos_proveedores'
+        cursor.execute("PRAGMA table_info(pagos_proveedores)")
+        cols_prov = [col[1] for col in cursor.fetchall()]
+        if 'rif_proveedor' not in cols_prov:
+            cursor.execute("ALTER TABLE pagos_proveedores ADD COLUMN rif_proveedor TEXT")
+        if 'num_factura' not in cols_prov:
+            cursor.execute("ALTER TABLE pagos_proveedores ADD COLUMN num_factura TEXT")
+        if 'concepto' not in cols_prov:
+            cursor.execute("ALTER TABLE pagos_proveedores ADD COLUMN concepto TEXT")
 
         # Datos iniciales si la BD está vacía
         cursor.execute("SELECT COUNT(*) FROM edificio")
