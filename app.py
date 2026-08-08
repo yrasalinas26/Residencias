@@ -2,13 +2,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import urllib.parse
-import io
-
-# Importaciones para generación de PDF
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Gestión de Condominio", page_icon="🏢", layout="wide")
 
@@ -69,12 +63,11 @@ def inicializar_bd():
     );
     """)
 
-    # Datos iniciales del edificio si está vacío
+    # Datos iniciales si está vacío
     cursor.execute("SELECT COUNT(*) FROM edificio")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO edificio VALUES (1, 'RESIDENCIAS EL PARQUE', 'J-12345678-9', 'Av. Principal, Calle 4')")
 
-    # Registro de los 13 apartamentos si están vacíos
     cursor.execute("SELECT COUNT(*) FROM apartamentos")
     if cursor.fetchone()[0] == 0:
         aptos_data = [
@@ -97,7 +90,6 @@ def inicializar_bd():
     conn.commit()
     conn.close()
 
-# Ejecutar inicialización
 inicializar_bd()
 
 def get_connection():
@@ -111,93 +103,7 @@ def get_edificio():
 def get_apartamentos():
     return pd.read_sql("SELECT * FROM apartamentos ORDER BY id", conn)
 
-# --- GENERADOR DE PDF ---
-def generar_pdf_recibo(edificio, apto_info, periodo, gastos_comunes, gastos_no_comunes, cuota_comun, total_no_comun, monto_total):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    styles = getSampleStyleSheet()
-    story = []
-
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=16, leading=18, alignment=1, textColor=colors.HexColor('#1E3A8A'))
-    sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=10, leading=12, alignment=1, textColor=colors.HexColor('#4B5563'))
-    
-    story.append(Paragraph(f"<b>{edificio['nombre']}</b>", title_style))
-    story.append(Paragraph(f"RIF: {edificio['rif']} | {edificio['direccion']}", sub_style))
-    story.append(Spacer(1, 15))
-
-    info_data = [
-        [f"<b>Propietario:</b> {apto_info['propietario']}", f"<b>Apartamento:</b> {apto_info['numero']}"],
-        [f"<b>Teléfono:</b> {apto_info['telefono']}", f"<b>Alícuota:</b> {apto_info['alicuota']*100:.1f}%"],
-        [f"<b>Período:</b> {periodo}", ""]
-    ]
-    t_info = Table(info_data, colWidths=[300, 240])
-    t_info.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F3F4F6')),
-        ('PADDING', (0,0), (-1,-1), 6),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-        ('FONTSIZE', (0,0), (-1,-1), 10),
-    ]))
-    story.append(t_info)
-    story.append(Spacer(1, 15))
-
-    story.append(Paragraph("<b>Detalle de Gastos Comunes</b>", styles['Heading3']))
-    comunes_data = [["Descripción", "Monto ($)"]]
-    for _, r in gastos_comunes.iterrows():
-        comunes_data.append([r['descripcion'], f"${r['monto']:.2f}"])
-    comunes_data.append(["TOTAL GASTOS COMUNES EDIFICIO", f"${gastos_comunes['monto'].sum() if not gastos_comunes.empty else 0:.2f}"])
-    comunes_data.append(["CUOTA CORRESPONDIENTE SEGÚN ALÍCUOTA", f"${cuota_comun:.2f}"])
-
-    t_comunes = Table(comunes_data, colWidths=[400, 140])
-    t_comunes.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E3A8A')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D1D5DB')),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('PADDING', (0,0), (-1,-1), 5),
-    ]))
-    story.append(t_comunes)
-    story.append(Spacer(1, 15))
-
-    if not gastos_no_comunes.empty:
-        story.append(Paragraph("<b>Detalle de Gastos No Comunes</b>", styles['Heading3']))
-        nocom_data = [["Descripción", "Monto ($)"]]
-        for _, r in gastos_no_comunes.iterrows():
-            nocom_data.append([r['descripcion'], f"${r['monto']:.2f}"])
-        nocom_data.append(["TOTAL GASTOS NO COMUNES", f"${total_no_comun:.2f}"])
-        
-        t_nocom = Table(nocom_data, colWidths=[400, 140])
-        t_nocom.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4B5563')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D1D5DB')),
-            ('PADDING', (0,0), (-1,-1), 5),
-        ]))
-        story.append(t_nocom)
-        story.append(Spacer(1, 15))
-
-    resalte_data = [
-        ["MONTO TOTAL A CANCELAR"],
-        [f"${monto_total:.2f}"]
-    ]
-    t_resalte = Table(resalte_data, colWidths=[540])
-    t_resalte.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#EFF6FF')),
-        ('BORDER', (0,0), (-1,-1), 2, colors.HexColor('#2563EB')),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('TEXTCOLOR', (0,0), (0,0), colors.HexColor('#1E40AF')),
-        ('TEXTCOLOR', (0,1), (0,1), colors.HexColor('#1D4ED8')),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (0,0), 12),
-        ('FONTSIZE', (0,1), (0,1), 22),
-        ('PADDING', (0,0), (-1,-1), 10),
-    ]))
-    story.append(t_resalte)
-
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
-
-# --- ESTRUCTURA DE PESTAÑAS Y MENÚ ---
+# --- NAVEGACIÓN PRINCIPAL ---
 st.title("🏢 Sistema de Gestión de Condominio")
 st.sidebar.title("Menú Principal")
 
@@ -239,7 +145,7 @@ if opcion == "1. Registrar Gastos del Mes":
     st.subheader(f"Gastos Registrados en {periodo}")
     st.dataframe(pd.read_sql(f"SELECT * FROM gastos WHERE periodo='{periodo}'", conn), use_container_width=True)
 
-# --- MÓDULO 2: RECIBOS & WHATSAPP / PDF ---
+# --- MÓDULO 2: RECIBOS & WHATSAPP / IMPRESIÓN PDF ---
 elif opcion == "2. Generar Recibo & WhatsApp / PDF":
     st.header("📄 Generador de Recibos de Condominio")
     
@@ -252,7 +158,6 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         
     apto_info = aptos_df[aptos_df['numero'] == apto_sel].iloc[0]
     
-    # Consultas de gastos
     gastos_comunes = pd.read_sql(f"SELECT * FROM gastos WHERE periodo='{periodo}' AND es_comun=1", conn)
     gastos_no_comunes = pd.read_sql(f"SELECT * FROM gastos WHERE periodo='{periodo}' AND es_comun=0 AND apto_no_comun='{apto_sel}'", conn)
     
@@ -262,17 +167,15 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
     
     monto_total = cuota_comun + total_no_comun
 
-    # Consulta segura del estado del pago
     pago_registrado = pd.read_sql(
         f"SELECT * FROM pagos_propietarios WHERE apartamento='{apto_sel}' AND periodo='{periodo}'", conn
     )
-    
     estado_pago = "PAGADO" if not pago_registrado.empty else "PENDIENTE"
     
     st.markdown("---")
     st.subheader(f"🏢 {edificio['nombre']} — RIF: {edificio['rif']}")
     st.write(f"**Propietario:** {apto_info['propietario']} | **Apartamento:** {apto_sel} | **Alícuota:** {apto_info['alicuota']*100:.1f}%")
-    st.write(f"**Teléfono:** {apto_info['telefono']} | **Estado de Pago:** `{estado_pago}`")
+    st.write(f"**Teléfono:** {apto_info['telefono']} | **Estatus:** `{estado_pago}`")
     
     st.write("### Gastos Comunes del Edificio")
     st.dataframe(gastos_comunes[['descripcion', 'monto']], use_container_width=True)
@@ -281,7 +184,7 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
         st.write("### Gastos No Comunes")
         st.dataframe(gastos_no_comunes[['descripcion', 'monto']], use_container_width=True)
         
-    # Recuadro resaltado para el monto final
+    # Recuadro resaltado del monto a pagar
     st.markdown(f'''
         <div style="background-color: #eff6ff; border: 2px dashed #2563eb; padding: 18px; border-radius: 8px; text-align: center; margin: 15px 0;">
             <h4 style="color: #1e40af; margin: 0;">MONTO TOTAL A CANCELAR ({apto_sel})</h4>
@@ -292,17 +195,35 @@ elif opcion == "2. Generar Recibo & WhatsApp / PDF":
     col_pdf, col_wa = st.columns(2)
     
     with col_pdf:
-        # Botón de Descarga en PDF
-        pdf_bytes = generar_pdf_recibo(edificio, apto_info, periodo, gastos_comunes, gastos_no_comunes, cuota_comun, total_no_comun, monto_total)
-        st.download_button(
-            label="📥 Descargar Recibo en PDF",
-            data=pdf_bytes,
-            file_name=f"Recibo_{apto_sel}_{periodo}.pdf",
-            mime="application/pdf"
-        )
+        # Generación e Impresión nativa a PDF
+        html_recibo = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; padding: 20px; }}
+                .box {{ background-color: #eff6ff; border: 2px dashed #2563eb; padding: 15px; text-align: center; border-radius: 8px; margin-top: 15px; }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #1e3a8a; color: white; }}
+            </style>
+        </head>
+        <body>
+            <h2>{edificio['nombre']} - RIF: {edificio['rif']}</h2>
+            <p><b>Propietario:</b> {apto_info['propietario']} | <b>Apartamento:</b> {apto_sel} | <b>Alícuota:</b> {apto_info['alicuota']*100:.1f}%</p>
+            <p><b>Período:</b> {periodo}</p>
+            <h3>Gastos Comunes Totales del Edificio: ${total_comun:.2f}</h3>
+            <h3>Cuota por Alícuota: ${cuota_comun:.2f}</h3>
+            <div class="box">
+                <h3 style="color: #1e40af; margin: 0;">TOTAL A CANCELAR: ${monto_total:.2f}</h3>
+            </div>
+            <br>
+            <button onclick="window.print()" style="padding: 10px 20px; background-color: #2563eb; color: white; border: none; border-radius: 5px; cursor: pointer;">🖨️ Imprimir / Guardar en PDF</button>
+        </body>
+        </html>
+        """
+        components.html(html_recibo, height=350)
         
     with col_wa:
-        # Enlace a WhatsApp
         msg_wa = f'''🏢 *{edificio["nombre"]}*
 📄 *RIF:* {edificio["rif"]}
 🗓 *Recibo de Condominio - {periodo}*
