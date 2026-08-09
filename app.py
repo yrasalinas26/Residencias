@@ -12,10 +12,11 @@ def conectar_db():
     return sqlite3.connect("condominio.db")
 
 def inicializar_base_de_datos():
+def inicializar_base_de_datos():
     conn = conectar_db()
     cursor = conn.cursor()
 
-    # Tabla de Perfil de la Residencia
+    # 1. Tabla de Perfil de la Residencia
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS residencia (
             id INTEGER PRIMARY KEY,
@@ -26,35 +27,43 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # Tabla de Usuarios Propietarios
+    # 2. Tabla de Usuarios Propietarios y migración de columnas
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
             apartamento TEXT PRIMARY KEY,
-            password TEXT NOT NULL
+            password TEXT NOT NULL DEFAULT '1234'
         )
     """)
+    cursor.execute("PRAGMA table_info(usuarios)")
+    cols_usuarios = [col[1] for col in cursor.fetchall()]
+    if "password" not in cols_usuarios:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN password TEXT NOT NULL DEFAULT '1234'")
 
-    # Tabla de Administrador
+    # 3. Tabla de Administrador y migración de columnas
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS admin (
             usuario TEXT PRIMARY KEY,
-            password TEXT NOT NULL
+            password TEXT NOT NULL DEFAULT 'admin123'
         )
     """)
+    cursor.execute("PRAGMA table_info(admin)")
+    cols_admin = [col[1] for col in cursor.fetchall()]
+    if "password" not in cols_admin:
+        cursor.execute("ALTER TABLE admin ADD COLUMN password TEXT NOT NULL DEFAULT 'admin123'")
 
-    # Tabla de Gastos Mensuales (Comunes y No Comunes)
+    # 4. Tabla de Gastos Mensuales
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mes_ano TEXT NOT NULL,
             concepto TEXT NOT NULL,
             monto REAL NOT NULL,
-            tipo TEXT NOT NULL,          -- 'Común' o 'No Común'
-            apto_destino TEXT DEFAULT ''  -- Si es No Común, se asigna a un apto específico
+            tipo TEXT NOT NULL,
+            apto_destino TEXT DEFAULT ''
         )
     """)
 
-    # Tabla de Reporte de Pagos
+    # 5. Tabla de Reporte de Pagos
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pagos_reportados (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +75,17 @@ def inicializar_base_de_datos():
             estado TEXT DEFAULT 'Pendiente'
         )
     """)
+
+    # Insertar datos por defecto si no existen
+    cursor.execute("INSERT OR IGNORE INTO admin (usuario, password) VALUES (?, ?)", ("admin", "admin123"))
+    cursor.execute("INSERT OR IGNORE INTO residencia (id, nombre, rif, direccion) VALUES (1, 'Residencias El Condominio', 'J-12345678-0', 'Av. Principal #123')")
+
+    apartamentos = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+    for ap in apartamentos:
+        cursor.execute("INSERT OR IGNORE INTO usuarios (apartamento, password) VALUES (?, ?)", (ap, "1234"))
+
+    conn.commit()
+    conn.close()
 
     # Datos iniciales por defecto
     cursor.execute("INSERT OR IGNORE INTO admin (usuario, password) VALUES (?, ?)", ("admin", "admin123"))
