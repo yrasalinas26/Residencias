@@ -3,6 +3,9 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from datetime import datetime
+import urllib.parse
+import io
+from fpdf import FPDF
 
 # =============================================================================
 # 1. CONFIGURACIÓN Y BASE DE DATOS
@@ -15,7 +18,7 @@ def inicializar_base_de_datos():
     conn = conectar_db()
     cursor = conn.cursor()
 
-    # 1. Tabla de Perfil de la Residencia
+    # 1. Tabla Residencia
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS residencia (
             id INTEGER PRIMARY KEY,
@@ -26,7 +29,7 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # 2. Tabla de Usuarios Propietarios
+    # 2. Tabla Usuarios
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
             apartamento TEXT PRIMARY KEY,
@@ -34,7 +37,7 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # 3. Tabla de Administrador
+    # 3. Tabla Admin
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS admin (
             usuario TEXT PRIMARY KEY,
@@ -42,7 +45,7 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # 4. Tabla de Gastos Mensuales
+    # 4. Tabla Gastos
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +57,7 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # 5. Tabla de Reporte de Pagos
+    # 5. Tabla Pagos
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pagos_reportados (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +70,18 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # Inserción con autorreparación si la tabla carece de la columna password
+    # 6. Tabla Proveedores
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proveedores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            servicio TEXT NOT NULL,
+            telefono TEXT NOT NULL,
+            nota TEXT DEFAULT ''
+        )
+    """)
+
+    # Reparación y datos iniciales
     try:
         cursor.execute("INSERT OR IGNORE INTO admin (usuario, password) VALUES (?, ?)", ("admin", "admin123"))
     except sqlite3.OperationalError:
@@ -90,17 +104,16 @@ def inicializar_base_de_datos():
     conn.close()
 
 # =============================================================================
-# 2. FUNCIONES DE LÓGICA Y DATOS
+# 2. LÓGICA DE NEGOCIO Y FUNCIONES
 # =============================================================================
 
 def obtener_alicuota(apartamento):
-    """Retorna la alícuota asignada según la norma del condominio."""
     if apartamento in ["2", "7"]:
         return 0.12  # 12%
     elif apartamento == "PH":
         return 0.16  # 16%
     else:
-        return 0.06  # 6% para los 10 apartamentos restantes
+        return 0.06  # 6% para los 10 restantes
 
 def obtener_datos_residencia():
     conn = conectar_db()
@@ -164,18 +177,53 @@ def actualizar_estado_pago(pago_id, nuevo_estado):
     conn.commit()
     conn.close()
 
-def boton_imprimir_navegador():
-    components.html("""
-        <button onclick="window.print()" style="
-            background-color: #28a745; color: white; padding: 10px 20px;
-            border: none; border-radius: 5px; cursor: pointer;
-            font-size: 15px; font-weight: bold; width: 100%; margin-top: 10px;">
-            🖨️ Imprimir Recibo / Guardar como PDF
-        </button>
-    """, height=60)
+def guardar_proveedor(nombre, servicio, telefono, nota):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO proveedores (nombre, servicio, telefono, nota) VALUES (?, ?, ?, ?)", (nombre, servicio, telefono, nota))
+    conn.commit()
+    conn.close()
+
+def eliminar_proveedor(prov_id):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM proveedores WHERE id = ?", (prov_id,))
+    conn.commit()
+    conn.close()
+
+# -----------------------------------------------------------------------------
+# GENERACIÓN DE PDF Y WHATSAPP
+# -----------------------------------------------------------------------------
+
+def generar_pdf_generico(titulo, df_datos):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, titulo, ln=True, align='C')
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", 'B', 10)
+    col_width = 190 / len(df_datos.columns)
+    
+    for col in df_datos.columns:
+        pdf.cell(col_width, 8, str(col), border=1, align='C')
+    pdf.ln()
+    
+    pdf.set_font("Arial", '', 9)
+    for _, row in df_datos.iterrows():
+        for item in row:
+            pdf.cell(col_width, 8, str(item), border=1)
+        pdf.ln()
+        
+    return pdf.output(dest='S').encode('latin-1', 'replace')
+
+def boton_whatsapp(telefono, mensaje):
+    msg_url = urllib.parse.quote(mensaje)
+    link = f"https://wa.me/{telefono}?text={msg_url}"
+    st.markdown(f'<a href="{link}" target="_blank" style="background-color:#25D366;color:white;padding:8px 15px;border-radius:5px;text-decoration:none;font-weight:bold;">📲 Enviar por WhatsApp</a>', unsafe_allow_html=True)
 
 # =============================================================================
-# 3. INTERFAZ Y FLUJO DE LA APLICACIÓN
+# 3. INTERFAZ DE USUARIO
 # =============================================================================
 
 st.set_page_config(page_title="Gestión de Condominio", page_icon="🏢", layout="wide")
@@ -186,13 +234,10 @@ if "rol" not in st.session_state:
 if "usuario_logueado" not in st.session_state:
     st.session_state["usuario_logueado"] = None
 
-# -----------------------------------------------------------------------------
 # A. INICIO DE SESIÓN
-# -----------------------------------------------------------------------------
 if st.session_state["rol"] is None:
     st.title("🏢 Sistema de Gestión de Condominio")
     st.markdown("---")
-    
     tipo_acceso = st.radio("Seleccione el tipo de usuario:", ["Propietario", "Administrador"], horizontal=True)
 
     if tipo_acceso == "Propietario":
@@ -208,7 +253,6 @@ if st.session_state["rol"] is None:
                 st.rerun()
             else:
                 st.error("Contraseña incorrecta.")
-
     else:
         st.subheader("🛡️ Acceso Administración")
         user_admin = st.text_input("Usuario Administrador:")
@@ -222,9 +266,7 @@ if st.session_state["rol"] is None:
             else:
                 st.error("Credenciales incorrectas.")
 
-# -----------------------------------------------------------------------------
 # B. PANEL DEL PROPIETARIO
-# -----------------------------------------------------------------------------
 elif st.session_state["rol"] == "Propietario":
     apt = st.session_state["usuario_logueado"]
     alicuota = obtener_alicuota(apt)
@@ -240,7 +282,7 @@ elif st.session_state["rol"] == "Propietario":
             st.rerun()
 
     st.markdown("---")
-    tab_recibos, tab_reporte, tab_historial, tab_seguridad = st.tabs(["📄 Recibo del Mes", "💳 Reportar Pago", "📋 Mis Pagos", "⚙️ Cambiar Contraseña"])
+    tab_recibos, tab_reporte, tab_historial, tab_prov, tab_seguridad = st.tabs(["📄 Recibo del Mes", "💳 Reportar Pago", "📋 Mis Pagos", "🛠️ Proveedores", "⚙️ Cambiar Contraseña"])
 
     with tab_recibos:
         col_logo, col_info = st.columns([1, 3])
@@ -271,10 +313,11 @@ elif st.session_state["rol"] == "Propietario":
 
             col1, col2, col3 = st.columns(3)
             col1.metric("Cuota Gastos Comunes", f"${cuota_comun:.2f}")
-            col2.metric("Gastos No Comunes (Directos)", f"${gastos_no_comunes:.2f}")
+            col2.metric("Gastos No Comunes", f"${gastos_no_comunes:.2f}")
             col3.metric("TOTAL A PAGAR", f"${total_a_pagar:.2f}")
 
-            boton_imprimir_navegador()
+            pdf_bytes = generar_pdf_generico(f"Recibo de Condominio - Apt {apt}", df_gastos)
+            st.download_button("📥 Descargar Recibo (PDF)", data=pdf_bytes, file_name=f"recibo_apt_{apt}.pdf", mime="application/pdf")
         else:
             st.info("No hay gastos cargados en el sistema actualmente.")
 
@@ -298,6 +341,19 @@ elif st.session_state["rol"] == "Propietario":
         df_p = pd.read_sql_query("SELECT fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Referencia', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados WHERE apartamento = ? ORDER BY id DESC", conn, params=(apt,))
         conn.close()
         st.dataframe(df_p, use_container_width=True)
+        if not df_p.empty:
+            pdf_pagos = generar_pdf_generico(f"Historial de Pagos - Apt {apt}", df_p)
+            st.download_button("📥 Descargar Reporte de Pagos (PDF)", data=pdf_pagos, file_name=f"pagos_apt_{apt}.pdf", mime="application/pdf")
+
+    with tab_prov:
+        st.subheader("🛠️ Directorio de Proveedores y Servicios")
+        conn = conectar_db()
+        df_prov = pd.read_sql_query("SELECT nombre AS 'Nombre', servicio AS 'Servicio', telefono AS 'Teléfono', nota AS 'Nota' FROM proveedores", conn)
+        conn.close()
+        if not df_prov.empty:
+            st.dataframe(df_prov, use_container_width=True)
+        else:
+            st.info("No hay proveedores registrados aún.")
 
     with tab_seguridad:
         st.subheader("⚙️ Cambiar Contraseña")
@@ -311,9 +367,7 @@ elif st.session_state["rol"] == "Propietario":
             else:
                 st.error("Verifique los datos ingresados.")
 
-# -----------------------------------------------------------------------------
 # C. PANEL DE ADMINISTRACIÓN
-# -----------------------------------------------------------------------------
 elif st.session_state["rol"] == "Administrador":
     col_t, col_b = st.columns([3, 1])
     with col_t:
@@ -325,9 +379,8 @@ elif st.session_state["rol"] == "Administrador":
             st.rerun()
 
     st.markdown("---")
-    tab_gastos, tab_datos, tab_pagos_admin = st.tabs(["➕ Gastos Comunes y No Comunes", "🏢 Datos de la Residencia / Logo", "📊 Gestión de Pagos Reportados"])
+    tab_gastos, tab_datos, tab_pagos_admin, tab_prov_admin = st.tabs(["➕ Gastos", "🏢 Edificio", "📊 Pagos Reportados", "🛠️ Proveedores"])
 
-    # 1. Cargar y Eliminar Gastos
     with tab_gastos:
         st.subheader("Cargar Nuevo Gasto")
         with st.form("form_gastos", clear_on_submit=True):
@@ -335,7 +388,6 @@ elif st.session_state["rol"] == "Administrador":
             concepto = st.text_input("Concepto del Gasto:")
             monto = st.number_input("Monto ($):", min_value=0.01, step=5.0)
             tipo_gasto = st.radio("Tipo de Gasto:", ["Común", "No Común"], horizontal=True)
-            
             lista_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
             apto_destino = st.selectbox("Apartamento Destino (Solo si es No Común):", ["N/A"] + lista_apts)
 
@@ -349,74 +401,98 @@ elif st.session_state["rol"] == "Administrador":
                     conn.close()
                     st.success("Gasto registrado exitosamente.")
                     st.rerun()
-                else:
-                    st.error("Por favor llene todos los campos requeridos.")
 
         st.markdown("---")
-        st.subheader("Gastos Registrados")
         conn = conectar_db()
-        df_g = pd.read_sql_query("SELECT id AS 'ID', mes_ano AS 'Mes/Año', concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto Destino' FROM gastos ORDER BY id DESC", conn)
+        df_g = pd.read_sql_query("SELECT id AS 'ID', mes_ano AS 'Mes/Año', concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos ORDER BY id DESC", conn)
         conn.close()
         st.dataframe(df_g, use_container_width=True)
 
-        # Sección para Eliminar Gasto Registrado
         if not df_g.empty:
-            st.markdown("---")
-            st.subheader("🗑️ Eliminar Gasto Cargado")
-            opciones_gastos = {f"ID #{row['ID']}: {row['Concepto']} (${row['Monto ($)']}) - {row['Mes/Año']}": row['ID'] for _, row in df_g.iterrows()}
-            gasto_sel = st.selectbox("Seleccione el gasto a eliminar:", list(opciones_gastos.keys()))
+            pdf_gastos = generar_pdf_generico("Reporte General de Gastos", df_g)
+            st.download_button("📥 Reporte de Gastos (PDF)", data=pdf_gastos, file_name="reporte_gastos.pdf", mime="application/pdf")
             
-            if st.button("❌ Eliminar Gasto Seleccionado"):
-                id_eliminar = opciones_gastos[gasto_sel]
-                eliminar_gasto(id_eliminar)
-                st.success("Gasto eliminado correctamente.")
+            st.markdown("---")
+            st.subheader("🗑️ Eliminar Gasto")
+            opciones = {f"ID #{row['ID']}: {row['Concepto']} (${row['Monto ($)']})": row['ID'] for _, row in df_g.iterrows()}
+            gasto_sel = st.selectbox("Seleccione gasto:", list(opciones.keys()))
+            if st.button("❌ Eliminar Gasto"):
+                eliminar_gasto(opciones[gasto_sel])
+                st.success("Gasto eliminado.")
                 st.rerun()
 
-    # 2. Configurar Residencia y Logo
     with tab_datos:
-        st.subheader("🏢 Configuración del Edificio y Recibo")
+        st.subheader("🏢 Datos de la Residencia")
         nom_act, rif_act, dir_act, logo_act = obtener_datos_residencia()
-
         with st.form("form_edificio"):
-            nombre_input = st.text_input("Nombre de la Residencia / Condominio:", value=nom_act)
-            rif_input = st.text_input("RIF de la Residencia:", value=rif_act)
+            nombre_input = st.text_input("Nombre de la Residencia:", value=nom_act)
+            rif_input = st.text_input("RIF:", value=rif_act)
             direccion_input = st.text_area("Dirección Fiscal:", value=dir_act)
-            logo_file = st.file_uploader("Cargar / Cambiar Logo (PNG, JPG)", type=["png", "jpg", "jpeg"])
+            logo_file = st.file_uploader("Logo (PNG, JPG)", type=["png", "jpg", "jpeg"])
 
             if st.form_submit_button("Actualizar Información"):
                 bytes_logo = logo_file.read() if logo_file else None
                 guardar_datos_residencia(nombre_input, rif_input, direccion_input, bytes_logo)
-                st.success("¡Datos e imagen actualizados correctamente!")
+                st.success("Actualizado correctamente.")
                 st.rerun()
 
-    # 3. Aprobar / Rechazar Pagos Reportados
     with tab_pagos_admin:
-        st.subheader("⏳ Revisión de Pagos Pendientes")
+        st.subheader("⏳ Revisión de Pagos")
         conn = conectar_db()
         df_pendientes = pd.read_sql_query("SELECT id, apartamento, fecha, monto, referencia, metodo FROM pagos_reportados WHERE estado = 'Pendiente' ORDER BY id DESC", conn)
         conn.close()
 
         if not df_pendientes.empty:
             for _, row in df_pendientes.iterrows():
-                with st.expander(f"📌 Pago ID #{row['id']} - Apt {row['apartamento']} | Monto: ${row['monto']:.2f} | Ref: {row['referencia']}"):
-                    st.write(f"**Fecha:** {row['fecha']} | **Método:** {row['metodo']}")
-                    col_ok, col_no, _ = st.columns([1, 1, 2])
+                with st.expander(f"📌 Pago ID #{row['id']} - Apt {row['apartamento']} | Monto: ${row['monto']:.2f}"):
+                    st.write(f"**Fecha:** {row['fecha']} | **Ref:** {row['referencia']} | **Método:** {row['metodo']}")
+                    col_ok, col_no = st.columns(2)
                     with col_ok:
                         if st.button(f"✅ Aprobar (#{row['id']})", key=f"ap_{row['id']}"):
                             actualizar_estado_pago(row['id'], 'Aprobado')
-                            st.success(f"Pago #{row['id']} aprobado.")
                             st.rerun()
                     with col_no:
                         if st.button(f"❌ Rechazar (#{row['id']})", key=f"rec_{row['id']}"):
                             actualizar_estado_pago(row['id'], 'Rechazado')
-                            st.warning(f"Pago #{row['id']} rechazado.")
                             st.rerun()
         else:
-            st.info("No hay pagos pendientes por revisar.")
+            st.info("No hay pagos pendientes.")
 
         st.markdown("---")
-        st.subheader("📋 Historial General de Pagos")
         conn = conectar_db()
         df_todos_pagos = pd.read_sql_query("SELECT id AS 'ID', apartamento AS 'Apto', fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Ref', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados ORDER BY id DESC", conn)
         conn.close()
         st.dataframe(df_todos_pagos, use_container_width=True)
+        if not df_todos_pagos.empty:
+            pdf_pagos = generar_pdf_generico("Reporte General de Pagos", df_todos_pagos)
+            st.download_button("📥 Reporte General de Pagos (PDF)", data=pdf_pagos, file_name="reporte_general_pagos.pdf", mime="application/pdf")
+
+    with tab_prov_admin:
+        st.subheader("🛠️ Administrar Proveedores y Servicios")
+        with st.form("form_prov"):
+            p_nombre = st.text_input("Nombre / Empresa:")
+            p_servicio = st.text_input("Servicio (Ej: Plomería, Ascensores):")
+            p_telefono = st.text_input("Teléfono (Ej: 584121234567):", help="Incluya código de país sin signo +")
+            p_nota = st.text_input("Nota / Comentario:")
+            if st.form_submit_button("Guardar Proveedor"):
+                if p_nombre and p_telefono:
+                    guardar_proveedor(p_nombre, p_servicio, p_telefono, p_nota)
+                    st.success("Proveedor guardado.")
+                    st.rerun()
+
+        st.markdown("---")
+        conn = conectar_db()
+        df_prov_list = pd.read_sql_query("SELECT id, nombre, servicio, telefono, nota FROM proveedores", conn)
+        conn.close()
+
+        if not df_prov_list.empty:
+            for _, row in df_prov_list.iterrows():
+                col_p1, col_p2, col_p3 = st.columns([2, 1, 1])
+                with col_p1:
+                    st.write(f"**{row['nombre']}** ({row['servicio']}) - Tel: {row['telefono']}")
+                with col_p2:
+                    boton_whatsapp(row['telefono'], f"Hola {row['nombre']}, te escribo de la administración del condominio.")
+                with col_p3:
+                    if st.button(f"🗑️ Eliminar", key=f"del_prov_{row['id']}"):
+                        eliminar_proveedor(row['id'])
+                        st.rerun()
