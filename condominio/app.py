@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from fpdf import FPDF
+from fpdf2 import FPDF
 from datetime import datetime
 
 # ==========================================
