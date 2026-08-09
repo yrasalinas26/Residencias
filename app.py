@@ -90,10 +90,6 @@ def inicializar_base_de_datos():
 # 2. FUNCIONES DE LÓGICA Y DATOS
 # =============================================================================
 
-# =============================================================================
-# 2. FUNCIONES DE LÓGICA Y DATOS
-# =============================================================================
-
 def obtener_alicuota(apartamento):
     """Retorna la alícuota asignada según la norma del condominio."""
     if apartamento in ["2", "7"]:
