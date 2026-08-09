@@ -511,12 +511,12 @@ elif st.session_state["rol"] == "Administrador":
         else:
             st.markdown("### Consolidado de Recibos del Condominio")
             conn = conectar_db()
-            df_g = pd.read_sql_query("SELECT concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos", conn)
+            df_g = pd.read_sql_query("SELECT mes_ano, concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos", conn)
             conn.close()
 
             if not df_g.empty:
                 tot_comun = df_g[df_g["Tipo"] == "Común"]["Monto ($)"].sum()
-                st.dataframe(df_g, use_container_width=True)
+                st.dataframe(df_g[["Concepto", "Tipo", "Monto ($)", "Apto"]], use_container_width=True)
 
                 apts_data = []
                 todos_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
@@ -541,8 +541,34 @@ elif st.session_state["rol"] == "Administrador":
                 st.download_button("🖨️ Descargar / Imprimir Consolidado de Recibos", data=html_adm_recibos, file_name=f"consolidado_recibos_{f_desde}_al_{f_hasta}.html", mime="text/html")
 
                 st.markdown("---")
-                st.markdown("#### 📲 Enviar Recibos Individuales por WhatsApp")
                 nom_res_actual, _, _, _ = obtener_datos_residencia()
+                
+                # SECCIÓN MENSAJE GENERAL POR WHATSAPP
+                st.markdown("#### 📢 Mensaje General para el Grupo de WhatsApp")
+                mes_actual_txt = df_g["mes_ano"].iloc[-1] if "mes_ano" in df_g.columns and not df_g.empty else "Mes Actual"
+                
+                cuota_6 = tot_comun * 0.06
+                cuota_12 = tot_comun * 0.12
+                cuota_16 = tot_comun * 0.16
+
+                msg_grupo = f"🏢 *{nom_res_actual}*\n"
+                msg_grupo += f"📢 *RESUMEN DE RECIBOS DE CONDOMINIO*\n"
+                msg_grupo += f"🗓️ *Periodo:* {mes_actual_txt}\n"
+                msg_grupo += f"💰 *Total Gastos Comunes:* ${tot_comun:.2f}\n"
+                msg_grupo += f"__________________________________\n\n"
+                msg_grupo += f"🔹 *Grupo 6% Alícuota* (Aptos: 1A, 1B, 3A, 3B, 4A, 4B, 5A, 5B, 6A, 6B):\n"
+                msg_grupo += f"• *Cuota Común por Apto:* ${cuota_6:.2f}\n\n"
+                msg_grupo += f"🔹 *Grupo 12% Alícuota* (Aptos: 2, 7):\n"
+                msg_grupo += f"• *Cuota Común por Apto:* ${cuota_12:.2f}\n\n"
+                msg_grupo += f"🔹 *Grupo 16% Alícuota* (PH):\n"
+                msg_grupo += f"• *Cuota Común por Apto:* ${cuota_16:.2f}\n"
+                msg_grupo += f"__________________________________\n"
+                msg_grupo += f"📌 *Nota:* Si su apartamento posee un gasto propio/no común, recuerde verificar su recibo individual ingresando a la página web."
+
+                boton_whatsapp("", msg_grupo, "📲 Enviar Resumen General al Grupo de WhatsApp")
+
+                st.markdown("---")
+                st.markdown("#### 📲 Enviar Recibos Individuales por WhatsApp")
                 
                 for item in apts_data:
                     c_apt, c_aliq, c_cuota, c_propio, c_total = item["Apartamento"], item["Alícuota"], item["Cuota Común ($)"], item["Gasto Propio ($)"], item["Total Cobrado ($)"]
