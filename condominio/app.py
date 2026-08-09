@@ -6,7 +6,7 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Gestión de Condominio", page_icon="🏢", layout="wide")
 
-DB_NAME = 'condominio.db'
+DB_NAME = 'condominio_v3.db'
 
 def get_connection():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
