@@ -16,30 +16,47 @@ def inicializar_bd():
     with get_connection() as conn:
         cursor = conn.cursor()
         
-        cursor.executescript("""
+        # 1. Tabla Edificio
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS edificio (
             id INTEGER PRIMARY KEY,
             nombre TEXT,
             rif TEXT,
-            direccion TEXT
-        );
+            direccion TEXT,
+            logo_url TEXT
+        )""")
+        
+        cursor.execute("PRAGMA table_info(edificio)")
+        cols_edificio = [col[1] for col in cursor.fetchall()]
+        if 'logo_url' not in cols_edificio:
+            cursor.execute("ALTER TABLE edificio ADD COLUMN logo_url TEXT")
 
+        cursor.execute("SELECT COUNT(*) FROM edificio")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO edificio (id, nombre, rif, direccion, logo_url) VALUES (1, 'RESIDENCIAS EL PARQUE', 'J-12345678-9', 'Av. Principal, Calle 4', '')")
+
+        # 2. Tabla Apartamentos
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS apartamentos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            numero TEXT UNIQUE,
+            numero TEXT,
             propietario TEXT,
             telefono TEXT,
             alicuota REAL
-        );
+        )""")
 
+        # 3. Tabla Proveedores
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS proveedores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT,
             rif TEXT,
             telefono TEXT,
             servicio TEXT
-        );
+        )""")
 
+        # 4. Tabla Gastos
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             periodo TEXT,
@@ -47,8 +64,10 @@ def inicializar_bd():
             monto REAL,
             es_comun INTEGER,
             apto_no_comun TEXT
-        );
+        )""")
 
+        # 5. Tabla Pagos Propietarios
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS pagos_propietarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fecha TEXT,
@@ -59,8 +78,10 @@ def inicializar_bd():
             referencia TEXT,
             metodo TEXT,
             estado TEXT
-        );
+        )""")
 
+        # 6. Tabla Pagos Proveedores
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS pagos_proveedores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fecha TEXT,
@@ -69,33 +90,22 @@ def inicializar_bd():
             concepto TEXT,
             monto REAL,
             num_factura TEXT
-        );
-        """)
+        )""")
 
-        # Auto-migración de columnas si la tabla ya existía
-        for tabla, columna, tipo in [
-            ('gastos', 'periodo', 'TEXT'),
-            ('gastos', 'apto_no_comun', 'TEXT'),
-            ('pagos_proveedores', 'rif_proveedor', 'TEXT'),
-            ('pagos_proveedores', 'num_factura', 'TEXT'),
-            ('pagos_proveedores', 'concepto', 'TEXT')
-        ]:
-            cursor.execute(f"PRAGMA table_info({tabla})")
-            cols = [col[1] for col in cursor.fetchall()]
-            if columna not in cols:
-                cursor.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo}")
-
-        # Datos base de edificio si está vacío
-        cursor.execute("SELECT COUNT(*) FROM edificio")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO edificio VALUES (1, 'RESIDENCIAS EL PARQUE', 'J-12345678-9', 'Av. Principal, Calle 4')")
+        conn.commit()
 
 inicializar_bd()
 
+# --- FUNCIONES DE ACCESO A DATOS ---
 def get_edificio():
     with get_connection() as conn:
         df = pd.read_sql("SELECT * FROM edificio WHERE id=1", conn)
-    return df.iloc[0] if not df.empty else {"nombre": "Condominio", "rif": "J-00000000-0", "direccion": "N/A"}
+    if not df.empty:
+        res = df.iloc[0].to_dict()
+        if not res.get('logo_url'):
+            res['logo_url'] = ''
+        return res
+    return {"nombre": "Condominio", "rif": "J-00000000-0", "direccion": "N/A", "logo_url": ""}
 
 def get_apartamentos():
     with get_connection() as conn:
@@ -128,8 +138,8 @@ if not st.session_state['autenticado']:
     st.stop()
 
 # --- NAVEGACIÓN ---
-st.sidebar.title("🏢 Menú Principal")
-st.sidebar.write(f"**Rol activo:** {st.session_state['rol']}")
+st.sidebar.title("🏢 Menú Condominio")
+st.sidebar.write(f"**Usuario:** {st.session_state['rol']}")
 
 if st.sidebar.button("🚪 Cerrar Sesión"):
     st.session_state['autenticado'] = False
@@ -138,6 +148,7 @@ if st.sidebar.button("🚪 Cerrar Sesión"):
 
 if st.session_state['rol'] == "Admin":
     opcion = st.sidebar.radio("Navegación:", [
+        "0. Datos del Edificio (Logo / RIF)",
         "1. Registro de Propietarios & Alícuotas",
         "2. Registro de Proveedores",
         "3. Registrar Gastos del Mes",
@@ -153,34 +164,64 @@ else:
 
 edificio = get_edificio()
 
+# --- MÓDULO 0: DATOS DEL EDIFICIO ---
+if opcion == "0. Datos del Edificio (Logo / RIF)":
+    st.header("⚙️ Configuración del Condominio")
+    
+    with st.form("form_edificio"):
+        nombre_e = st.text_input("Nombre del Condominio / Edificio:", value=edificio['nombre'])
+        rif_e = st.text_input("RIF:", value=edificio['rif'])
+        dir_e = st.text_area("Dirección:", value=edificio['direccion'])
+        logo_e = st.text_input("URL del Logo (Opcional, ej: https://i.imgur.com/logo.png):", value=edificio.get('logo_url', ''))
+        
+        btn_edificio = st.form_submit_button("💾 Actualizar Datos del Edificio")
+        
+        if btn_edificio:
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE edificio 
+                    SET nombre = ?, rif = ?, direccion = ?, logo_url = ?
+                    WHERE id = 1
+                """, (nombre_e, rif_e, dir_e, logo_e))
+                conn.commit()
+            st.success("¡Datos del edificio actualizados correctamente!")
+            st.rerun()
+
 # --- MÓDULO 1: PROPIETARIOS ---
-if opcion == "1. Registro de Propietarios & Alícuotas":
+elif opcion == "1. Registro de Propietarios & Alícuotas":
     st.header("🏠 Gestión de Apartamentos y Propietarios")
     
     col1, col2 = st.columns([1, 2])
     
     with col1:
         st.subheader("Registrar / Editar Apto")
-        numero_apto = st.text_input("Número de Apto (ej: 1A, PH):")
+        numero_apto = st.text_input("Número de Apto (ej: 1A, PH):").strip().upper()
         propietario = st.text_input("Nombre del Propietario:")
         telefono = st.text_input("Teléfono WhatsApp (ej: +584121234567):")
         alicuota_pct = st.number_input("Alícuota (%):", min_value=0.0, max_value=100.0, value=5.0, step=0.1)
         
         if st.button("💾 Guardar Apartamento"):
-            if numero_apto.strip() != "" and propietario.strip() != "":
+            if numero_apto != "" and propietario != "":
                 alicuota_real = alicuota_pct / 100.0
                 with get_connection() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT INTO apartamentos (numero, propietario, telefono, alicuota)
-                        VALUES (?, ?, ?, ?)
-                        ON CONFLICT(numero) DO UPDATE SET
-                            propietario=excluded.propietario,
-                            telefono=excluded.telefono,
-                            alicuota=excluded.alicuota
-                    """, (numero_apto.upper().strip(), propietario, telefono, alicuota_real))
+                    cursor.execute("SELECT id FROM apartamentos WHERE numero = ?", (numero_apto,))
+                    existe = cursor.fetchone()
+                    
+                    if existe:
+                        cursor.execute("""
+                            UPDATE apartamentos 
+                            SET propietario = ?, telefono = ?, alicuota = ?
+                            WHERE numero = ?
+                        """, (propietario, telefono, alicuota_real, numero_apto))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO apartamentos (numero, propietario, telefono, alicuota)
+                            VALUES (?, ?, ?, ?)
+                        """, (numero_apto, propietario, telefono, alicuota_real))
                     conn.commit()
-                st.success(f"Apartamento {numero_apto} guardado correctamente.")
+                st.success(f"Apartamento {numero_apto} guardado exitosamente.")
                 st.rerun()
             else:
                 st.warning("Ingrese el número de apartamento y el nombre del propietario.")
@@ -194,11 +235,11 @@ if opcion == "1. Registro de Propietarios & Alícuotas":
             st.dataframe(df_display[['numero', 'propietario', 'telefono', 'alicuota']], use_container_width=True)
             
             total_alicuota = df_aptos['alicuota'].sum() * 100
-            st.metric("Total Alícuotas Registradas", f"{total_alicuota:.2f}%")
+            st.metric("Suma Total de Alícuotas", f"{total_alicuota:.2f}%")
             if abs(total_alicuota - 100.0) > 0.01:
-                st.warning("⚠️ La suma total de las alícuotas debería ser igual a 100%.")
+                st.warning("⚠️ Nota: La suma total de las alícuotas debería ser igual a 100.00%.")
         else:
-            st.info("No hay apartamentos registrados aún.")
+            st.info("Aún no hay apartamentos registrados.")
 
 # --- MÓDULO 2: PROVEEDORES ---
 elif opcion == "2. Registro de Proveedores":
@@ -213,16 +254,18 @@ elif opcion == "2. Registro de Proveedores":
             nombre_prov = st.text_input("Nombre / Razón Social:")
             rif_prov = st.text_input("RIF / Identificación:")
             tel_prov = st.text_input("Teléfono de Contacto:")
-            servicio_prov = st.text_input("Servicio / Rubro (ej: Electricidad, Ascensores):")
+            servicio_prov = st.text_input("Servicio / Rubro (ej: Mantenimiento, Ascensores):")
             
             if st.button("💾 Guardar Proveedor"):
                 if nombre_prov.strip() != "":
                     with get_connection() as conn:
                         cursor = conn.cursor()
-                        cursor.execute("INSERT INTO proveedores (nombre, rif, telefono, servicio) VALUES (?, ?, ?, ?)",
-                                       (nombre_prov, rif_prov, tel_prov, servicio_prov))
+                        cursor.execute("""
+                            INSERT INTO proveedores (nombre, rif, telefono, servicio) 
+                            VALUES (?, ?, ?, ?)
+                        """, (nombre_prov, rif_prov, tel_prov, servicio_prov))
                         conn.commit()
-                    st.success("Proveedor registrado.")
+                    st.success("Proveedor guardado correctamente.")
                     st.rerun()
                 else:
                     st.warning("Ingrese el nombre del proveedor.")
@@ -230,7 +273,10 @@ elif opcion == "2. Registro de Proveedores":
         with c2:
             st.subheader("Proveedores Registrados")
             df_prov = get_proveedores()
-            st.dataframe(df_prov[['nombre', 'rif', 'telefono', 'servicio']], use_container_width=True)
+            if not df_prov.empty:
+                st.dataframe(df_prov[['nombre', 'rif', 'telefono', 'servicio']], use_container_width=True)
+            else:
+                st.info("No hay proveedores registrados.")
 
     with tab2:
         st.subheader("Registrar Egreso / Pago a Proveedor")
@@ -256,7 +302,7 @@ elif opcion == "2. Registro de Proveedores":
                     conn.commit()
                 st.success("Pago a proveedor registrado exitosamente.")
         else:
-            st.info("Primero registre al menos un proveedor en la pestaña anterior.")
+            st.info("Primero debe registrar al menos un proveedor en la pestaña previa.")
 
 # --- MÓDULO 3: REGISTRAR GASTOS ---
 elif opcion == "3. Registrar Gastos del Mes":
@@ -354,6 +400,9 @@ elif opcion == "4. Generar Recibo & WhatsApp / PDF":
     col_pdf, col_wa = st.columns(2)
     with col_pdf:
         st.write("### 🖨️ Formato de Impresión / PDF")
+        
+        logo_html = f'<img src="{edificio["logo_url"]}" style="max-height: 50px; float: right;">' if edificio.get('logo_url') else ''
+        
         html_recibo = f"""
         <!DOCTYPE html>
         <html>
@@ -368,6 +417,7 @@ elif opcion == "4. Generar Recibo & WhatsApp / PDF":
         </head>
         <body>
             <div class="header">
+                {logo_html}
                 <h2 style="margin:0; color:#1e40af;">{edificio['nombre']}</h2>
                 <small>RIF: {edificio['rif']} | Período: {periodo}</small>
             </div>
@@ -420,7 +470,7 @@ elif opcion == "5. Registrar Pago de Apartamento":
     
     aptos_df = get_apartamentos()
     if aptos_df.empty:
-        st.warning("⚠️ Debe registrar apartamentos primero.")
+        st.warning("⚠️ Debe registrar apartamentos primero en el Módulo 1.")
         st.stop()
         
     col1, col2 = st.columns(2)
