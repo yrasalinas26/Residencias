@@ -5,6 +5,13 @@ import urllib.parse
 import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Gestión de Condominio", page_icon="🏢", layout="wide")
+# Inyectar icono personalizado para cuando se agregue a la pantalla de inicio del teléfono
+st.html("""
+    <!-- Icono para iPhone / Safari -->
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2558/2558042.png">
+    <!-- Icono para Android / Chrome -->
+    <link rel="icon" type="image/png" sizes="192x192" href="https://cdn-icons-png.flaticon.com/512/2558/2558042.png">
+""")
 
 DB_NAME = 'condominio_v3.db'
 
