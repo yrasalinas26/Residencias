@@ -4,6 +4,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from datetime import datetime
 import urllib.parse
+import os
 import io
 
 # =============================================================================
@@ -44,7 +45,7 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # 4. Tabla Gastos / Proveedores
+    # 4. Tabla Gastos
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,15 +137,18 @@ def guardar_datos_residencia(nombre, rif, direccion, logo_bytes=None):
 def verificar_usuario(apartamento, password):
     conn = conectar_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT password FROM usuarios WHERE apartamento = ?", (apartamento,))
+    apt_clean = apartamento.strip().upper()
+    cursor.execute("SELECT password FROM usuarios WHERE apartamento = ?", (apt_clean,))
     res = cursor.fetchone()
     conn.close()
-    return res is not None and res[0] == password
+    if res is not None and res[0] == password:
+        return True, apt_clean
+    return False, None
 
 def verificar_admin(usuario, password):
     conn = conectar_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT password FROM admin WHERE usuario = ?", (usuario,))
+    cursor.execute("SELECT password FROM admin WHERE usuario = ?", (usuario.strip(),))
     res = cursor.fetchone()
     conn.close()
     return res is not None and res[0] == password
@@ -245,37 +249,53 @@ if "rol" not in st.session_state:
 if "usuario_logueado" not in st.session_state:
     st.session_state["usuario_logueado"] = None
 
-# A. INICIO DE SESIÓN
+# A. INICIO DE SESIÓN CON LOGO
 if st.session_state["rol"] is None:
+    # Muestra el logo si existe en la carpeta
+    col_l1, col_l2, col_l3 = st.columns([1, 1, 1])
+    with col_l2:
+        if os.path.exists("logo.png"):
+            st.image("logo.png", use_container_width=True)
+        elif os.path.exists("logo.jpg"):
+            st.image("logo.jpg", use_container_width=True)
+        elif os.path.exists("logo.jpeg"):
+            st.image("logo.jpeg", use_container_width=True)
+
     st.title("🏢 Sistema de Gestión de Condominio")
     st.markdown("---")
     tipo_acceso = st.radio("Seleccione el tipo de usuario:", ["Propietario", "Administrador"], horizontal=True)
 
     if tipo_acceso == "Propietario":
         st.subheader("🔑 Acceso Propietarios")
-        lista_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
-        apt_sel = st.selectbox("Seleccione su Apartamento:", lista_apts)
-        clave_prop = st.text_input("Contraseña:", type="password", help="La contraseña por defecto es 1234")
+        apt_input = st.text_input("Apartamento (Ej: 1A, 2, PH):", value="", placeholder="Escriba su apartamento")
+        clave_prop = st.text_input("Contraseña:", type="password", value="", placeholder="Ingrese su contraseña")
 
         if st.button("Ingresar como Propietario"):
-            if verificar_usuario(apt_sel, clave_prop):
-                st.session_state["rol"] = "Propietario"
-                st.session_state["usuario_logueado"] = apt_sel
-                st.rerun()
+            if apt_input and clave_prop:
+                valido, apt_confirmado = verificar_usuario(apt_input, clave_prop)
+                if valido:
+                    st.session_state["rol"] = "Propietario"
+                    st.session_state["usuario_logueado"] = apt_confirmado
+                    st.rerun()
+                else:
+                    st.error("Apartamento o contraseña incorrecta.")
             else:
-                st.error("Contraseña incorrecta.")
+                st.warning("Por favor complete ambos campos.")
     else:
         st.subheader("🛡️ Acceso Administración")
-        user_admin = st.text_input("Usuario Administrador:")
-        clave_admin = st.text_input("Contraseña:", type="password")
+        user_admin = st.text_input("Usuario Administrador:", value="", placeholder="Escriba su usuario de administración")
+        clave_admin = st.text_input("Contraseña:", type="password", value="", placeholder="Ingrese su contraseña")
 
         if st.button("Ingresar como Administrador"):
-            if verificar_admin(user_admin, clave_admin):
-                st.session_state["rol"] = "Administrador"
-                st.session_state["usuario_logueado"] = user_admin
-                st.rerun()
+            if user_admin and clave_admin:
+                if verificar_admin(user_admin, clave_admin):
+                    st.session_state["rol"] = "Administrador"
+                    st.session_state["usuario_logueado"] = user_admin
+                    st.rerun()
+                else:
+                    st.error("Credenciales incorrectas.")
             else:
-                st.error("Credenciales incorrectas.")
+                st.warning("Por favor complete ambos campos.")
 
 # B. PANEL DEL PROPIETARIO
 elif st.session_state["rol"] == "Propietario":
@@ -300,6 +320,8 @@ elif st.session_state["rol"] == "Propietario":
         with col_logo:
             if logo_res:
                 st.image(logo_res, width=130)
+            elif os.path.exists("logo.png"):
+                st.image("logo.png", width=130)
             else:
                 st.write("🏢")
         with col_info:
@@ -376,7 +398,8 @@ elif st.session_state["rol"] == "Propietario":
         p_new = st.text_input("Nueva Contraseña", type="password")
         p_cnf = st.text_input("Confirmar Nueva Contraseña", type="password")
         if st.button("Guardar Clave"):
-            if verificar_usuario(apt, p_act) and len(p_new) >= 4 and p_new == p_cnf:
+            valido, _ = verificar_usuario(apt, p_act)
+            if valido and len(p_new) >= 4 and p_new == p_cnf:
                 cambiar_password_propietario(apt, p_new)
                 st.success("Contraseña actualizada.")
             else:
@@ -425,7 +448,7 @@ elif st.session_state["rol"] == "Administrador":
         else:
             st.info("No hay pagos pendientes por revisar en este momento.")
 
-    # 2. TAB REPORTES POR PERIODO (PAGOS PROPIETARIOS, GASTOS PROVEEDORES, RECIBOS CONDOMINIO)
+    # 2. TAB REPORTES POR PERIODO
     with tab_reportes_admin:
         st.subheader("📑 Reportes General e Impresiones por Periodo")
         
@@ -492,8 +515,7 @@ elif st.session_state["rol"] == "Administrador":
             if not df_g.empty:
                 tot_comun = df_g[df_g["Tipo"] == "Común"]["Monto ($)"].sum()
                 st.dataframe(df_g, use_container_width=True)
-                
-                # Resumen de cobros por apartamento
+
                 apts_data = []
                 todos_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
                 for ap in todos_apts:
@@ -502,7 +524,7 @@ elif st.session_state["rol"] == "Administrador":
                     cuota_c = tot_comun * aliq
                     total_ap = cuota_c + g_nocomun
                     apts_data.append({"Apartamento": ap, "Alícuota": f"{aliq*100:.0f}%", "Cuota Común ($)": round(cuota_c, 2), "Gasto Propio ($)": round(g_nocomun, 2), "Total Cobrado ($)": round(total_ap, 2)})
-                
+
                 df_resumen_recibos = pd.DataFrame(apts_data)
                 st.markdown("#### Resumen de Cobro por Apartamento")
                 st.dataframe(df_resumen_recibos, use_container_width=True)
