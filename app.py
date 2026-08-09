@@ -6,8 +6,8 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Gestión de Condominio", page_icon="🏢", layout="wide")
 
-# Cambiamos a v4 para agregar soporte de claves individuales por apartamento
-DB_NAME = 'condominio_v4.db'
+# Versionamiento de la Base de Datos para soporte completo de Históricos
+DB_NAME = 'condominio_v5.db'
 
 def get_connection():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
@@ -51,7 +51,7 @@ def inicializar_bd():
                 VALUES (1, 'RESIDENCIAS EL PARQUE', 'J-12345678-9', 'Av. Principal, Calle 4', '')
             """)
 
-        # 2. Tabla Apartamentos (Con columna 'clave')
+        # 2. Tabla Apartamentos (Con clave individual)
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS apartamentos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +62,6 @@ def inicializar_bd():
             clave TEXT DEFAULT '1234'
         )""")
 
-        # Carga inicial predeterminada (Clave inicial '1234' para cada apto)
         cursor.execute("SELECT COUNT(*) FROM apartamentos")
         if cursor.fetchone()[0] == 0:
             aptos_iniciales = [
@@ -217,11 +216,13 @@ if st.session_state['rol'] == "Admin":
         "3. Registrar Gastos del Mes",
         "4. Generar Recibo & WhatsApp / PDF",
         "5. Registrar Pago de Apartamento",
-        "6. Reportes (Morosidad y Proveedores)"
+        "6. Reportes (Morosidad y Proveedores)",
+        "7. Histórico General"
     ])
 else:
     opcion = st.sidebar.radio("Navegación:", [
-        "4. Ver Mi Recibo de Condominio",
+        "📄 Ver Mi Recibo Actual",
+        "📜 Mi Histórico de Recibos y Pagos",
         "🔑 Cambiar Mi Clave"
     ])
 
@@ -251,9 +252,7 @@ if opcion == "0. Datos del Edificio (Logo / RIF)":
 # --- MÓDULO 1: REGISTRO Y CLAVES (ADMIN) ---
 elif opcion == "1. Registro de Propietarios & Claves":
     st.header("🏠 Gestión de Apartamentos, Propietarios y Claves")
-    
     col1, col2 = st.columns([1, 2])
-    
     with col1:
         st.subheader("Registrar / Editar Apto")
         numero_apto = st.text_input("Número de Apto (ej: 1A, PH):").strip().upper()
@@ -269,7 +268,6 @@ elif opcion == "1. Registro de Propietarios & Claves":
                     cursor = conn.cursor()
                     cursor.execute("SELECT id FROM apartamentos WHERE numero = ?", (numero_apto,))
                     existe = cursor.fetchone()
-                    
                     if existe:
                         cursor.execute("""
                             UPDATE apartamentos 
@@ -292,10 +290,8 @@ elif opcion == "1. Registro de Propietarios & Claves":
             df_display = df_aptos.copy()
             df_display['alicuota'] = df_display['alicuota'].apply(lambda x: f"{x*100:.2f}%")
             st.dataframe(df_display[['numero', 'propietario', 'telefono', 'alicuota', 'clave']], use_container_width=True)
-        else:
-            st.info("Aún no hay apartamentos registrados.")
 
-# --- MÓDULO CAMBIAR CLAVE (VECINO) ---
+# --- MÓDULO CAMBIAR CLAVE ---
 elif opcion == "🔑 Cambiar Mi Clave":
     st.header(f"🔑 Cambiar Clave del Apartamento {st.session_state['apto_login']}")
     nueva_clave = st.text_input("Ingrese la nueva clave deseada:", type="password")
@@ -381,10 +377,9 @@ elif opcion == "3. Registrar Gastos del Mes":
                 conn.commit()
             st.success("Gasto registrado con éxito.")
 
-# --- MÓDULO 4: RECIBOS ---
-elif opcion in ["4. Generar Recibo & WhatsApp / PDF", "4. Ver Mi Recibo de Condominio"]:
+# --- MÓDULO 4: RECIBO ACTUAL ---
+elif opcion in ["4. Generar Recibo & WhatsApp / PDF", "📄 Ver Mi Recibo Actual"]:
     st.header("📄 Recibo de Condominio")
-    
     aptos_df = get_apartamentos()
     if aptos_df.empty:
         st.warning("⚠️ No hay apartamentos registrados.")
@@ -433,7 +428,6 @@ elif opcion in ["4. Generar Recibo & WhatsApp / PDF", "4. Ver Mi Recibo de Condo
     col_pdf, col_wa = st.columns(2)
     with col_pdf:
         st.write("### 🖨️ PDF / Recibo Impreso")
-        logo_html = f'<img src="{edificio["logo_url"]}" style="max-height: 50px; float: right;">' if edificio.get('logo_url') else ''
         html_recibo = f"""
         <html><body>
             <h2>{edificio['nombre']}</h2>
@@ -479,7 +473,7 @@ elif opcion == "5. Registrar Pago de Apartamento":
             conn.commit()
         st.success(f"Pago registrado para el apto {apto_sel}.")
 
-# --- MÓDULO 6: REPORTES ---
+# --- MÓDULO 6: REPORTES DE MOROSIDAD ---
 elif opcion == "6. Reportes (Morosidad y Proveedores)":
     st.header("📊 Reporte de Morosidad")
     periodo = st.text_input("Período (Año-Mes):", "2026-05")
@@ -515,3 +509,102 @@ elif opcion == "6. Reportes (Morosidad y Proveedores)":
                 })
             
         st.dataframe(pd.DataFrame(reporte), use_container_width=True)
+
+# --- MÓDULO 7 Y HISTÓRICO PROPIETARIO: HISTORIAL COMPLETO Y FILTROS ---
+elif opcion in ["7. Histórico General", "📜 Mi Histórico de Recibos y Pagos"]:
+    st.header("📜 Histórico de Recibos y Pagos")
+    
+    aptos_df = get_apartamentos()
+    if aptos_df.empty:
+        st.warning("⚠️ No hay apartamentos registrados.")
+        st.stop()
+        
+    # Selección de Apartamento
+    if st.session_state['rol'] == "Admin":
+        apto_sel = st.selectbox("Seleccionar Apartamento a Consultar:", aptos_df['numero'].tolist())
+    else:
+        apto_sel = st.session_state['apto_login']
+        st.info(f"Mostrando histórico exclusivo del Apartamento **{apto_sel}**")
+        
+    apto_info = aptos_df[aptos_df['numero'] == apto_sel].iloc[0]
+    alicuota_pct = float(apto_info['alicuota'])
+    
+    # Filtro por Período
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        filtro_periodo = st.text_input("Filtrar por Período Específico (Año-Mes, ej: 2026-05) o dejar vacío para TODO:", "")
+    
+    with get_connection() as conn:
+        if filtro_periodo.strip() != "":
+            query_gastos_c = "SELECT periodo, SUM(monto) as total_comun FROM gastos WHERE es_comun = 1 AND periodo = ? GROUP BY periodo"
+            query_gastos_nc = "SELECT periodo, SUM(monto) as total_nocomun FROM gastos WHERE es_comun = 0 AND apto_no_comun = ? AND periodo = ? GROUP BY periodo"
+            query_pagos = "SELECT * FROM pagos_propietarios WHERE apartamento = ? AND periodo = ? ORDER BY fecha DESC"
+            
+            df_gc = pd.read_sql(query_gastos_c, conn, params=(filtro_periodo,))
+            df_gnc = pd.read_sql(query_gastos_nc, conn, params=(apto_sel, filtro_periodo))
+            df_pagos = pd.read_sql(query_pagos, conn, params=(apto_sel, filtro_periodo))
+        else:
+            query_gastos_c = "SELECT periodo, SUM(monto) as total_comun FROM gastos WHERE es_comun = 1 GROUP BY periodo"
+            query_gastos_nc = "SELECT periodo, SUM(monto) as total_nocomun FROM gastos WHERE es_comun = 0 AND apto_no_comun = ? GROUP BY periodo"
+            query_pagos = "SELECT * FROM pagos_propietarios WHERE apartamento = ? ORDER BY fecha DESC"
+            
+            df_gc = pd.read_sql(query_gastos_c, conn)
+            df_gnc = pd.read_sql(query_gastos_nc, conn, params=(apto_sel,))
+            df_pagos = pd.read_sql(query_pagos, conn, params=(apto_sel,))
+
+    # Consolidar Recibos por Período
+    periodos_set = set(df_gc['periodo'].tolist() if not df_gc.empty else [])
+    periodos_set.update(df_gnc['periodo'].tolist() if not df_gnc.empty else [])
+    periodos_set.update(df_pagos['periodo'].tolist() if not df_pagos.empty else [])
+    
+    lista_recibos = []
+    total_facturado_acum = 0.0
+    total_pagado_acum = float(df_pagos['monto'].sum()) if not df_pagos.empty else 0.0
+    
+    for p in sorted(list(periodos_set), reverse=True):
+        row_gc = df_gc[df_gc['periodo'] == p]
+        tot_c = float(row_gc.iloc[0]['total_comun']) if not row_gc.empty else 0.0
+        cuota_c = tot_c * alicuota_pct
+        
+        row_gnc = df_gnc[df_gnc['periodo'] == p]
+        tot_nc = float(row_gnc.iloc[0]['total_nocomun']) if not row_gnc.empty else 0.0
+        
+        monto_recibo = cuota_c + tot_nc
+        total_facturado_acum += monto_recibo
+        
+        row_pago = df_pagos[df_pagos['periodo'] == p]
+        monto_p = float(row_pago['monto'].sum()) if not row_pago.empty else 0.0
+        estatus_p = "✅ PAGADO" if monto_p >= (monto_recibo - 0.01) and monto_recibo > 0 else "❌ PENDIENTE"
+        
+        lista_recibos.append({
+            "Período": p,
+            "Cuota Común ($)": round(cuota_c, 2),
+            "Gastos Indiv. ($)": round(tot_nc, 2),
+            "Total Recibo ($)": round(monto_recibo, 2),
+            "Monto Pagado ($)": round(monto_p, 2),
+            "Estatus": estatus_p
+        })
+        
+    saldo_pendiente_acum = total_facturado_acum - total_pagado_acum
+
+    # Tarjetas de Resumen (Métricas)
+    st.markdown("### 📊 Resumen de Cuenta")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Facturado", f"${total_facturado_acum:.2f}")
+    m2.metric("Total Pagado", f"${total_pagado_acum:.2f}")
+    m3.metric("Saldo Pendiente", f"${max(0.0, saldo_pendiente_acum):.2f}", delta_color="inverse")
+    
+    # Pestañas de Detalle
+    tab_recibos, tab_pagos = st.tabs(["📄 Histórico de Recibos Emitidos", "💳 Histórico de Pagos Realizados"])
+    
+    with tab_recibos:
+        if lista_recibos:
+            st.dataframe(pd.DataFrame(lista_recibos), use_container_width=True)
+        else:
+            st.info("No hay recibos registrados para el período o criterio seleccionado.")
+            
+    with tab_pagos:
+        if not df_pagos.empty:
+            st.dataframe(df_pagos[['fecha', 'periodo', 'monto', 'metodo', 'referencia', 'estado']], use_container_width=True)
+        else:
+            st.info("No hay pagos registrados para este apartamento en la consulta.")
