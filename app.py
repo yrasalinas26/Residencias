@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from fpdf import FPDF
+import streamlit.components.v1 as components
 from datetime import datetime
 
 # ==========================================
@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Datos de los 13 apartamentos con sus alícuotas
+# Datos de los 13 apartamentos con sus alícuotas fijadas
 APARTAMENTOS_INFO = {
     "1A": {"alicuota": 6.0, "propietario": "Propietario 1A", "pass": "apto1a123"},
     "1B": {"alicuota": 6.0, "propietario": "Propietario 1B", "pass": "apto1b123"},
@@ -31,75 +31,53 @@ APARTAMENTOS_INFO = {
 
 PASS_ADMIN = "admin123"
 
-# Inicializar Base de Datos en Session State
+# Inicializar datos en la sesión
 if "df_pagos" not in st.session_state:
     st.session_state.df_pagos = pd.DataFrame([
-        {"Recibo": "REC-001", "Apto": "1A", "Fecha": "2026-07-01", "Concepto": "Cuota Condominio Julio", "Monto": 120.0, "Estado": "Pagado"},
-        {"Recibo": "REC-002", "Apto": "2",  "Fecha": "2026-07-01", "Concepto": "Cuota Condominio Julio", "Monto": 240.0, "Estado": "Pagado"},
-        {"Recibo": "REC-003", "Apto": "PH", "Fecha": "2026-07-01", "Concepto": "Cuota Condominio Julio", "Monto": 320.0, "Estado": "Pendiente"},
+        {"Recibo": "REC-001", "Apto": "1A", "Fecha": "2026-07-01", "Concepto": "Cuota Condominio Julio", "Monto ($)": 120.0, "Estado": "Pagado"},
+        {"Recibo": "REC-002", "Apto": "2",  "Fecha": "2026-07-01", "Concepto": "Cuota Condominio Julio", "Monto ($)": 240.0, "Estado": "Pagado"},
+        {"Recibo": "REC-003", "Apto": "PH", "Fecha": "2026-07-01", "Concepto": "Cuota Condominio Julio", "Monto ($)": 320.0, "Estado": "Pendiente"},
     ])
 
 if "df_proveedores" not in st.session_state:
     st.session_state.df_proveedores = pd.DataFrame([
-        {"Factura": "FAC-101", "Proveedor": "Servicio Limpieza", "Fecha": "2026-07-05", "Concepto": "Mantenimiento mensual", "Monto": 450.0},
-        {"Factura": "FAC-102", "Proveedor": "Compañía Eléctrica", "Fecha": "2026-07-10", "Concepto": "Luz áreas comunes", "Monto": 180.0},
+        {"Factura": "FAC-101", "Proveedor": "Servicio Limpieza", "Fecha": "2026-07-05", "Concepto": "Mantenimiento mensual", "Monto ($)": 450.0},
+        {"Factura": "FAC-102", "Proveedor": "Compañía Eléctrica", "Fecha": "2026-07-10", "Concepto": "Luz áreas comunes", "Monto ($)": 180.0},
     ])
 
 
 # ==========================================
-# 2. GENERADOR DE REPORTES EN PDF
+# 2. FUNCIONES DE IMPRESIÓN Y EXPORTACIÓN
 # ==========================================
-class ReportePDF(FPDF):
-    def header(self):
-        self.set_font('Helvetica', 'B', 14)
-        self.cell(0, 10, 'EDIFICIO RESIDENCIAL - REPORTES Y RECIBOS', ln=True, align='C')
-        self.ln(5)
+def boton_imprimir_navegador():
+    """Genera un botón HTML que abre el cuadro de impresión nativo del navegador."""
+    components.html(
+        """
+        <button onclick="window.print()" style="
+            background-color: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 10px;
+        ">
+            🖨️ Imprimir / Guardar como PDF
+        </button>
+        """,
+        height=60
+    )
 
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Helvetica', 'I', 8)
-        self.cell(0, 10, f'Página {self.page_no()}/{{nb}}', align='C')
-
-def generar_pdf_tabla(df, titulo):
-    pdf = ReportePDF()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    
-    # Encabezado del reporte
-    pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 8, f"Reporte: {titulo}", ln=True)
-    pdf.cell(0, 6, f"Fecha de emisión: {datetime.now().strftime('%Y-%m-%d')}", ln=True)
-    pdf.ln(5)
-
-    if df.empty:
-        pdf.set_font('Helvetica', '', 10)
-        pdf.cell(0, 8, "No hay registros para mostrar en este reporte.", ln=True)
-        return bytes(pdf.output())
-
-    # Configuración de ancho de tabla
-    cols = list(df.columns)
-    ancho_col = 190 / max(len(cols), 1)
-
-    # Cabecera de la tabla
-    pdf.set_fill_color(220, 220, 220)
-    pdf.set_font('Helvetica', 'B', 9)
-    for col in cols:
-        pdf.cell(ancho_col, 7, str(col), border=1, fill=True, align='C')
-    pdf.ln()
-
-    # Filas de datos
-    pdf.set_font('Helvetica', '', 8)
-    for _, fila in df.iterrows():
-        for col in cols:
-            val = str(fila[col])
-            pdf.cell(ancho_col, 6, val[:25], border=1, align='C')
-        pdf.ln()
-
-    return bytes(pdf.output())
+def conversion_csv(df):
+    """Convierte un DataFrame a formato CSV para descarga directa."""
+    return df.to_csv(index=False).encode('utf-8')
 
 
 # ==========================================
-# 3. CONTROL DE SESIÓN Y LOGIN
+# 3. SISTEMA DE LOGIN Y SESIÓN
 # ==========================================
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
@@ -139,7 +117,7 @@ if not st.session_state.autenticado:
 
 
 # ==========================================
-# 4. PANEL DE USUARIOS (LOGUEADO)
+# 4. PANEL DE CONTROL (USUARIO AUTENTICADO)
 # ==========================================
 st.sidebar.title("🏢 Edificio Residencial")
 st.sidebar.write(f"**Rol activo:** {st.session_state.rol}")
@@ -163,20 +141,22 @@ if st.session_state.rol == "Propietario":
 
     st.subheader("📋 Mi Historial de Pagos y Recibos")
     
-    # Filtrar solo el apartamento actual
+    # Filtrar datos correspondientes solo al apartamento logueado
     df_mi_apto = st.session_state.df_pagos[st.session_state.df_pagos["Apto"] == apto]
     
     st.dataframe(df_mi_apto, use_container_width=True)
 
-    # Botón para descargar e imprimir PDF individual
-    pdf_mi_apto = generar_pdf_tabla(df_mi_apto, f"Historial de Pagos - Apartamento {apto}")
-    
-    st.download_button(
-        label="🖨️ Descargar e Imprimir Mi Histórico (PDF)",
-        data=pdf_mi_apto,
-        file_name=f"Historico_Apto_{apto}.pdf",
-        mime="application/pdf"
-    )
+    col1, col2 = st.columns(2)
+    with col1:
+        boton_imprimir_navegador()
+    with col2:
+        st.download_button(
+            label="📊 Descargar Histórico (CSV / Excel)",
+            data=conversion_csv(df_mi_apto),
+            file_name=f"Historico_Apto_{apto}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
 
 # ------------------------------------------
 # VISTA: ADMINISTRADOR
@@ -194,33 +174,39 @@ else:
         
         if filtro_apto == "Todos":
             df_admin_pagos = st.session_state.df_pagos.copy()
-            titulo_rep = "Reporte General de Todos los Apartamentos"
         else:
             df_admin_pagos = st.session_state.df_pagos[st.session_state.df_pagos["Apto"] == filtro_apto]
-            titulo_rep = f"Reporte de Pagos - Apartamento {filtro_apto}"
 
         st.dataframe(df_admin_pagos, use_container_width=True)
 
-        pdf_admin_pagos = generar_pdf_tabla(df_admin_pagos, titulo_rep)
-        st.download_button(
-            label="🖨️ Imprimir Reporte de Pagos (PDF)",
-            data=pdf_admin_pagos,
-            file_name=f"Reporte_Pagos_{filtro_apto}.pdf",
-            mime="application/pdf"
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            boton_imprimir_navegador()
+        with col2:
+            st.download_button(
+                label="📊 Descargar Reporte (CSV / Excel)",
+                data=conversion_csv(df_admin_pagos),
+                file_name=f"Reporte_Pagos_{filtro_apto}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
 
     # TAB 2: Pagos a Proveedores
     with tab2:
         st.subheader("Egresos y Pagos a Proveedores")
         st.dataframe(st.session_state.df_proveedores, use_container_width=True)
 
-        pdf_proveedores = generar_pdf_tabla(st.session_state.df_proveedores, "Reporte de Pagos a Proveedores")
-        st.download_button(
-            label="🖨️ Imprimir Reporte de Proveedores (PDF)",
-            data=pdf_proveedores,
-            file_name="Reporte_Proveedores.pdf",
-            mime="application/pdf"
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            boton_imprimir_navegador()
+        with col2:
+            st.download_button(
+                label="📊 Descargar Proveedores (CSV / Excel)",
+                data=conversion_csv(st.session_state.df_proveedores),
+                file_name="Reporte_Proveedores.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
 
     # TAB 3: Registrar Nuevo Pago
     with tab3:
@@ -240,7 +226,7 @@ else:
                     "Apto": apto_pago,
                     "Fecha": str(fecha_pago),
                     "Concepto": concepto_pago,
-                    "Monto": monto_pago,
+                    "Monto ($)": monto_pago,
                     "Estado": estado_pago
                 }
                 st.session_state.df_pagos = pd.concat(
