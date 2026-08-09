@@ -44,10 +44,11 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # 4. Tabla Gastos
+    # 4. Tabla Gastos / Proveedores
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS gastos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT DEFAULT CURRENT_DATE,
             mes_ano TEXT NOT NULL,
             concepto TEXT NOT NULL,
             monto REAL NOT NULL,
@@ -191,10 +192,10 @@ def eliminar_proveedor(prov_id):
     conn.close()
 
 # -----------------------------------------------------------------------------
-# GENERACIÓN DE REPORTES (SIN DEPENDENCIAS EXTERNAS) Y WHATSAPP
+# GENERACIÓN DE REPORTES (HTML / PDF) Y WHATSAPP
 # -----------------------------------------------------------------------------
 
-def generar_reporte_html(titulo, df_datos):
+def generar_reporte_html(titulo, df_datos, subtitulo=""):
     tabla_html = df_datos.to_html(index=False, justify='left')
     html_content = f"""
     <!DOCTYPE html>
@@ -204,7 +205,8 @@ def generar_reporte_html(titulo, df_datos):
         <title>{titulo}</title>
         <style>
             body {{ font-family: Arial, sans-serif; padding: 30px; color: #333; }}
-            h1 {{ text-align: center; color: #1E3A8A; margin-bottom: 20px; }}
+            h1 {{ text-align: center; color: #1E3A8A; margin-bottom: 5px; }}
+            h3 {{ text-align: center; color: #4b5563; margin-top: 0px; margin-bottom: 20px; }}
             table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
             th, td {{ border: 1px solid #cbd5e1; padding: 10px; text-align: left; }}
             th {{ background-color: #f1f5f9; font-weight: bold; }}
@@ -219,6 +221,7 @@ def generar_reporte_html(titulo, df_datos):
             <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar como PDF</button>
         </div>
         <h1>{titulo}</h1>
+        {f'<h3>{subtitulo}</h3>' if subtitulo else ''}
         {tabla_html}
     </body>
     </html>
@@ -290,7 +293,7 @@ elif st.session_state["rol"] == "Propietario":
             st.rerun()
 
     st.markdown("---")
-    tab_recibos, tab_reporte, tab_historial, tab_prov, tab_seguridad = st.tabs(["📄 Recibo del Mes", "💳 Reportar Pago", "📋 Mis Pagos", "🛠️ Proveedores", "⚙️ Cambiar Contraseña"])
+    tab_recibos, tab_reporte, tab_historial, tab_seguridad = st.tabs(["📄 Recibo del Mes", "💳 Reportar Pago", "📋 Mis Pagos", "⚙️ Cambiar Contraseña"])
 
     with tab_recibos:
         col_logo, col_info = st.columns([1, 3])
@@ -324,7 +327,7 @@ elif st.session_state["rol"] == "Propietario":
             col2.metric("Gastos No Comunes", f"${gastos_no_comunes:.2f}")
             col3.metric("TOTAL A PAGAR", f"${total_a_pagar:.2f}")
 
-            html_recibo = generar_reporte_html(f"Recibo de Condominio - Apt {apt}", df_gastos)
+            html_recibo = generar_reporte_html(f"Recibo de Condominio - Apt {apt}", df_gastos, f"Total a pagar: ${total_a_pagar:.2f}")
             st.download_button("📥 Descargar / Imprimir Recibo", data=html_recibo, file_name=f"recibo_apt_{apt}.html", mime="text/html")
         else:
             st.info("No hay gastos cargados en el sistema actualmente.")
@@ -345,23 +348,27 @@ elif st.session_state["rol"] == "Propietario":
 
     with tab_historial:
         st.subheader("📋 Historial de Mis Pagos")
-        conn = conectar_db()
-        df_p = pd.read_sql_query("SELECT fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Referencia', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados WHERE apartamento = ? ORDER BY id DESC", conn, params=(apt,))
-        conn.close()
-        st.dataframe(df_p, use_container_width=True)
-        if not df_p.empty:
-            html_pagos = generar_reporte_html(f"Historial de Pagos - Apt {apt}", df_p)
-            st.download_button("📥 Descargar / Imprimir Historial", data=html_pagos, file_name=f"pagos_apt_{apt}.html", mime="text/html")
+        st.markdown("##### 📅 Seleccionar Periodo del Reporte")
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            fecha_inicio = st.date_input("Fecha Desde", value=datetime(2026, 1, 1))
+        with col_f2:
+            fecha_fin = st.date_input("Fecha Hasta", value=datetime.now())
 
-    with tab_prov:
-        st.subheader("🛠️ Directorio de Proveedores y Servicios")
         conn = conectar_db()
-        df_prov = pd.read_sql_query("SELECT nombre AS 'Nombre', servicio AS 'Servicio', telefono AS 'Teléfono', nota AS 'Nota' FROM proveedores", conn)
+        df_p = pd.read_sql_query("SELECT fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Referencia', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados WHERE apartamento = ? AND fecha >= ? AND fecha <= ? ORDER BY fecha DESC", conn, params=(apt, str(fecha_inicio), str(fecha_fin)))
         conn.close()
-        if not df_prov.empty:
-            st.dataframe(df_prov, use_container_width=True)
+
+        if not df_p.empty:
+            st.dataframe(df_p, use_container_width=True)
+            monto_total_periodo = df_p[df_p["Estado"] == "Aprobado"]["Monto ($)"].sum()
+            st.caption(f"**Total Aprobado en el periodo:** ${monto_total_periodo:.2f}")
+
+            sub_tit = f"Periodo: {fecha_inicio.strftime('%d/%m/%Y')} al {fecha_fin.strftime('%d/%m/%Y')}"
+            html_pagos = generar_reporte_html(f"Historial de Pagos - Apt {apt}", df_p, sub_tit)
+            st.download_button("📥 Descargar / Imprimir Reporte de Pagos", data=html_pagos, file_name=f"reporte_pagos_apt_{apt}.html", mime="text/html")
         else:
-            st.info("No hay proveedores registrados aún.")
+            st.info("No se encontraron pagos registrados en el periodo seleccionado.")
 
     with tab_seguridad:
         st.subheader("⚙️ Cambiar Contraseña")
@@ -387,13 +394,130 @@ elif st.session_state["rol"] == "Administrador":
             st.rerun()
 
     st.markdown("---")
-    tab_gastos, tab_datos, tab_pagos_admin, tab_prov_admin = st.tabs(["➕ Gastos", "🏢 Edificio", "📊 Pagos Reportados", "🛠️ Proveedores"])
+    tab_aprobar, tab_reportes_admin, tab_gastos_admin, tab_prov_admin, tab_datos = st.tabs([
+        "✅ Aprobar Pagos", 
+        "📑 Reportes por Periodo", 
+        "➕ Cargar Gastos/Proveedores", 
+        "🛠️ Proveedores", 
+        "🏢 Config. Edificio"
+    ])
 
-    with tab_gastos:
-        st.subheader("Cargar Nuevo Gasto")
+    # 1. TAB APROBAR PAGOS
+    with tab_aprobar:
+        st.subheader("⏳ Revision y Aprobacion de Pagos de Propietarios")
+        conn = conectar_db()
+        df_pendientes = pd.read_sql_query("SELECT id, apartamento, fecha, monto, referencia, metodo FROM pagos_reportados WHERE estado = 'Pendiente' ORDER BY id DESC", conn)
+        conn.close()
+
+        if not df_pendientes.empty:
+            for _, row in df_pendientes.iterrows():
+                with st.expander(f"📌 Pago ID #{row['id']} - Apt {row['apartamento']} | Monto: ${row['monto']:.2f}"):
+                    st.write(f"**Fecha:** {row['fecha']} | **Ref:** {row['referencia']} | **Método:** {row['metodo']}")
+                    col_ok, col_no = st.columns(2)
+                    with col_ok:
+                        if st.button(f"✅ Aprobar (#{row['id']})", key=f"ap_{row['id']}"):
+                            actualizar_estado_pago(row['id'], 'Aprobado')
+                            st.rerun()
+                    with col_no:
+                        if st.button(f"❌ Rechazar (#{row['id']})", key=f"rec_{row['id']}"):
+                            actualizar_estado_pago(row['id'], 'Rechazado')
+                            st.rerun()
+        else:
+            st.info("No hay pagos pendientes por revisar en este momento.")
+
+    # 2. TAB REPORTES POR PERIODO (PAGOS PROPIETARIOS, GASTOS PROVEEDORES, RECIBOS CONDOMINIO)
+    with tab_reportes_admin:
+        st.subheader("📑 Reportes General e Impresiones por Periodo")
+        
+        st.markdown("##### 📅 Definir Rango de Fechas del Reporte")
+        col_df1, col_df2 = st.columns(2)
+        with col_df1:
+            f_desde = st.date_input("Desde:", value=datetime(2026, 1, 1), key="adm_f_desde")
+        with col_df2:
+            f_hasta = st.date_input("Hasta:", value=datetime.now(), key="adm_f_hasta")
+
+        sub_periodo = f"Periodo: {f_desde.strftime('%d/%m/%Y')} al {f_hasta.strftime('%d/%m/%Y')}"
+
+        st.markdown("---")
+        opcion_rep = st.radio("Seleccione el reporte a generar:", [
+            "💰 Pagos de Propietarios (Vecinos)", 
+            "🚚 Gastos y Pagos a Proveedores", 
+            "📄 Consolidado de Recibos de Condominio"
+        ], horizontal=True)
+
+        if opcion_rep == "💰 Pagos de Propietarios (Vecinos)":
+            st.markdown("### Reporte de Pagos de Propietarios")
+            lista_apts_filtro = ["Todos"] + ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+            apto_filtro = st.selectbox("Filtrar por Apartamento:", lista_apts_filtro)
+
+            conn = conectar_db()
+            if apto_filtro == "Todos":
+                df_rep_pagos = pd.read_sql_query("SELECT id AS 'ID', apartamento AS 'Apto', fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Referencia', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados WHERE fecha >= ? AND fecha <= ? ORDER BY fecha DESC", conn, params=(str(f_desde), str(f_hasta)))
+            else:
+                df_rep_pagos = pd.read_sql_query("SELECT id AS 'ID', apartamento AS 'Apto', fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Referencia', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados WHERE apartamento = ? AND fecha >= ? AND fecha <= ? ORDER BY fecha DESC", conn, params=(apto_filtro, str(f_desde), str(f_hasta)))
+            conn.close()
+
+            if not df_rep_pagos.empty:
+                st.dataframe(df_rep_pagos, use_container_width=True)
+                monto_aprobado = df_rep_pagos[df_rep_pagos["Estado"] == "Aprobado"]["Monto ($)"].sum()
+                st.success(f"**Total Pagos Aprobados en el Periodo:** ${monto_aprobado:.2f}")
+
+                html_adm_pagos = generar_reporte_html(f"Reporte de Pagos de Propietarios ({apto_filtro})", df_rep_pagos, sub_periodo)
+                st.download_button("🖨️ Descargar / Imprimir Reporte de Pagos", data=html_adm_pagos, file_name=f"reporte_pagos_prop_{f_desde}_al_{f_hasta}.html", mime="text/html")
+            else:
+                st.info("No se registraron pagos de propietarios en este periodo.")
+
+        elif opcion_rep == "🚚 Gastos y Pagos a Proveedores":
+            st.markdown("### Reporte de Gastos / Pagos a Proveedores")
+            conn = conectar_db()
+            df_rep_gastos = pd.read_sql_query("SELECT id AS 'ID', mes_ano AS 'Mes/Año', concepto AS 'Concepto / Proveedor', tipo AS 'Tipo Gasto', monto AS 'Monto ($)', apto_destino AS 'Apto Destino' FROM gastos ORDER BY id DESC", conn)
+            conn.close()
+
+            if not df_rep_gastos.empty:
+                st.dataframe(df_rep_gastos, use_container_width=True)
+                total_gastos = df_rep_gastos["Monto ($)"].sum()
+                st.info(f"**Total Gastos Registrados:** ${total_gastos:.2f}")
+
+                html_adm_gastos = generar_reporte_html("Reporte General de Gastos y Proveedores", df_rep_gastos, sub_periodo)
+                st.download_button("🖨️ Descargar / Imprimir Reporte de Gastos", data=html_adm_gastos, file_name=f"reporte_gastos_{f_desde}_al_{f_hasta}.html", mime="text/html")
+            else:
+                st.info("No hay gastos registrados en el sistema.")
+
+        else:
+            st.markdown("### Consolidado de Recibos del Condominio")
+            conn = conectar_db()
+            df_g = pd.read_sql_query("SELECT concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos", conn)
+            conn.close()
+
+            if not df_g.empty:
+                tot_comun = df_g[df_g["Tipo"] == "Común"]["Monto ($)"].sum()
+                st.dataframe(df_g, use_container_width=True)
+                
+                # Resumen de cobros por apartamento
+                apts_data = []
+                todos_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+                for ap in todos_apts:
+                    aliq = obtener_alicuota(ap)
+                    g_nocomun = df_g[(df_g["Tipo"] == "No Común") & (df_g["Apto"] == ap)]["Monto ($)"].sum()
+                    cuota_c = tot_comun * aliq
+                    total_ap = cuota_c + g_nocomun
+                    apts_data.append({"Apartamento": ap, "Alícuota": f"{aliq*100:.0f}%", "Cuota Común ($)": round(cuota_c, 2), "Gasto Propio ($)": round(g_nocomun, 2), "Total Cobrado ($)": round(total_ap, 2)})
+                
+                df_resumen_recibos = pd.DataFrame(apts_data)
+                st.markdown("#### Resumen de Cobro por Apartamento")
+                st.dataframe(df_resumen_recibos, use_container_width=True)
+
+                html_adm_recibos = generar_reporte_html("Consolidado de Recibos de Condominio", df_resumen_recibos, sub_periodo)
+                st.download_button("🖨️ Descargar / Imprimir Consolidado de Recibos", data=html_adm_recibos, file_name=f"consolidado_recibos_{f_desde}_al_{f_hasta}.html", mime="text/html")
+            else:
+                st.info("No hay gastos registrados para consolidar los recibos.")
+
+    # 3. TAB GASTOS
+    with tab_gastos_admin:
+        st.subheader("➕ Cargar Nuevo Gasto / Factura de Proveedor")
         with st.form("form_gastos", clear_on_submit=True):
             mes = st.text_input("Mes y Año (Ej: Agosto 2026):")
-            concepto = st.text_input("Concepto del Gasto:")
+            concepto = st.text_input("Concepto / Servicio del Proveedor:")
             monto = st.number_input("Monto ($):", min_value=0.01, step=5.0)
             tipo_gasto = st.radio("Tipo de Gasto:", ["Común", "No Común"], horizontal=True)
             lista_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
@@ -414,14 +538,9 @@ elif st.session_state["rol"] == "Administrador":
         conn = conectar_db()
         df_g = pd.read_sql_query("SELECT id AS 'ID', mes_ano AS 'Mes/Año', concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos ORDER BY id DESC", conn)
         conn.close()
-        st.dataframe(df_g, use_container_width=True)
 
         if not df_g.empty:
-            html_gastos = generar_reporte_html("Reporte General de Gastos", df_g)
-            st.download_button("📥 Descargar / Imprimir Reporte de Gastos", data=html_gastos, file_name="reporte_gastos.html", mime="text/html")
-            
-            st.markdown("---")
-            st.subheader("🗑️ Eliminar Gasto")
+            st.subheader("🗑️ Eliminar Gasto Registrado")
             opciones = {f"ID #{row['ID']}: {row['Concepto']} (${row['Monto ($)']})": row['ID'] for _, row in df_g.iterrows()}
             gasto_sel = st.selectbox("Seleccione gasto:", list(opciones.keys()))
             if st.button("❌ Eliminar Gasto"):
@@ -429,54 +548,9 @@ elif st.session_state["rol"] == "Administrador":
                 st.success("Gasto eliminado.")
                 st.rerun()
 
-    with tab_datos:
-        st.subheader("🏢 Datos de la Residencia")
-        nom_act, rif_act, dir_act, logo_act = obtener_datos_residencia()
-        with st.form("form_edificio"):
-            nombre_input = st.text_input("Nombre de la Residencia:", value=nom_act)
-            rif_input = st.text_input("RIF:", value=rif_act)
-            direccion_input = st.text_area("Dirección Fiscal:", value=dir_act)
-            logo_file = st.file_uploader("Logo (PNG, JPG)", type=["png", "jpg", "jpeg"])
-
-            if st.form_submit_button("Actualizar Información"):
-                bytes_logo = logo_file.read() if logo_file else None
-                guardar_datos_residencia(nombre_input, rif_input, direccion_input, bytes_logo)
-                st.success("Actualizado correctamente.")
-                st.rerun()
-
-    with tab_pagos_admin:
-        st.subheader("⏳ Revisión de Pagos")
-        conn = conectar_db()
-        df_pendientes = pd.read_sql_query("SELECT id, apartamento, fecha, monto, referencia, metodo FROM pagos_reportados WHERE estado = 'Pendiente' ORDER BY id DESC", conn)
-        conn.close()
-
-        if not df_pendientes.empty:
-            for _, row in df_pendientes.iterrows():
-                with st.expander(f"📌 Pago ID #{row['id']} - Apt {row['apartamento']} | Monto: ${row['monto']:.2f}"):
-                    st.write(f"**Fecha:** {row['fecha']} | **Ref:** {row['referencia']} | **Método:** {row['metodo']}")
-                    col_ok, col_no = st.columns(2)
-                    with col_ok:
-                        if st.button(f"✅ Aprobar (#{row['id']})", key=f"ap_{row['id']}"):
-                            actualizar_estado_pago(row['id'], 'Aprobado')
-                            st.rerun()
-                    with col_no:
-                        if st.button(f"❌ Rechazar (#{row['id']})", key=f"rec_{row['id']}"):
-                            actualizar_estado_pago(row['id'], 'Rechazado')
-                            st.rerun()
-        else:
-            st.info("No hay pagos pendientes.")
-
-        st.markdown("---")
-        conn = conectar_db()
-        df_todos_pagos = pd.read_sql_query("SELECT id AS 'ID', apartamento AS 'Apto', fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Ref', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados ORDER BY id DESC", conn)
-        conn.close()
-        st.dataframe(df_todos_pagos, use_container_width=True)
-        if not df_todos_pagos.empty:
-            html_todos_pagos = generar_reporte_html("Reporte General de Pagos", df_todos_pagos)
-            st.download_button("📥 Descargar / Imprimir Reporte General de Pagos", data=html_todos_pagos, file_name="reporte_general_pagos.html", mime="text/html")
-
+    # 4. TAB PROVEEDORES
     with tab_prov_admin:
-        st.subheader("🛠️ Administrar Proveedores y Servicios")
+        st.subheader("🛠️ Directorio de Proveedores")
         with st.form("form_prov"):
             p_nombre = st.text_input("Nombre / Empresa:")
             p_servicio = st.text_input("Servicio (Ej: Plomería, Ascensores):")
@@ -504,3 +578,19 @@ elif st.session_state["rol"] == "Administrador":
                     if st.button(f"🗑️ Eliminar", key=f"del_prov_{row['id']}"):
                         eliminar_proveedor(row['id'])
                         st.rerun()
+
+    # 5. TAB CONFIGURACIÓN EDIFICIO
+    with tab_datos:
+        st.subheader("🏢 Datos de la Residencia")
+        nom_act, rif_act, dir_act, logo_act = obtener_datos_residencia()
+        with st.form("form_edificio"):
+            nombre_input = st.text_input("Nombre de la Residencia:", value=nom_act)
+            rif_input = st.text_input("RIF:", value=rif_act)
+            direccion_input = st.text_area("Dirección Fiscal:", value=dir_act)
+            logo_file = st.file_uploader("Logo (PNG, JPG)", type=["png", "jpg", "jpeg"])
+
+            if st.form_submit_button("Actualizar Información"):
+                bytes_logo = logo_file.read() if logo_file else None
+                guardar_datos_residencia(nombre_input, rif_input, direccion_input, bytes_logo)
+                st.success("Actualizado correctamente.")
+                st.rerun()
