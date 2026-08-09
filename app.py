@@ -232,10 +232,13 @@ def generar_reporte_html(titulo, df_datos, subtitulo=""):
     """
     return html_content
 
-def boton_whatsapp(telefono, mensaje):
+def boton_whatsapp(telefono, mensaje, texto_boton="📲 Enviar por WhatsApp"):
     msg_url = urllib.parse.quote(mensaje)
-    link = f"https://wa.me/{telefono}?text={msg_url}"
-    st.markdown(f'<a href="{link}" target="_blank" style="background-color:#25D366;color:white;padding:8px 15px;border-radius:5px;text-decoration:none;font-weight:bold;">📲 Enviar por WhatsApp</a>', unsafe_allow_html=True)
+    if telefono:
+        link = f"https://wa.me/{telefono}?text={msg_url}"
+    else:
+        link = f"https://api.whatsapp.com/send?text={msg_url}"
+    st.markdown(f'<a href="{link}" target="_blank" style="background-color:#25D366;color:white;padding:8px 15px;border-radius:5px;text-decoration:none;font-weight:bold;display:inline-block;margin-top:5px;">{texto_boton}</a>', unsafe_allow_html=True)
 
 # =============================================================================
 # 3. INTERFAZ DE USUARIO
@@ -251,7 +254,6 @@ if "usuario_logueado" not in st.session_state:
 
 # A. INICIO DE SESIÓN CON LOGO
 if st.session_state["rol"] is None:
-    # Muestra el logo si existe en la carpeta
     col_l1, col_l2, col_l3 = st.columns([1, 1, 1])
     with col_l2:
         if os.path.exists("logo.png"):
@@ -427,7 +429,7 @@ elif st.session_state["rol"] == "Administrador":
 
     # 1. TAB APROBAR PAGOS
     with tab_aprobar:
-        st.subheader("⏳ Revision y Aprobacion de Pagos de Propietarios")
+        st.subheader("⏳ Revisión y Aprobación de Pagos de Propietarios")
         conn = conectar_db()
         df_pendientes = pd.read_sql_query("SELECT id, apartamento, fecha, monto, referencia, metodo FROM pagos_reportados WHERE estado = 'Pendiente' ORDER BY id DESC", conn)
         conn.close()
@@ -523,7 +525,13 @@ elif st.session_state["rol"] == "Administrador":
                     g_nocomun = df_g[(df_g["Tipo"] == "No Común") & (df_g["Apto"] == ap)]["Monto ($)"].sum()
                     cuota_c = tot_comun * aliq
                     total_ap = cuota_c + g_nocomun
-                    apts_data.append({"Apartamento": ap, "Alícuota": f"{aliq*100:.0f}%", "Cuota Común ($)": round(cuota_c, 2), "Gasto Propio ($)": round(g_nocomun, 2), "Total Cobrado ($)": round(total_ap, 2)})
+                    apts_data.append({
+                        "Apartamento": ap, 
+                        "Alícuota": f"{aliq*100:.0f}%", 
+                        "Cuota Común ($)": round(cuota_c, 2), 
+                        "Gasto Propio ($)": round(g_nocomun, 2), 
+                        "Total Cobrado ($)": round(total_ap, 2)
+                    })
 
                 df_resumen_recibos = pd.DataFrame(apts_data)
                 st.markdown("#### Resumen de Cobro por Apartamento")
@@ -531,6 +539,30 @@ elif st.session_state["rol"] == "Administrador":
 
                 html_adm_recibos = generar_reporte_html("Consolidado de Recibos de Condominio", df_resumen_recibos, sub_periodo)
                 st.download_button("🖨️ Descargar / Imprimir Consolidado de Recibos", data=html_adm_recibos, file_name=f"consolidado_recibos_{f_desde}_al_{f_hasta}.html", mime="text/html")
+
+                st.markdown("---")
+                st.markdown("#### 📲 Enviar Recibos Individuales por WhatsApp")
+                nom_res_actual, _, _, _ = obtener_datos_residencia()
+                
+                for item in apts_data:
+                    c_apt, c_aliq, c_cuota, c_propio, c_total = item["Apartamento"], item["Alícuota"], item["Cuota Común ($)"], item["Gasto Propio ($)"], item["Total Cobrado ($)"]
+                    
+                    mensaje_recibo = f"🏢 *{nom_res_actual}*\n"
+                    mensaje_recibo += f"📄 *RECIBO DE CONDOMINIO*\n\n"
+                    mensaje_recibo += f"🏠 *Apartamento:* {c_apt}\n"
+                    mensaje_recibo += f"📊 *Alícuota:* {c_aliq}\n"
+                    mensaje_recibo += f"🔹 *Cuota Gastos Comunes:* ${c_cuota:.2f}\n"
+                    if c_propio > 0:
+                        mensaje_recibo += f"🔸 *Gastos Propios:* ${c_propio:.2f}\n"
+                    mensaje_recibo += f"💵 *TOTAL A PAGAR:* ${c_total:.2f}\n\n"
+                    mensaje_recibo += f"📌 Recuerde realizar su pago y reportarlo a través de la página web del condominio."
+
+                    col_w1, col_w2 = st.columns([2, 2])
+                    with col_w1:
+                        st.write(f"🏠 **Apt {c_apt}** - Total: **${c_total:.2f}**")
+                    with col_w2:
+                        boton_whatsapp("", mensaje_recibo, f"📲 Enviar Recibo Apt {c_apt}")
+
             else:
                 st.info("No hay gastos registrados para consolidar los recibos.")
 
