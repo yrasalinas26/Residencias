@@ -3,7 +3,6 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from datetime import datetime
-import base64
 
 # =============================================================================
 # 1. CONFIGURACIÓN Y BASE DE DATOS
@@ -68,7 +67,7 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # Datos por defecto
+    # Datos iniciales por defecto
     cursor.execute("INSERT OR IGNORE INTO admin (usuario, password) VALUES (?, ?)", ("admin", "admin123"))
     cursor.execute("INSERT OR IGNORE INTO residencia (id, nombre, rif, direccion) VALUES (1, 'Residencias El Condominio', 'J-12345678-0', 'Av. Principal #123')")
 
@@ -84,12 +83,13 @@ def inicializar_base_de_datos():
 # =============================================================================
 
 def obtener_alicuota(apartamento):
+    """Retorna la alícuota asignada según la norma del condominio."""
     if apartamento in ["2", "7"]:
-        return 0.12
+        return 0.12  # 12%
     elif apartamento == "PH":
-        return 0.16
+        return 0.16  # 16%
     else:
-        return 0.06
+        return 0.06  # 6% para los 10 apartamentos restantes
 
 def obtener_datos_residencia():
     conn = conectar_db()
@@ -136,6 +136,20 @@ def guardar_reporte_pago(apartamento, fecha, monto, referencia, metodo):
     conn = conectar_db()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO pagos_reportados (apartamento, fecha, monto, referencia, metodo) VALUES (?, ?, ?, ?, ?)", (apartamento, str(fecha), monto, referencia, metodo))
+    conn.commit()
+    conn.close()
+
+def eliminar_gasto(gasto_id):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM gastos WHERE id = ?", (gasto_id,))
+    conn.commit()
+    conn.close()
+
+def actualizar_estado_pago(pago_id, nuevo_estado):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE pagos_reportados SET estado = ? WHERE id = ?", (nuevo_estado, pago_id))
     conn.commit()
     conn.close()
 
@@ -218,7 +232,6 @@ elif st.session_state["rol"] == "Propietario":
     tab_recibos, tab_reporte, tab_historial, tab_seguridad = st.tabs(["📄 Recibo del Mes", "💳 Reportar Pago", "📋 Mis Pagos", "⚙️ Cambiar Contraseña"])
 
     with tab_recibos:
-        # Encabezado del Recibo con datos de la Residencia
         col_logo, col_info = st.columns([1, 3])
         with col_logo:
             if logo_res:
@@ -239,7 +252,6 @@ elif st.session_state["rol"] == "Propietario":
             st.subheader("Detalle de Gastos del Mes")
             st.dataframe(df_gastos, use_container_width=True)
 
-            # Cálculo individual del recibo
             gastos_comunes = df_gastos[df_gastos["Tipo"] == "Común"]["Monto Total ($)"].sum()
             gastos_no_comunes = df_gastos[(df_gastos["Tipo"] == "No Común") & (df_gastos["Apto Destino"] == apt)]["Monto Total ($)"].sum()
 
@@ -270,9 +282,9 @@ elif st.session_state["rol"] == "Propietario":
                     st.error("Ingrese una referencia válida.")
 
     with tab_historial:
-        st.subheader("📋 Historial de Pagos")
+        st.subheader("📋 Historial de Mis Pagos")
         conn = conectar_db()
-        df_p = pd.read_sql_query("SELECT fecha, monto, referencia, metodo, estado FROM pagos_reportados WHERE apartamento = ?", conn, params=(apt,))
+        df_p = pd.read_sql_query("SELECT fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Referencia', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados WHERE apartamento = ? ORDER BY id DESC", conn, params=(apt,))
         conn.close()
         st.dataframe(df_p, use_container_width=True)
 
@@ -302,9 +314,9 @@ elif st.session_state["rol"] == "Administrador":
             st.rerun()
 
     st.markdown("---")
-    tab_gastos, tab_datos, tab_pagos_admin = st.tabs(["➕ Gastos Comunes y No Comunes", "🏢 Datos de la Residencia / Logo", "📊 Pagos Reportados"])
+    tab_gastos, tab_datos, tab_pagos_admin = st.tabs(["➕ Gastos Comunes y No Comunes", "🏢 Datos de la Residencia / Logo", "📊 Gestión de Pagos Reportados"])
 
-    # 1. Registro de Gastos Comunes y No Comunes
+    # 1. Cargar y Eliminar Gastos
     with tab_gastos:
         st.subheader("Cargar Nuevo Gasto")
         with st.form("form_gastos", clear_on_submit=True):
@@ -332,11 +344,24 @@ elif st.session_state["rol"] == "Administrador":
         st.markdown("---")
         st.subheader("Gastos Registrados")
         conn = conectar_db()
-        df_g = pd.read_sql_query("SELECT id, mes_ano, concepto, tipo, monto, apto_destino FROM gastos ORDER BY id DESC", conn)
+        df_g = pd.read_sql_query("SELECT id AS 'ID', mes_ano AS 'Mes/Año', concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto Destino' FROM gastos ORDER BY id DESC", conn)
         conn.close()
         st.dataframe(df_g, use_container_width=True)
 
-    # 2. Configurar Nombre, RIF, Dirección y Logo
+        # Sección para Eliminar Gasto Registrado
+        if not df_g.empty:
+            st.markdown("---")
+            st.subheader("🗑️ Eliminar Gasto Cargado")
+            opciones_gastos = {f"ID #{row['ID']}: {row['Concepto']} (${row['Monto ($)']}) - {row['Mes/Año']}": row['ID'] for _, row in df_g.iterrows()}
+            gasto_sel = st.selectbox("Seleccione el gasto a eliminar:", list(opciones_gastos.keys()))
+            
+            if st.button("❌ Eliminar Gasto Seleccionado"):
+                id_eliminar = opciones_gastos[gasto_sel]
+                eliminar_gasto(id_eliminar)
+                st.success("Gasto eliminado correctamente.")
+                st.rerun()
+
+    # 2. Configurar Residencia y Logo
     with tab_datos:
         st.subheader("🏢 Configuración del Edificio y Recibo")
         nom_act, rif_act, dir_act, logo_act = obtener_datos_residencia()
@@ -353,10 +378,34 @@ elif st.session_state["rol"] == "Administrador":
                 st.success("¡Datos e imagen actualizados correctamente!")
                 st.rerun()
 
-    # 3. Pagos Reportados por Propietarios
+    # 3. Aprobar / Rechazar Pagos Reportados
     with tab_pagos_admin:
-        st.subheader("Revisión de Pagos")
+        st.subheader("⏳ Revisión de Pagos Pendientes")
         conn = conectar_db()
-        df_p_all = pd.read_sql_query("SELECT id, apartamento, fecha, monto, referencia, metodo, estado FROM pagos_reportados ORDER BY id DESC", conn)
+        df_pendientes = pd.read_sql_query("SELECT id, apartamento, fecha, monto, referencia, metodo FROM pagos_reportados WHERE estado = 'Pendiente' ORDER BY id DESC", conn)
         conn.close()
-        st.dataframe(df_p_all, use_container_width=True)
+
+        if not df_pendientes.empty:
+            for _, row in df_pendientes.iterrows():
+                with st.expander(f"📌 Pago ID #{row['id']} - Apt {row['apartamento']} | Monto: ${row['monto']:.2f} | Ref: {row['referencia']}"):
+                    st.write(f"**Fecha:** {row['fecha']} | **Método:** {row['metodo']}")
+                    col_ok, col_no, _ = st.columns([1, 1, 2])
+                    with col_ok:
+                        if st.button(f"✅ Aprobar (#{row['id']})", key=f"ap_{row['id']}"):
+                            actualizar_estado_pago(row['id'], 'Aprobado')
+                            st.success(f"Pago #{row['id']} aprobado.")
+                            st.rerun()
+                    with col_no:
+                        if st.button(f"❌ Rechazar (#{row['id']})", key=f"rec_{row['id']}"):
+                            actualizar_estado_pago(row['id'], 'Rechazado')
+                            st.warning(f"Pago #{row['id']} rechazado.")
+                            st.rerun()
+        else:
+            st.info("No hay pagos pendientes por revisar.")
+
+        st.markdown("---")
+        st.subheader("📋 Historial General de Pagos")
+        conn = conectar_db()
+        df_todos_pagos = pd.read_sql_query("SELECT id AS 'ID', apartamento AS 'Apto', fecha AS 'Fecha', monto AS 'Monto ($)', referencia AS 'Ref', metodo AS 'Método', estado AS 'Estado' FROM pagos_reportados ORDER BY id DESC", conn)
+        conn.close()
+        st.dataframe(df_todos_pagos, use_container_width=True)
