@@ -5,7 +5,6 @@ import streamlit.components.v1 as components
 from datetime import datetime
 import urllib.parse
 import io
-from fpdf import FPDF
 
 # =============================================================================
 # 1. CONFIGURACIÓN Y BASE DE DATOS
@@ -192,30 +191,39 @@ def eliminar_proveedor(prov_id):
     conn.close()
 
 # -----------------------------------------------------------------------------
-# GENERACIÓN DE PDF Y WHATSAPP
+# GENERACIÓN DE REPORTES (SIN DEPENDENCIAS EXTERNAS) Y WHATSAPP
 # -----------------------------------------------------------------------------
 
-def generar_pdf_generico(titulo, df_datos):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, titulo, ln=True, align='C')
-    pdf.ln(10)
-    
-    pdf.set_font("Arial", 'B', 10)
-    col_width = 190 / len(df_datos.columns)
-    
-    for col in df_datos.columns:
-        pdf.cell(col_width, 8, str(col), border=1, align='C')
-    pdf.ln()
-    
-    pdf.set_font("Arial", '', 9)
-    for _, row in df_datos.iterrows():
-        for item in row:
-            pdf.cell(col_width, 8, str(item), border=1)
-        pdf.ln()
-        
-    return pdf.output(dest='S').encode('latin-1', 'replace')
+def generar_reporte_html(titulo, df_datos):
+    tabla_html = df_datos.to_html(index=False, justify='left')
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>{titulo}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 30px; color: #333; }}
+            h1 {{ text-align: center; color: #1E3A8A; margin-bottom: 20px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            th, td {{ border: 1px solid #cbd5e1; padding: 10px; text-align: left; }}
+            th {{ background-color: #f1f5f9; font-weight: bold; }}
+            tr:nth-child(even) {{ background-color: #f8fafc; }}
+            .btn-container {{ text-align: center; margin-bottom: 20px; }}
+            .print-btn {{ padding: 10px 20px; background-color: #2563eb; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; }}
+            @media print {{ .btn-container {{ display: none; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="btn-container">
+            <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar como PDF</button>
+        </div>
+        <h1>{titulo}</h1>
+        {tabla_html}
+    </body>
+    </html>
+    """
+    return html_content
 
 def boton_whatsapp(telefono, mensaje):
     msg_url = urllib.parse.quote(mensaje)
@@ -316,8 +324,8 @@ elif st.session_state["rol"] == "Propietario":
             col2.metric("Gastos No Comunes", f"${gastos_no_comunes:.2f}")
             col3.metric("TOTAL A PAGAR", f"${total_a_pagar:.2f}")
 
-            pdf_bytes = generar_pdf_generico(f"Recibo de Condominio - Apt {apt}", df_gastos)
-            st.download_button("📥 Descargar Recibo (PDF)", data=pdf_bytes, file_name=f"recibo_apt_{apt}.pdf", mime="application/pdf")
+            html_recibo = generar_reporte_html(f"Recibo de Condominio - Apt {apt}", df_gastos)
+            st.download_button("📥 Descargar / Imprimir Recibo", data=html_recibo, file_name=f"recibo_apt_{apt}.html", mime="text/html")
         else:
             st.info("No hay gastos cargados en el sistema actualmente.")
 
@@ -342,8 +350,8 @@ elif st.session_state["rol"] == "Propietario":
         conn.close()
         st.dataframe(df_p, use_container_width=True)
         if not df_p.empty:
-            pdf_pagos = generar_pdf_generico(f"Historial de Pagos - Apt {apt}", df_p)
-            st.download_button("📥 Descargar Reporte de Pagos (PDF)", data=pdf_pagos, file_name=f"pagos_apt_{apt}.pdf", mime="application/pdf")
+            html_pagos = generar_reporte_html(f"Historial de Pagos - Apt {apt}", df_p)
+            st.download_button("📥 Descargar / Imprimir Historial", data=html_pagos, file_name=f"pagos_apt_{apt}.html", mime="text/html")
 
     with tab_prov:
         st.subheader("🛠️ Directorio de Proveedores y Servicios")
@@ -409,8 +417,8 @@ elif st.session_state["rol"] == "Administrador":
         st.dataframe(df_g, use_container_width=True)
 
         if not df_g.empty:
-            pdf_gastos = generar_pdf_generico("Reporte General de Gastos", df_g)
-            st.download_button("📥 Reporte de Gastos (PDF)", data=pdf_gastos, file_name="reporte_gastos.pdf", mime="application/pdf")
+            html_gastos = generar_reporte_html("Reporte General de Gastos", df_g)
+            st.download_button("📥 Descargar / Imprimir Reporte de Gastos", data=html_gastos, file_name="reporte_gastos.html", mime="text/html")
             
             st.markdown("---")
             st.subheader("🗑️ Eliminar Gasto")
@@ -464,8 +472,8 @@ elif st.session_state["rol"] == "Administrador":
         conn.close()
         st.dataframe(df_todos_pagos, use_container_width=True)
         if not df_todos_pagos.empty:
-            pdf_pagos = generar_pdf_generico("Reporte General de Pagos", df_todos_pagos)
-            st.download_button("📥 Reporte General de Pagos (PDF)", data=pdf_pagos, file_name="reporte_general_pagos.pdf", mime="application/pdf")
+            html_todos_pagos = generar_reporte_html("Reporte General de Pagos", df_todos_pagos)
+            st.download_button("📥 Descargar / Imprimir Reporte General de Pagos", data=html_todos_pagos, file_name="reporte_general_pagos.html", mime="text/html")
 
     with tab_prov_admin:
         st.subheader("🛠️ Administrar Proveedores y Servicios")
