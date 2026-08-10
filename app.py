@@ -199,6 +199,52 @@ def eliminar_proveedor(prov_id):
 # GENERACIÓN DE REPORTES (HTML / PDF) Y WHATSAPP
 # -----------------------------------------------------------------------------
 
+def generar_recibo_html(nombre_edificio, rif, direccion, mes_cobro, apto, alicuota, df_gastos, total_pagar):
+    tabla_html = df_gastos.to_html(index=False, justify='left')
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Recibo de Cobro - Apt {apto}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 25px; color: #333; line-height: 1.4; }}
+            .header {{ border-bottom: 2px solid #1E3A8A; padding-bottom: 10px; margin-bottom: 15px; }}
+            .header h1 {{ color: #1E3A8A; margin: 0; font-size: 24px; }}
+            .info-box {{ background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 12px; border-radius: 6px; margin-bottom: 15px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            th, td {{ border: 1px solid #cbd5e1; padding: 8px; text-align: left; font-size: 14px; }}
+            th {{ background-color: #f1f5f9; font-weight: bold; }}
+            tr:nth-child(even) {{ background-color: #f8fafc; }}
+            .total-box {{ margin-top: 15px; text-align: right; font-size: 18px; font-weight: bold; color: #1E3A8A; }}
+            .btn-container {{ text-align: center; margin-bottom: 15px; }}
+            .print-btn {{ padding: 10px 20px; background-color: #2563eb; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 15px; font-weight: bold; }}
+            @media print {{ .btn-container {{ display: none; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="btn-container">
+            <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+        </div>
+        <div class="header">
+            <h1>🏢 {nombre_edificio}</h1>
+            <p style="margin:2px 0;"><b>RIF:</b> {rif} | <b>Dirección:</b> {direccion}</p>
+        </div>
+        <div class="info-box">
+            <p style="margin:2px 0;"><b>MES CORRESPONDIENTE:</b> {mes_cobro}</p>
+            <p style="margin:2px 0;"><b>APARTAMENTO:</b> {apto} | <b>ALÍCUOTA:</b> {alicuota*100:.0f}%</p>
+            <p style="margin:2px 0;"><b>FECHA DE EMISIÓN:</b> {datetime.now().strftime('%d/%m/%Y')}</p>
+        </div>
+        <h3>Detalle de Gastos</h3>
+        {tabla_html}
+        <div class="total-box">
+            TOTAL A CANCELAR: ${total_pagar:.2f}
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
+
 def generar_reporte_html(titulo, df_datos, subtitulo=""):
     tabla_html = df_datos.to_html(index=False, justify='left')
     html_content = f"""
@@ -337,7 +383,8 @@ elif st.session_state["rol"] == "Propietario":
         conn.close()
 
         if not df_gastos.empty:
-            st.subheader("Detalle de Gastos del Mes")
+            mes_actual = df_gastos["Mes/Año"].iloc[-1]
+            st.subheader(f"📄 Recibo de Cobro - {mes_actual}")
             st.dataframe(df_gastos, use_container_width=True)
 
             gastos_comunes = df_gastos[df_gastos["Tipo"] == "Común"]["Monto Total ($)"].sum()
@@ -351,8 +398,8 @@ elif st.session_state["rol"] == "Propietario":
             col2.metric("Gastos No Comunes", f"${gastos_no_comunes:.2f}")
             col3.metric("TOTAL A PAGAR", f"${total_a_pagar:.2f}")
 
-            html_recibo = generar_reporte_html(f"Recibo de Condominio - Apt {apt}", df_gastos, f"Total a pagar: ${total_a_pagar:.2f}")
-            st.download_button("📥 Descargar / Imprimir Recibo", data=html_recibo, file_name=f"recibo_apt_{apt}.html", mime="text/html")
+            html_recibo = generar_recibo_html(nombre_res, rif_res, dir_res, mes_actual, apt, alicuota, df_gastos, total_a_pagar)
+            st.download_button("📥 Descargar / Imprimir Recibo", data=html_recibo, file_name=f"recibo_apt_{apt}_{mes_actual}.html", mime="text/html")
         else:
             st.info("No hay gastos cargados en el sistema actualmente.")
 
@@ -419,8 +466,9 @@ elif st.session_state["rol"] == "Administrador":
             st.rerun()
 
     st.markdown("---")
-    tab_aprobar, tab_reportes_admin, tab_gastos_admin, tab_prov_admin, tab_datos = st.tabs([
+    tab_aprobar, tab_previsualizar, tab_reportes_admin, tab_gastos_admin, tab_prov_admin, tab_datos = st.tabs([
         "✅ Aprobar Pagos", 
+        "👁️ Previsualizar y Enviar Recibos",
         "📑 Reportes por Periodo", 
         "➕ Cargar Gastos/Proveedores", 
         "🛠️ Proveedores", 
@@ -450,7 +498,61 @@ elif st.session_state["rol"] == "Administrador":
         else:
             st.info("No hay pagos pendientes por revisar en este momento.")
 
-    # 2. TAB REPORTES POR PERIODO
+    # 2. TAB PREVISUALIZAR Y ENVIAR RECIBOS
+    with tab_previsualizar:
+        st.subheader("👁️ Previsualización de Recibos antes de Emitir / Enviar")
+        conn = conectar_db()
+        df_g = pd.read_sql_query("SELECT mes_ano, concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos", conn)
+        conn.close()
+
+        if not df_g.empty:
+            nom_res_act, rif_res_act, dir_res_act, _ = obtener_datos_residencia()
+            mes_actual_txt = df_g["mes_ano"].iloc[-1]
+            tot_comun = df_g[df_g["Tipo"] == "Común"]["Monto ($)"].sum()
+
+            todos_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+            apt_sel = st.selectbox("🔍 Seleccionar Apartamento para Previsualizar Recibo:", todos_apts)
+
+            aliq_sel = obtener_alicuota(apt_sel)
+            cuota_comun_sel = tot_comun * aliq_sel
+            gasto_propio_sel = df_g[(df_g["Tipo"] == "No Común") & (df_g["Apto"] == apt_sel)]["Monto ($)"].sum()
+            total_pagar_sel = cuota_comun_sel + gasto_propio_sel
+
+            st.markdown("---")
+            st.markdown(f"### 🏢 {nom_res_act}")
+            st.write(f"**RIF:** {rif_res_act} | **Dirección:** {dir_res_act}")
+            st.markdown(f"**Recibo de Cobro Correspondiente a:** `{mes_actual_txt}`")
+            st.markdown(f"**Apartamento:** {apt_sel} | **Alícuota:** {aliq_sel*100:.0f}%")
+
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric("Cuota Común", f"${cuota_comun_sel:.2f}")
+            col_m2.metric("Gasto Propio", f"${gasto_propio_sel:.2f}")
+            col_m3.metric("TOTAL A PAGAR", f"${total_pagar_sel:.2f}")
+
+            st.markdown("##### 📋 Detalle de Gastos del Período:")
+            st.dataframe(df_g, use_container_width=True)
+
+            msg_whatsapp_individual = f"🏢 *{nom_res_act}*\n"
+            msg_whatsapp_individual += f"📄 *RECIBO DE COBRO - {mes_actual_txt.upper()}*\n\n"
+            msg_whatsapp_individual += f"🏠 *Apartamento:* {apt_sel}\n"
+            msg_whatsapp_individual += f"📊 *Alícuota:* {aliq_sel*100:.0f}%\n"
+            msg_whatsapp_individual += f"🔹 *Cuota Gastos Comunes:* ${cuota_comun_sel:.2f}\n"
+            if gasto_propio_sel > 0:
+                msg_whatsapp_individual += f"🔸 *Gastos Propios:* ${gasto_propio_sel:.2f}\n"
+            msg_whatsapp_individual += f"💵 *TOTAL A PAGAR:* ${total_pagar_sel:.2f}\n\n"
+            msg_whatsapp_individual += f"📌 Puede ingresar a la plataforma web para ver el desglose completo y reportar su pago."
+
+            st.markdown("---")
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                html_preview = generar_recibo_html(nom_res_act, rif_res_act, dir_res_act, mes_actual_txt, apt_sel, aliq_sel, df_g, total_pagar_sel)
+                st.download_button("🖨️ Descargar / Imprimir Recibo Individual", data=html_preview, file_name=f"recibo_apt_{apt_sel}_{mes_actual_txt}.html", mime="text/html")
+            with col_btn2:
+                boton_whatsapp("", msg_whatsapp_individual, f"📲 Enviar Recibo Apt {apt_sel} por WhatsApp")
+        else:
+            st.info("No hay gastos registrados en el sistema para generar vistas previas de recibos.")
+
+    # 3. TAB REPORTES POR PERIODO
     with tab_reportes_admin:
         st.subheader("📑 Reportes General e Impresiones por Periodo")
         
@@ -574,7 +676,7 @@ elif st.session_state["rol"] == "Administrador":
                     c_apt, c_aliq, c_cuota, c_propio, c_total = item["Apartamento"], item["Alícuota"], item["Cuota Común ($)"], item["Gasto Propio ($)"], item["Total Cobrado ($)"]
                     
                     mensaje_recibo = f"🏢 *{nom_res_actual}*\n"
-                    mensaje_recibo += f"📄 *RECIBO DE CONDOMINIO*\n\n"
+                    mensaje_recibo += f"📄 *RECIBO DE CONDOMINIO - {mes_actual_txt.upper()}*\n\n"
                     mensaje_recibo += f"🏠 *Apartamento:* {c_apt}\n"
                     mensaje_recibo += f"📊 *Alícuota:* {c_aliq}\n"
                     mensaje_recibo += f"🔹 *Cuota Gastos Comunes:* ${c_cuota:.2f}\n"
@@ -592,7 +694,7 @@ elif st.session_state["rol"] == "Administrador":
             else:
                 st.info("No hay gastos registrados para consolidar los recibos.")
 
-    # 3. TAB GASTOS
+    # 4. TAB GASTOS
     with tab_gastos_admin:
         st.subheader("➕ Cargar Nuevo Gasto / Factura de Proveedor")
         with st.form("form_gastos", clear_on_submit=True):
@@ -628,7 +730,7 @@ elif st.session_state["rol"] == "Administrador":
                 st.success("Gasto eliminado.")
                 st.rerun()
 
-    # 4. TAB PROVEEDORES
+    # 5. TAB PROVEEDORES
     with tab_prov_admin:
         st.subheader("🛠️ Directorio de Proveedores")
         with st.form("form_prov"):
@@ -659,7 +761,7 @@ elif st.session_state["rol"] == "Administrador":
                         eliminar_proveedor(row['id'])
                         st.rerun()
 
-    # 5. TAB CONFIGURACIÓN EDIFICIO
+    # 6. TAB CONFIGURACIÓN EDIFICIO
     with tab_datos:
         st.subheader("🏢 Datos de la Residencia")
         nom_act, rif_act, dir_act, logo_act = obtener_datos_residencia()
@@ -672,5 +774,5 @@ elif st.session_state["rol"] == "Administrador":
             if st.form_submit_button("Actualizar Información"):
                 bytes_logo = logo_file.read() if logo_file else None
                 guardar_datos_residencia(nombre_input, rif_input, direccion_input, bytes_logo)
-                st.success("Actualizado correctamente.")
+                st.success("Datos del edificio actualizados con éxito.")
                 st.rerun()
