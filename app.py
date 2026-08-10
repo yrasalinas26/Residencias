@@ -114,7 +114,7 @@ def obtener_alicuota(apartamento):
     elif apartamento == "PH":
         return 0.16  # 16%
     else:
-        return 0.06  # 6% para los 10 restantes
+        return 0.06  # 6% para los 10 restantes (1A, 1B, 3A, 3B, 4A, 4B, 5A, 5B, 6A, 6B)
 
 def obtener_datos_residencia():
     conn = conectar_db()
@@ -198,6 +198,60 @@ def eliminar_proveedor(prov_id):
 # -----------------------------------------------------------------------------
 # GENERACIÓN DE REPORTES (HTML / PDF) Y WHATSAPP
 # -----------------------------------------------------------------------------
+
+def generar_recibo_general_html(nombre_edificio, rif, direccion, mes_cobro, df_gastos, df_resumen):
+    tabla_gastos_html = df_gastos.to_html(index=False, justify='left')
+    tabla_resumen_html = df_resumen.to_html(index=False, justify='left')
+    
+    total_gastos = df_gastos["Monto ($)"].sum()
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Recibo General de Condominio - {mes_cobro}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 25px; color: #333; line-height: 1.4; }}
+            .header {{ border-bottom: 2px solid #1E3A8A; padding-bottom: 10px; margin-bottom: 15px; }}
+            .header h1 {{ color: #1E3A8A; margin: 0; font-size: 24px; }}
+            .info-box {{ background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 12px; border-radius: 6px; margin-bottom: 15px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 20px; }}
+            th, td {{ border: 1px solid #cbd5e1; padding: 8px; text-align: left; font-size: 14px; }}
+            th {{ background-color: #f1f5f9; font-weight: bold; }}
+            tr:nth-child(even) {{ background-color: #f8fafc; }}
+            .total-box {{ text-align: right; font-size: 16px; font-weight: bold; color: #1E3A8A; margin-bottom: 20px; }}
+            .btn-container {{ text-align: center; margin-bottom: 15px; }}
+            .print-btn {{ padding: 10px 20px; background-color: #2563eb; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 15px; font-weight: bold; }}
+            @media print {{ .btn-container {{ display: none; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="btn-container">
+            <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+        </div>
+        <div class="header">
+            <h1>🏢 {nombre_edificio}</h1>
+            <p style="margin:2px 0;"><b>RIF:</b> {rif} | <b>Dirección:</b> {direccion}</p>
+        </div>
+        <div class="info-box">
+            <p style="margin:2px 0;"><b>AVISO Y RECIBO GENERAL DE GASTOS DE CONDOMINIO</b></p>
+            <p style="margin:2px 0;"><b>MES CORRESPONDIENTE:</b> {mes_cobro}</p>
+            <p style="margin:2px 0;"><b>FECHA DE EMISIÓN:</b> {datetime.now().strftime('%d/%m/%Y')}</p>
+        </div>
+
+        <h3>1. Relación de Gastos del Mes</h3>
+        {tabla_gastos_html}
+        <div class="total-box">
+            TOTAL GASTOS REGISTRADOS: ${total_gastos:.2f}
+        </div>
+
+        <h3>2. Distribución de Pagos por Alicuota y Apartamento</h3>
+        {tabla_resumen_html}
+    </body>
+    </html>
+    """
+    return html_content
 
 def generar_recibo_html(nombre_edificio, rif, direccion, mes_cobro, apto, alicuota, df_gastos, total_pagar):
     tabla_html = df_gastos.to_html(index=False, justify='left')
@@ -298,7 +352,7 @@ if "rol" not in st.session_state:
 if "usuario_logueado" not in st.session_state:
     st.session_state["usuario_logueado"] = None
 
-# A. INICIO DE SESIÓN CON LOGO
+# A. INICIO DE SESIÓN
 if st.session_state["rol"] is None:
     col_l1, col_l2, col_l3 = st.columns([1, 1, 1])
     with col_l2:
@@ -466,9 +520,9 @@ elif st.session_state["rol"] == "Administrador":
             st.rerun()
 
     st.markdown("---")
-    tab_aprobar, tab_previsualizar, tab_reportes_admin, tab_gastos_admin, tab_prov_admin, tab_datos = st.tabs([
+    tab_aprobar, tab_recibo_gen, tab_reportes_admin, tab_gastos_admin, tab_prov_admin, tab_datos = st.tabs([
         "✅ Aprobar Pagos", 
-        "👁️ Previsualizar y Enviar Recibos",
+        "👁️ Previsualizar Recibo General",
         "📑 Reportes por Periodo", 
         "➕ Cargar Gastos/Proveedores", 
         "🛠️ Proveedores", 
@@ -498,59 +552,93 @@ elif st.session_state["rol"] == "Administrador":
         else:
             st.info("No hay pagos pendientes por revisar en este momento.")
 
-    # 2. TAB PREVISUALIZAR Y ENVIAR RECIBOS
-    with tab_previsualizar:
-        st.subheader("👁️ Previsualización de Recibos antes de Emitir / Enviar")
+    # 2. TAB PREVISUALIZAR RECIBO GENERAL (NUEVO / ACTUALIZADO)
+    with tab_recibo_gen:
+        st.subheader("👁️ Vista Previa del Recibo General de Gastos")
+        
         conn = conectar_db()
         df_g = pd.read_sql_query("SELECT mes_ano, concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos", conn)
         conn.close()
 
         if not df_g.empty:
-            nom_res_act, rif_res_act, dir_res_act, _ = obtener_datos_residencia()
+            nom_res_act, rif_res_act, dir_res_act, logo_res_act = obtener_datos_residencia()
             mes_actual_txt = df_g["mes_ano"].iloc[-1]
             tot_comun = df_g[df_g["Tipo"] == "Común"]["Monto ($)"].sum()
+            tot_general = df_g["Monto ($)"].sum()
 
+            # ENCABEZADO DE LA PREVISUALIZACIÓN
+            col_l1, col_l2 = st.columns([1, 4])
+            with col_l1:
+                if logo_res_act:
+                    st.image(logo_res_act, width=120)
+                elif os.path.exists("logo.png"):
+                    st.image("logo.png", width=120)
+                else:
+                    st.write("🏢")
+            with col_l2:
+                st.markdown(f"## **{nom_res_act}**")
+                st.write(f"**RIF:** {rif_res_act} | **Dirección:** {dir_res_act}")
+                st.markdown(f"### **AVISO / RECIBO GENERAL DE GASTOS - {mes_actual_txt.upper()}**")
+
+            st.markdown("---")
+            st.markdown("#### 📋 1. Relación de Gastos Cargar del Mes")
+            st.dataframe(df_g[["Concepto", "Tipo", "Monto ($)", "Apto"]], use_container_width=True)
+            st.info(f"**Monto Total Gastos Comunes:** ${tot_comun:.2f} | **Total Gastos Registrados:** ${tot_general:.2f}")
+
+            # CÁLCULO DE ALÍCUOTAS Y APARTAMENTOS
             todos_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
-            apt_sel = st.selectbox("🔍 Seleccionar Apartamento para Previsualizar Recibo:", todos_apts)
+            apts_data = []
 
-            aliq_sel = obtener_alicuota(apt_sel)
-            cuota_comun_sel = tot_comun * aliq_sel
-            gasto_propio_sel = df_g[(df_g["Tipo"] == "No Común") & (df_g["Apto"] == apt_sel)]["Monto ($)"].sum()
-            total_pagar_sel = cuota_comun_sel + gasto_propio_sel
+            for ap in todos_apts:
+                aliq = obtener_alicuota(ap)
+                g_nocomun = df_g[(df_g["Tipo"] == "No Común") & (df_g["Apto"] == ap)]["Monto ($)"].sum()
+                cuota_c = tot_comun * aliq
+                total_ap = cuota_c + g_nocomun
+                apts_data.append({
+                    "Apartamento": ap, 
+                    "Alícuota": f"{aliq*100:.0f}%", 
+                    "Cuota Común ($)": round(cuota_c, 2), 
+                    "Gasto Propio ($)": round(g_nocomun, 2), 
+                    "Total a Pagar ($)": round(total_ap, 2)
+                })
 
-            st.markdown("---")
-            st.markdown(f"### 🏢 {nom_res_act}")
-            st.write(f"**RIF:** {rif_res_act} | **Dirección:** {dir_res_act}")
-            st.markdown(f"**Recibo de Cobro Correspondiente a:** `{mes_actual_txt}`")
-            st.markdown(f"**Apartamento:** {apt_sel} | **Alícuota:** {aliq_sel*100:.0f}%")
-
-            col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric("Cuota Común", f"${cuota_comun_sel:.2f}")
-            col_m2.metric("Gasto Propio", f"${gasto_propio_sel:.2f}")
-            col_m3.metric("TOTAL A PAGAR", f"${total_pagar_sel:.2f}")
-
-            st.markdown("##### 📋 Detalle de Gastos del Período:")
-            st.dataframe(df_g, use_container_width=True)
-
-            msg_whatsapp_individual = f"🏢 *{nom_res_act}*\n"
-            msg_whatsapp_individual += f"📄 *RECIBO DE COBRO - {mes_actual_txt.upper()}*\n\n"
-            msg_whatsapp_individual += f"🏠 *Apartamento:* {apt_sel}\n"
-            msg_whatsapp_individual += f"📊 *Alícuota:* {aliq_sel*100:.0f}%\n"
-            msg_whatsapp_individual += f"🔹 *Cuota Gastos Comunes:* ${cuota_comun_sel:.2f}\n"
-            if gasto_propio_sel > 0:
-                msg_whatsapp_individual += f"🔸 *Gastos Propios:* ${gasto_propio_sel:.2f}\n"
-            msg_whatsapp_individual += f"💵 *TOTAL A PAGAR:* ${total_pagar_sel:.2f}\n\n"
-            msg_whatsapp_individual += f"📌 Puede ingresar a la plataforma web para ver el desglose completo y reportar su pago."
+            df_resumen_recibos = pd.DataFrame(apts_data)
 
             st.markdown("---")
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                html_preview = generar_recibo_html(nom_res_act, rif_res_act, dir_res_act, mes_actual_txt, apt_sel, aliq_sel, df_g, total_pagar_sel)
-                st.download_button("🖨️ Descargar / Imprimir Recibo Individual", data=html_preview, file_name=f"recibo_apt_{apt_sel}_{mes_actual_txt}.html", mime="text/html")
-            with col_btn2:
-                boton_whatsapp("", msg_whatsapp_individual, f"📲 Enviar Recibo Apt {apt_sel} por WhatsApp")
+            st.markdown("#### 📊 2. Monto a Pagar por Apartamento según su Alícuota")
+            st.dataframe(df_resumen_recibos, use_container_width=True)
+
+            st.markdown("---")
+            col_acc1, col_acc2 = st.columns(2)
+            
+            with col_acc1:
+                # BOTÓN IMPRIMIR / DESCARGAR HTML RECIBO GENERAL
+                html_recibo_general = generar_recibo_general_html(nom_res_act, rif_res_act, dir_res_act, mes_actual_txt, df_g[["Concepto", "Tipo", "Monto ($)", "Apto"]], df_resumen_recibos)
+                st.download_button("🖨️ Imprimir / Guardar Recibo General (PDF)", data=html_recibo_general, file_name=f"recibo_general_{mes_actual_txt}.html", mime="text/html")
+
+            with col_acc2:
+                # MENSAJE DE WHATSAPP CON EL RESUMEN DE ALÍCUOTAS PARA EL GRUPO
+                cuota_6 = tot_comun * 0.06
+                cuota_12 = tot_comun * 0.12
+                cuota_16 = tot_comun * 0.16
+
+                msg_grupo = f"🏢 *{nom_res_act}*\n"
+                msg_grupo += f"📢 *AVISO Y RECIBO GENERAL - {mes_actual_txt.upper()}*\n"
+                msg_grupo += f"💰 *Total Gastos Comunes:* ${tot_comun:.2f}\n"
+                msg_grupo += f"__________________________________\n\n"
+                msg_grupo += f"🔹 *Alicuota 6%* (Aptos: 1A, 1B, 3A, 3B, 4A, 4B, 5A, 5B, 6A, 6B):\n"
+                msg_grupo += f"• *Monto a Pagar:* ${cuota_6:.2f}\n\n"
+                msg_grupo += f"🔹 *Alicuota 12%* (Aptos: 2, 7):\n"
+                msg_grupo += f"• *Monto a Pagar:* ${cuota_12:.2f}\n\n"
+                msg_grupo += f"🔹 *Alicuota 16%* (PH):\n"
+                msg_grupo += f"• *Monto a Pagar:* ${cuota_16:.2f}\n"
+                msg_grupo += f"__________________________________\n"
+                msg_grupo += f"📌 Verifique si posee un gasto propio o ingrese a la plataforma para reportar su pago."
+
+                boton_whatsapp("", msg_grupo, "📲 Enviar Resumen General al Grupo de WhatsApp")
+
         else:
-            st.info("No hay gastos registrados en el sistema para generar vistas previas de recibos.")
+            st.info("No hay gastos registrados en la base de datos para generar la previsualización del recibo general.")
 
     # 3. TAB REPORTES POR PERIODO
     with tab_reportes_admin:
@@ -618,8 +706,7 @@ elif st.session_state["rol"] == "Administrador":
 
             if not df_g.empty:
                 tot_comun = df_g[df_g["Tipo"] == "Común"]["Monto ($)"].sum()
-                st.dataframe(df_g[["Concepto", "Tipo", "Monto ($)", "Apto"]], use_container_width=True)
-
+                
                 apts_data = []
                 todos_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
                 for ap in todos_apts:
@@ -636,41 +723,15 @@ elif st.session_state["rol"] == "Administrador":
                     })
 
                 df_resumen_recibos = pd.DataFrame(apts_data)
-                st.markdown("#### Resumen de Cobro por Apartamento")
                 st.dataframe(df_resumen_recibos, use_container_width=True)
 
                 html_adm_recibos = generar_reporte_html("Consolidado de Recibos de Condominio", df_resumen_recibos, sub_periodo)
                 st.download_button("🖨️ Descargar / Imprimir Consolidado de Recibos", data=html_adm_recibos, file_name=f"consolidado_recibos_{f_desde}_al_{f_hasta}.html", mime="text/html")
 
                 st.markdown("---")
-                nom_res_actual, _, _, _ = obtener_datos_residencia()
-                
-                # SECCIÓN MENSAJE GENERAL POR WHATSAPP
-                st.markdown("#### 📢 Mensaje General para el Grupo de WhatsApp")
-                mes_actual_txt = df_g["mes_ano"].iloc[-1] if "mes_ano" in df_g.columns and not df_g.empty else "Mes Actual"
-                
-                cuota_6 = tot_comun * 0.06
-                cuota_12 = tot_comun * 0.12
-                cuota_16 = tot_comun * 0.16
-
-                msg_grupo = f"🏢 *{nom_res_actual}*\n"
-                msg_grupo += f"📢 *RESUMEN DE RECIBOS DE CONDOMINIO*\n"
-                msg_grupo += f"🗓️ *Periodo:* {mes_actual_txt}\n"
-                msg_grupo += f"💰 *Total Gastos Comunes:* ${tot_comun:.2f}\n"
-                msg_grupo += f"__________________________________\n\n"
-                msg_grupo += f"🔹 *Grupo 6% Alícuota* (Aptos: 1A, 1B, 3A, 3B, 4A, 4B, 5A, 5B, 6A, 6B):\n"
-                msg_grupo += f"• *Cuota Común por Apto:* ${cuota_6:.2f}\n\n"
-                msg_grupo += f"🔹 *Grupo 12% Alícuota* (Aptos: 2, 7):\n"
-                msg_grupo += f"• *Cuota Común por Apto:* ${cuota_12:.2f}\n\n"
-                msg_grupo += f"🔹 *Grupo 16% Alícuota* (PH):\n"
-                msg_grupo += f"• *Cuota Común por Apto:* ${cuota_16:.2f}\n"
-                msg_grupo += f"__________________________________\n"
-                msg_grupo += f"📌 *Nota:* Si su apartamento posee un gasto propio/no común, recuerde verificar su recibo individual ingresando a la página web."
-
-                boton_whatsapp("", msg_grupo, "📲 Enviar Resumen General al Grupo de WhatsApp")
-
-                st.markdown("---")
                 st.markdown("#### 📲 Enviar Recibos Individuales por WhatsApp")
+                nom_res_actual, _, _, _ = obtener_datos_residencia()
+                mes_actual_txt = df_g["mes_ano"].iloc[-1]
                 
                 for item in apts_data:
                     c_apt, c_aliq, c_cuota, c_propio, c_total = item["Apartamento"], item["Alícuota"], item["Cuota Común ($)"], item["Gasto Propio ($)"], item["Total Cobrado ($)"]
