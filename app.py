@@ -1,11 +1,9 @@
 import sqlite3
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from datetime import datetime
 import urllib.parse
 import os
-import io
 
 # =============================================================================
 # 1. CONFIGURACIÓN Y BASE DE DATOS
@@ -29,13 +27,25 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # 2. Tabla Usuarios
+    # 2. Tabla Usuarios / Propietarios
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
             apartamento TEXT PRIMARY KEY,
+            nombre TEXT DEFAULT 'Propietario',
+            telefono TEXT DEFAULT '',
             password TEXT NOT NULL DEFAULT '1234'
         )
     """)
+
+    # Agregar columnas si venías de una versión anterior
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN nombre TEXT DEFAULT 'Propietario'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN telefono TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
 
     # 3. Tabla Admin
     cursor.execute("""
@@ -82,24 +92,12 @@ def inicializar_base_de_datos():
         )
     """)
 
-    # Reparación y datos iniciales
-    try:
-        cursor.execute("INSERT OR IGNORE INTO admin (usuario, password) VALUES (?, ?)", ("admin", "admin123"))
-    except sqlite3.OperationalError:
-        cursor.execute("DROP TABLE IF EXISTS admin")
-        cursor.execute("CREATE TABLE admin (usuario TEXT PRIMARY KEY, password TEXT NOT NULL DEFAULT 'admin123')")
-        cursor.execute("INSERT OR IGNORE INTO admin (usuario, password) VALUES (?, ?)", ("admin", "admin123"))
-
+    cursor.execute("INSERT OR IGNORE INTO admin (usuario, password) VALUES (?, ?)", ("admin", "admin123"))
     cursor.execute("INSERT OR IGNORE INTO residencia (id, nombre, rif, direccion) VALUES (1, 'Residencias El Condominio', 'J-12345678-0', 'Av. Principal #123')")
 
     apartamentos = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
     for ap in apartamentos:
-        try:
-            cursor.execute("INSERT OR IGNORE INTO usuarios (apartamento, password) VALUES (?, ?)", (ap, "1234"))
-        except sqlite3.OperationalError:
-            cursor.execute("DROP TABLE IF EXISTS usuarios")
-            cursor.execute("CREATE TABLE usuarios (apartamento TEXT PRIMARY KEY, password TEXT NOT NULL DEFAULT '1234')")
-            cursor.execute("INSERT OR IGNORE INTO usuarios (apartamento, password) VALUES (?, ?)", (ap, "1234"))
+        cursor.execute("INSERT OR IGNORE INTO usuarios (apartamento, password, nombre, telefono) VALUES (?, ?, ?, ?)", (ap, "1234", f"Propietario Apt {ap}", ""))
 
     conn.commit()
     conn.close()
@@ -114,7 +112,7 @@ def obtener_alicuota(apartamento):
     elif apartamento == "PH":
         return 0.16  # 16%
     else:
-        return 0.06  # 6% para los 10 restantes (1A, 1B, 3A, 3B, 4A, 4B, 5A, 5B, 6A, 6B)
+        return 0.06  # 6% para los 10 restantes
 
 def obtener_datos_residencia():
     conn = conectar_db()
@@ -131,6 +129,19 @@ def guardar_datos_residencia(nombre, rif, direccion, logo_bytes=None):
         cursor.execute("UPDATE residencia SET nombre=?, rif=?, direccion=?, logo_bytes=? WHERE id=1", (nombre, rif, direccion, logo_bytes))
     else:
         cursor.execute("UPDATE residencia SET nombre=?, rif=?, direccion=? WHERE id=1", (nombre, rif, direccion))
+    conn.commit()
+    conn.close()
+
+def obtener_propietarios():
+    conn = conectar_db()
+    df = pd.read_sql_query("SELECT apartamento AS Apt, nombre AS Nombre, telefono AS Telefono FROM usuarios", conn)
+    conn.close()
+    return df
+
+def actualizar_propietario(apto, nombre, telefono):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE usuarios SET nombre = ?, telefono = ? WHERE apartamento = ?", (nombre, telefono, apto))
     conn.commit()
     conn.close()
 
@@ -196,16 +207,15 @@ def eliminar_proveedor(prov_id):
     conn.close()
 
 # -----------------------------------------------------------------------------
-# GENERACIÓN DE REPORTES (HTML / PDF) Y WHATSAPP
+# GENERACIÓN DE REPORTES Y WHATSAPP
 # -----------------------------------------------------------------------------
 
 def generar_recibo_general_html(nombre_edificio, rif, direccion, mes_cobro, df_gastos, df_resumen):
     tabla_gastos_html = df_gastos.to_html(index=False, justify='left')
     tabla_resumen_html = df_resumen.to_html(index=False, justify='left')
-    
     total_gastos = df_gastos["Monto ($)"].sum()
     
-    html_content = f"""
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -227,9 +237,7 @@ def generar_recibo_general_html(nombre_edificio, rif, direccion, mes_cobro, df_g
         </style>
     </head>
     <body>
-        <div class="btn-container">
-            <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
-        </div>
+        <div class="btn-container"><button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button></div>
         <div class="header">
             <h1>🏢 {nombre_edificio}</h1>
             <p style="margin:2px 0;"><b>RIF:</b> {rif} | <b>Dirección:</b> {direccion}</p>
@@ -239,23 +247,18 @@ def generar_recibo_general_html(nombre_edificio, rif, direccion, mes_cobro, df_g
             <p style="margin:2px 0;"><b>MES CORRESPONDIENTE:</b> {mes_cobro}</p>
             <p style="margin:2px 0;"><b>FECHA DE EMISIÓN:</b> {datetime.now().strftime('%d/%m/%Y')}</p>
         </div>
-
         <h3>1. Relación de Gastos del Mes</h3>
         {tabla_gastos_html}
-        <div class="total-box">
-            TOTAL GASTOS REGISTRADOS: ${total_gastos:.2f}
-        </div>
-
+        <div class="total-box">TOTAL GASTOS REGISTRADOS: ${total_gastos:.2f}</div>
         <h3>2. Distribución de Pagos por Alicuota y Apartamento</h3>
         {tabla_resumen_html}
     </body>
     </html>
     """
-    return html_content
 
 def generar_recibo_html(nombre_edificio, rif, direccion, mes_cobro, apto, alicuota, df_gastos, total_pagar):
     tabla_html = df_gastos.to_html(index=False, justify='left')
-    html_content = f"""
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -277,9 +280,7 @@ def generar_recibo_html(nombre_edificio, rif, direccion, mes_cobro, apto, alicuo
         </style>
     </head>
     <body>
-        <div class="btn-container">
-            <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
-        </div>
+        <div class="btn-container"><button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button></div>
         <div class="header">
             <h1>🏢 {nombre_edificio}</h1>
             <p style="margin:2px 0;"><b>RIF:</b> {rif} | <b>Dirección:</b> {direccion}</p>
@@ -291,17 +292,14 @@ def generar_recibo_html(nombre_edificio, rif, direccion, mes_cobro, apto, alicuo
         </div>
         <h3>Detalle de Gastos</h3>
         {tabla_html}
-        <div class="total-box">
-            TOTAL A CANCELAR: ${total_pagar:.2f}
-        </div>
+        <div class="total-box">TOTAL A CANCELAR: ${total_pagar:.2f}</div>
     </body>
     </html>
     """
-    return html_content
 
 def generar_reporte_html(titulo, df_datos, subtitulo=""):
     tabla_html = df_datos.to_html(index=False, justify='left')
-    html_content = f"""
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -321,21 +319,19 @@ def generar_reporte_html(titulo, df_datos, subtitulo=""):
         </style>
     </head>
     <body>
-        <div class="btn-container">
-            <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar como PDF</button>
-        </div>
+        <div class="btn-container"><button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar como PDF</button></div>
         <h1>{titulo}</h1>
         {f'<h3>{subtitulo}</h3>' if subtitulo else ''}
         {tabla_html}
     </body>
     </html>
     """
-    return html_content
 
 def boton_whatsapp(telefono, mensaje, texto_boton="📲 Enviar por WhatsApp"):
     msg_url = urllib.parse.quote(mensaje)
-    if telefono:
-        link = f"https://wa.me/{telefono}?text={msg_url}"
+    tel_clean = ''.join(filter(str.isdigit, str(telefono))) if telefono else ""
+    if tel_clean:
+        link = f"https://wa.me/{tel_clean}?text={msg_url}"
     else:
         link = f"https://api.whatsapp.com/send?text={msg_url}"
     st.markdown(f'<a href="{link}" target="_blank" style="background-color:#25D366;color:white;padding:8px 15px;border-radius:5px;text-decoration:none;font-weight:bold;display:inline-block;margin-top:5px;">{texto_boton}</a>', unsafe_allow_html=True)
@@ -344,7 +340,7 @@ def boton_whatsapp(telefono, mensaje, texto_boton="📲 Enviar por WhatsApp"):
 # 3. INTERFAZ DE USUARIO
 # =============================================================================
 
-st.set_page_config(page_title="Gestión de Condominio", page_icon="🏢", layout="wide")
+st.set_page_config(page_title="Gestión de Condominio", page_icon="logo.jpg", layout="wide")
 inicializar_base_de_datos()
 
 if "rol" not in st.session_state:
@@ -356,12 +352,10 @@ if "usuario_logueado" not in st.session_state:
 if st.session_state["rol"] is None:
     col_l1, col_l2, col_l3 = st.columns([1, 1, 1])
     with col_l2:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", use_container_width=True)
-        elif os.path.exists("logo.jpg"):
+        if os.path.exists("logo.jpg"):
             st.image("logo.jpg", use_container_width=True)
-        elif os.path.exists("logo.jpeg"):
-            st.image("logo.jpeg", use_container_width=True)
+        elif os.path.exists("logo.png"):
+            st.image("logo.png", use_container_width=True)
 
     st.title("🏢 Sistema de Gestión de Condominio")
     st.markdown("---")
@@ -422,10 +416,8 @@ elif st.session_state["rol"] == "Propietario":
         with col_logo:
             if logo_res:
                 st.image(logo_res, width=130)
-            elif os.path.exists("logo.png"):
-                st.image("logo.png", width=130)
-            else:
-                st.write("🏢")
+            elif os.path.exists("logo.jpg"):
+                st.image("logo.jpg", width=130)
         with col_info:
             st.markdown(f"### **{nombre_res}**")
             st.write(f"**RIF:** {rif_res} | **Dirección:** {dir_res}")
@@ -520,11 +512,12 @@ elif st.session_state["rol"] == "Administrador":
             st.rerun()
 
     st.markdown("---")
-    tab_aprobar, tab_recibo_gen, tab_reportes_admin, tab_gastos_admin, tab_prov_admin, tab_datos = st.tabs([
+    tab_aprobar, tab_recibo_gen, tab_reportes_admin, tab_gastos_admin, tab_props, tab_prov_admin, tab_datos = st.tabs([
         "✅ Aprobar Pagos", 
         "👁️ Previsualizar Recibo General",
         "📑 Reportes por Periodo", 
-        "➕ Cargar Gastos/Proveedores", 
+        "➕ Cargar Gastos",
+        "👥 Propietarios", 
         "🛠️ Proveedores", 
         "🏢 Config. Edificio"
     ])
@@ -552,7 +545,7 @@ elif st.session_state["rol"] == "Administrador":
         else:
             st.info("No hay pagos pendientes por revisar en este momento.")
 
-    # 2. TAB PREVISUALIZAR RECIBO GENERAL (NUEVO / ACTUALIZADO)
+    # 2. TAB PREVISUALIZAR RECIBO GENERAL
     with tab_recibo_gen:
         st.subheader("👁️ Vista Previa del Recibo General de Gastos")
         
@@ -566,15 +559,12 @@ elif st.session_state["rol"] == "Administrador":
             tot_comun = df_g[df_g["Tipo"] == "Común"]["Monto ($)"].sum()
             tot_general = df_g["Monto ($)"].sum()
 
-            # ENCABEZADO DE LA PREVISUALIZACIÓN
             col_l1, col_l2 = st.columns([1, 4])
             with col_l1:
                 if logo_res_act:
                     st.image(logo_res_act, width=120)
-                elif os.path.exists("logo.png"):
-                    st.image("logo.png", width=120)
-                else:
-                    st.write("🏢")
+                elif os.path.exists("logo.jpg"):
+                    st.image("logo.jpg", width=120)
             with col_l2:
                 st.markdown(f"## **{nom_res_act}**")
                 st.write(f"**RIF:** {rif_res_act} | **Dirección:** {dir_res_act}")
@@ -585,7 +575,6 @@ elif st.session_state["rol"] == "Administrador":
             st.dataframe(df_g[["Concepto", "Tipo", "Monto ($)", "Apto"]], use_container_width=True)
             st.info(f"**Monto Total Gastos Comunes:** ${tot_comun:.2f} | **Total Gastos Registrados:** ${tot_general:.2f}")
 
-            # CÁLCULO DE ALÍCUOTAS Y APARTAMENTOS
             todos_apts = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
             apts_data = []
 
@@ -612,12 +601,10 @@ elif st.session_state["rol"] == "Administrador":
             col_acc1, col_acc2 = st.columns(2)
             
             with col_acc1:
-                # BOTÓN IMPRIMIR / DESCARGAR HTML RECIBO GENERAL
                 html_recibo_general = generar_recibo_general_html(nom_res_act, rif_res_act, dir_res_act, mes_actual_txt, df_g[["Concepto", "Tipo", "Monto ($)", "Apto"]], df_resumen_recibos)
                 st.download_button("🖨️ Imprimir / Guardar Recibo General (PDF)", data=html_recibo_general, file_name=f"recibo_general_{mes_actual_txt}.html", mime="text/html")
 
             with col_acc2:
-                # MENSAJE DE WHATSAPP CON EL RESUMEN DE ALÍCUOTAS PARA EL GRUPO
                 cuota_6 = tot_comun * 0.06
                 cuota_12 = tot_comun * 0.12
                 cuota_16 = tot_comun * 0.16
@@ -638,7 +625,7 @@ elif st.session_state["rol"] == "Administrador":
                 boton_whatsapp("", msg_grupo, "📲 Enviar Resumen General al Grupo de WhatsApp")
 
         else:
-            st.info("No hay gastos registrados en la base de datos para generar la previsualización del recibo general.")
+            st.info("No hay gastos registrados en la base de datos para generar la previsualización.")
 
     # 3. TAB REPORTES POR PERIODO
     with tab_reportes_admin:
@@ -702,6 +689,7 @@ elif st.session_state["rol"] == "Administrador":
             st.markdown("### Consolidado de Recibos del Condominio")
             conn = conectar_db()
             df_g = pd.read_sql_query("SELECT mes_ano, concepto AS 'Concepto', tipo AS 'Tipo', monto AS 'Monto ($)', apto_destino AS 'Apto' FROM gastos", conn)
+            df_props = pd.read_sql_query("SELECT apartamento, nombre, telefono FROM usuarios", conn)
             conn.close()
 
             if not df_g.empty:
@@ -714,8 +702,16 @@ elif st.session_state["rol"] == "Administrador":
                     g_nocomun = df_g[(df_g["Tipo"] == "No Común") & (df_g["Apto"] == ap)]["Monto ($)"].sum()
                     cuota_c = tot_comun * aliq
                     total_ap = cuota_c + g_nocomun
+                    
+                    # Buscar datos de propietario
+                    row_p = df_props[df_props["apartamento"] == ap]
+                    nom_p = row_p["nombre"].values[0] if not row_p.empty else "Propietario"
+                    tel_p = row_p["telefono"].values[0] if not row_p.empty else ""
+
                     apts_data.append({
                         "Apartamento": ap, 
+                        "Propietario": nom_p,
+                        "Teléfono": tel_p,
                         "Alícuota": f"{aliq*100:.0f}%", 
                         "Cuota Común ($)": round(cuota_c, 2), 
                         "Gasto Propio ($)": round(g_nocomun, 2), 
@@ -734,23 +730,24 @@ elif st.session_state["rol"] == "Administrador":
                 mes_actual_txt = df_g["mes_ano"].iloc[-1]
                 
                 for item in apts_data:
-                    c_apt, c_aliq, c_cuota, c_propio, c_total = item["Apartamento"], item["Alícuota"], item["Cuota Común ($)"], item["Gasto Propio ($)"], item["Total Cobrado ($)"]
+                    c_apt, c_nom, c_tel, c_aliq, c_cuota, c_propio, c_total = item["Apartamento"], item["Propietario"], item["Teléfono"], item["Alícuota"], item["Cuota Común ($)"], item["Gasto Propio ($)"], item["Total Cobrado ($)"]
                     
                     mensaje_recibo = f"🏢 *{nom_res_actual}*\n"
                     mensaje_recibo += f"📄 *RECIBO DE CONDOMINIO - {mes_actual_txt.upper()}*\n\n"
+                    mensaje_recibo += f"👤 *Estimado(a):* {c_nom}\n"
                     mensaje_recibo += f"🏠 *Apartamento:* {c_apt}\n"
                     mensaje_recibo += f"📊 *Alícuota:* {c_aliq}\n"
                     mensaje_recibo += f"🔹 *Cuota Gastos Comunes:* ${c_cuota:.2f}\n"
                     if c_propio > 0:
                         mensaje_recibo += f"🔸 *Gastos Propios:* ${c_propio:.2f}\n"
                     mensaje_recibo += f"💵 *TOTAL A PAGAR:* ${c_total:.2f}\n\n"
-                    mensaje_recibo += f"📌 Recuerde realizar su pago y reportarlo a través de la página web del condominio."
+                    mensaje_recibo += f"📌 Le recordamos realizar su pago y reportarlo a través de nuestra plataforma."
 
-                    col_w1, col_w2 = st.columns([2, 2])
+                    col_w1, col_w2 = st.columns([3, 2])
                     with col_w1:
-                        st.write(f"🏠 **Apt {c_apt}** - Total: **${c_total:.2f}**")
+                        st.write(f"🏠 **Apt {c_apt}** - {c_nom} | Total: **${c_total:.2f}**")
                     with col_w2:
-                        boton_whatsapp("", mensaje_recibo, f"📲 Enviar Recibo Apt {c_apt}")
+                        boton_whatsapp(c_tel, mensaje_recibo, f"📲 Enviar Recibo a {c_nom}")
 
             else:
                 st.info("No hay gastos registrados para consolidar los recibos.")
@@ -791,7 +788,31 @@ elif st.session_state["rol"] == "Administrador":
                 st.success("Gasto eliminado.")
                 st.rerun()
 
-    # 5. TAB PROVEEDORES
+    # 5. TAB PROPIETARIOS (NUEVO)
+    with tab_props:
+        st.subheader("👥 Directorio de Propietarios")
+        st.caption("Escriba los nombres y teléfonos de cada apartamento para personalizar las notificaciones de WhatsApp (Incluya código de país sin el +, ej: 584121234567).")
+        
+        df_props_actuales = obtener_propietarios()
+        
+        for _, row in df_props_actuales.iterrows():
+            apto_curr = row['Apt']
+            col_p1, col_p2, col_p3, col_p4 = st.columns([1, 2, 2, 1])
+            with col_p1:
+                st.markdown(f"### **Apt {apto_curr}**")
+            with col_p2:
+                nuevo_nom = st.text_input(f"Nombre", value=row['Nombre'], key=f"nom_{apto_curr}")
+            with col_p3:
+                nuevo_tel = st.text_input(f"Teléfono WhatsApp", value=row['Telefono'], key=f"tel_{apto_curr}")
+            with col_p4:
+                st.write("")
+                st.write("")
+                if st.button("💾 Guardar", key=f"btn_prop_{apto_curr}"):
+                    actualizar_propietario(apto_curr, nuevo_nom, nuevo_tel)
+                    st.success(f"Apt {apto_curr} guardado.")
+                    st.rerun()
+
+    # 6. TAB PROVEEDORES
     with tab_prov_admin:
         st.subheader("🛠️ Directorio de Proveedores")
         with st.form("form_prov"):
@@ -822,7 +843,7 @@ elif st.session_state["rol"] == "Administrador":
                         eliminar_proveedor(row['id'])
                         st.rerun()
 
-    # 6. TAB CONFIGURACIÓN EDIFICIO
+    # 7. TAB CONFIGURACIÓN EDIFICIO
     with tab_datos:
         st.subheader("🏢 Datos de la Residencia")
         nom_act, rif_act, dir_act, logo_act = obtener_datos_residencia()
