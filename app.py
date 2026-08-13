@@ -200,7 +200,7 @@ info_edif = get_edificio_info()
 
 # --- PANTALLA DE ACCESO UNIFICADA ---
 if not st.session_state.autenticado:
-    st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_text=True)
+    st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_html:
     st.markdown(f"<h4 style='text-align: center;'>{info_edif.get('nombre', '')}</h4>", unsafe_allow_text=True)
     st.caption(f"<p style='text-align: center;'>RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}</p>", unsafe_allow_html=True)
     st.markdown("---")
