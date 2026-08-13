@@ -1,3 +1,6 @@
 streamlit
 pandas
-supabase
+sqlalchemy
+psycopg2-binary
+openpyxl
+reportlab
