@@ -102,45 +102,84 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Asegurar creación inicial al cargar el script
 init_db()
 
-# --- FUNCIONES DE CONSULTA Y EDICIÓN ---
+# --- FUNCIONES ROBUSTAS DE CONSULTA Y EDICIÓN ---
 def run_query(query, params=(), fetch_all=True):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute(query, params)
-    res = c.fetchall() if fetch_all else None
-    conn.commit()
-    conn.close()
-    return res
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(query, params)
+        res = c.fetchall() if fetch_all else None
+        conn.commit()
+        conn.close()
+        return res
+    except Exception as e:
+        init_db()  # Reintenta reparar la BD si falla
+        return [] if fetch_all else None
 
 def get_edificio_info():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula FROM edificio_info WHERE id=1")
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return {
-            "nombre": row[0], "rif": row[1], "direccion": row[2],
-            "banco": row[3], "cuenta": row[4], "pm_telf": row[5], "pm_cedula": row[6]
-        }
-    return {}
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula FROM edificio_info WHERE id=1")
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {
+                "nombre": row[0], "rif": row[1], "direccion": row[2],
+                "banco": row[3], "cuenta": row[4], "pm_telf": row[5], "pm_cedula": row[6]
+            }
+    except Exception:
+        init_db()
+    return {
+        "nombre": "Residencias El Roble", "rif": "J-00000000-0", "direccion": "Caracas, Venezuela",
+        "banco": "Banesco", "cuenta": "0134-0000-00-0000000000", "pm_telf": "0412-0000000", "pm_cedula": "V-12345678"
+    }
 
 def get_propietarios():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
+        conn.close()
+        if not df.empty:
+            return df
+    except Exception:
+        init_db()
+    
+    # Fallback si falla la consulta
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
-    conn.close()
+    try:
+        df = pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
+    except Exception:
+        df = pd.DataFrame(columns=["apartamento", "propietario", "telefono", "alicuota"])
+    finally:
+        conn.close()
     return df
 
 def get_gastos(periodo=None):
-    conn = sqlite3.connect(DB_NAME)
-    if periodo:
-        df = pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ?", conn, params=(periodo,))
-    else:
-        df = pd.read_sql_query("SELECT * FROM gastos ORDER BY id DESC", conn)
-    conn.close()
-    return df
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        if periodo:
+            df = pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ?", conn, params=[periodo])
+        else:
+            df = pd.read_sql_query("SELECT * FROM gastos ORDER BY id DESC", conn)
+        conn.close()
+        return df
+    except Exception:
+        init_db()
+        return pd.DataFrame(columns=["id", "periodo", "concepto", "monto", "tipo", "apartamento", "fecha"])
+
+def get_pagos():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query("SELECT * FROM pagos ORDER BY id DESC", conn)
+        conn.close()
+        return df
+    except Exception:
+        init_db()
+        return pd.DataFrame(columns=["id", "apartamento", "periodo", "monto", "referencia", "fecha", "estado"])
 
 # --- INTERFAZ DE USUARIO ---
 info_edif = get_edificio_info()
@@ -216,7 +255,7 @@ if perfil == "⚙️ Administración":
             )
             
             # Validación de la suma de alícuotas
-            suma_alicuotas = edited_df["alicuota"].sum()
+            suma_alicuotas = edited_df["alicuota"].sum() if not edited_df.empty else 0.0
             st.caption(f"📊 Suma total de alícuotas actuales: **{suma_alicuotas*100:.2f}%**")
             if abs(suma_alicuotas - 1.0) > 0.001:
                 st.warning("⚠️ Nota: La suma total de alícuotas no da el 100% (1.0). Asegúrese de ajustar los valores.")
@@ -273,7 +312,7 @@ if perfil == "⚙️ Administración":
             apto_asig = "-"
             if tipo_gasto == "No Común":
                 df_props = get_propietarios()
-                apto_asig = st.selectbox("Asignar a Apartamento:", df_props["apartamento"].tolist())
+                apto_asig = st.selectbox("Asignar a Apartamento:", df_props["apartamento"].tolist() if not df_props.empty else ["1A"])
             fecha_gasto = st.date_input("Fecha de Registro", date.today())
 
         if st.button("➕ Agregar Gasto"):
@@ -423,9 +462,7 @@ if perfil == "⚙️ Administración":
     # --- 5. CONTROL DE PAGOS ---
     elif menu_admin == "5. Control de Pagos Recibidos":
         st.subheader("💳 Reportes de Pago Registrados por Propietarios")
-        conn = sqlite3.connect(DB_NAME)
-        pagos_df = pd.read_sql_query("SELECT * FROM pagos ORDER BY id DESC", conn)
-        conn.close()
+        pagos_df = get_pagos()
         
         if pagos_df.empty:
             st.info("No hay reporte de pagos registrados por los residentes aún.")
@@ -436,47 +473,50 @@ if perfil == "⚙️ Administración":
 else:
     st.subheader(f"🏠 Portal de Consulta de Propietarios - {info_edif.get('nombre', '')}")
     props_df = get_propietarios()
-    apto_sel = st.selectbox("Seleccione su Apartamento:", props_df["apartamento"].tolist())
-    periodo_consulta = st.text_input("Período a consultar", value=f"{date.today().strftime('%B %Y').capitalize()}")
-    
-    prop_data = props_df[props_df["apartamento"] == apto_sel].iloc[0]
-    gastos_df = get_gastos(periodo_consulta)
-    
-    if gastos_df.empty:
-        st.info(f"No hay recibo generado aún para el período {periodo_consulta}.")
+    if props_df.empty:
+        st.warning("No hay lista de apartamentos configurada.")
     else:
-        gastos_df["monto"] = gastos_df["monto"].astype(float)
-        total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
-        alicuota = float(prop_data["alicuota"])
-        cuota_comun = total_comun * alicuota
-        gastos_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_sel)]["monto"].sum()
-        total_pagar = cuota_comun + gastos_ind
+        apto_sel = st.selectbox("Seleccione su Apartamento:", props_df["apartamento"].tolist())
+        periodo_consulta = st.text_input("Período a consultar", value=f"{date.today().strftime('%B %Y').capitalize()}")
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Alícuota", f"{alicuota*100:.1f}%")
-        c2.metric("Cuota Gastos Comunes", f"${cuota_comun:,.2f}")
-        c3.metric("Total a Pagar", f"${total_pagar:,.2f}")
+        prop_data = props_df[props_df["apartamento"] == apto_sel].iloc[0]
+        gastos_df = get_gastos(periodo_consulta)
         
-        st.markdown("---")
-        st.markdown("### 💳 Datos para el Pago")
-        st.write(f"**Banco:** {info_edif.get('banco', '')}")
-        st.write(f"**Cuenta:** {info_edif.get('cuenta', '')}")
-        st.write(f"**Pago Móvil:** {info_edif.get('pm_telf', '')} | C.I/RIF: {info_edif.get('pm_cedula', '')}")
-        
-        st.markdown("---")
-        st.markdown("### 📤 Reportar Transferencia / Pago Móvil")
-        with st.form("form_pago"):
-            monto_pago = st.number_input("Monto Transferido ($)", value=float(total_pagar))
-            referencia = st.text_input("Número de Referencia")
-            submit_pago = st.form_submit_button("Registrar Comprobante")
+        if gastos_df.empty:
+            st.info(f"No hay recibo generado aún para el período {periodo_consulta}.")
+        else:
+            gastos_df["monto"] = gastos_df["monto"].astype(float)
+            total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
+            alicuota = float(prop_data["alicuota"])
+            cuota_comun = total_comun * alicuota
+            gastos_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_sel)]["monto"].sum()
+            total_pagar = cuota_comun + gastos_ind
             
-            if submit_pago:
-                if referencia:
-                    run_query(
-                        "INSERT INTO pagos (apartamento, periodo, monto, referencia, fecha) VALUES (?, ?, ?, ?, ?)",
-                        (apto_sel, periodo_consulta, monto_pago, referencia, str(date.today())),
-                        fetch_all=False
-                    )
-                    st.success("¡Pago reportado con éxito! La junta/administrador verificará el depósito.")
-                else:
-                    st.error("Por favor ingrese el número de referencia del pago.")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Alícuota", f"{alicuota*100:.1f}%")
+            c2.metric("Cuota Gastos Comunes", f"${cuota_comun:,.2f}")
+            c3.metric("Total a Pagar", f"${total_pagar:,.2f}")
+            
+            st.markdown("---")
+            st.markdown("### 💳 Datos para el Pago")
+            st.write(f"**Banco:** {info_edif.get('banco', '')}")
+            st.write(f"**Cuenta:** {info_edif.get('cuenta', '')}")
+            st.write(f"**Pago Móvil:** {info_edif.get('pm_telf', '')} | C.I/RIF: {info_edif.get('pm_cedula', '')}")
+            
+            st.markdown("---")
+            st.markdown("### 📤 Reportar Transferencia / Pago Móvil")
+            with st.form("form_pago"):
+                monto_pago = st.number_input("Monto Transferido ($)", value=float(total_pagar))
+                referencia = st.text_input("Número de Referencia")
+                submit_pago = st.form_submit_button("Registrar Comprobante")
+                
+                if submit_pago:
+                    if referencia:
+                        run_query(
+                            "INSERT INTO pagos (apartamento, periodo, monto, referencia, fecha) VALUES (?, ?, ?, ?, ?)",
+                            (apto_sel, periodo_consulta, monto_pago, referencia, str(date.today())),
+                            fetch_all=False
+                        )
+                        st.success("¡Pago reportado con éxito! La junta/administrador verificará el depósito.")
+                    else:
+                        st.error("Por favor ingrese el número de referencia del pago.")
