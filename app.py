@@ -1,37 +1,48 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
+import requests
 from datetime import date
 import urllib.parse
 
 st.set_page_config(page_title="Condominio Residencias El Roble", layout="wide")
 
-# --- CONEXIÓN A SUPABASE ---
-@st.cache_resource
-def init_supabase():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+# --- CONEXIÓN DIRECTA A SUPABASE (REST API) ---
+SUPABASE_URL = st.secrets["SUPABASE_URL"].rstrip("/")
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
-supabase: Client = init_supabase()
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
+}
 
 # --- FUNCIONES DE BASE DE DATOS ---
 def get_propietarios():
-    res = supabase.table("propietarios").select("*").order("apartamento").execute()
-    return pd.DataFrame(res.data)
+    url = f"{SUPABASE_URL}/rest/v1/propietarios?select=*&order=apartamento.asc"
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code == 200:
+        return pd.DataFrame(resp.json())
+    st.error(f"Error al cargar propietarios: {resp.text}")
+    return pd.DataFrame()
 
 def update_propietario(apto, prop, tel):
-    supabase.table("propietarios").update({
-        "propietario": prop,
-        "telefono": tel
-    }).eq("apartamento", apto).execute()
+    url = f"{SUPABASE_URL}/rest/v1/propietarios?apartamento=eq.{urllib.parse.quote(apto)}"
+    payload = {"propietario": prop, "telefono": tel}
+    resp = requests.patch(url, headers=HEADERS, json=payload)
+    if resp.status_code not in [200, 204]:
+        st.error(f"Error al actualizar: {resp.text}")
 
 def get_gastos(periodo):
-    res = supabase.table("gastos").select("*").eq("periodo", periodo).order("fecha", desc=True).execute()
-    return pd.DataFrame(res.data)
+    url = f"{SUPABASE_URL}/rest/v1/gastos?periodo=eq.{urllib.parse.quote(periodo)}&select=*&order=fecha.desc"
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code == 200:
+        return pd.DataFrame(resp.json())
+    return pd.DataFrame()
 
 def add_gasto(periodo, fecha, tipo, apartamento, proveedor, concepto, monto):
-    supabase.table("gastos").insert({
+    url = f"{SUPABASE_URL}/rest/v1/gastos"
+    payload = {
         "periodo": periodo,
         "fecha": str(fecha),
         "tipo": tipo,
@@ -39,10 +50,16 @@ def add_gasto(periodo, fecha, tipo, apartamento, proveedor, concepto, monto):
         "proveedor": proveedor,
         "concepto": concepto,
         "monto": float(monto)
-    }).execute()
+    }
+    resp = requests.post(url, headers=HEADERS, json=payload)
+    if resp.status_code not in [200, 201]:
+        st.error(f"Error al guardar gasto: {resp.text}")
 
 def delete_gasto(gasto_id):
-    supabase.table("gastos").delete().eq("id", gasto_id).execute()
+    url = f"{SUPABASE_URL}/rest/v1/gastos?id=eq.{gasto_id}"
+    resp = requests.delete(url, headers=HEADERS)
+    if resp.status_code not in [200, 204]:
+        st.error(f"Error al eliminar: {resp.text}")
 
 # --- INTERFAZ ---
 st.title("🏢 Residencias El Roble")
@@ -67,7 +84,8 @@ if menu == "1. Registro de Gastos":
         apto_gasto = ""
         if tipo == "No Común":
             props_df = get_propietarios()
-            apto_gasto = st.selectbox("Apartamento imputado", props_df["apartamento"].tolist())
+            if not props_df.empty:
+                apto_gasto = st.selectbox("Apartamento imputado", props_df["apartamento"].tolist())
             
     with col2:
         proveedor = st.text_input("Proveedor / Beneficiario")
@@ -87,12 +105,12 @@ if menu == "1. Registro de Gastos":
     gastos_df = get_gastos(periodo)
     
     if not gastos_df.empty:
-        st.dataframe(gastos_df[["id", "fecha", "tipo", "apartamento", "proveedor", "concepto", "monto"]], use_container_width=True)
+        cols_mostrar = [c for c in ["id", "fecha", "tipo", "apartamento", "proveedor", "concepto", "monto"] if c in gastos_df.columns]
+        st.dataframe(gastos_df[cols_mostrar], use_container_width=True)
         
-        # Eliminar gasto
         del_id = st.number_input("ID del gasto a eliminar", min_value=0, step=1)
         if st.button("Eliminar Gasto"):
-            if del_id in gastos_df["id"].values:
+            if "id" in gastos_df.columns and del_id in gastos_df["id"].values:
                 delete_gasto(del_id)
                 st.warning(f"Gasto #{del_id} eliminado.")
                 st.rerun()
@@ -106,26 +124,29 @@ elif menu == "2. Directorio de Propietarios":
     st.markdown("### 👥 Directorio de Propietarios y Alícuotas")
     props_df = get_propietarios()
     
-    col_a, col_b = st.columns([1, 2])
-    
-    with col_a:
-        st.markdown("#### Editar Información")
-        apto_sel = st.selectbox("Seleccionar Apartamento", props_df["apartamento"].tolist())
-        curr_row = props_df[props_df["apartamento"] == apto_sel].iloc[0]
+    if not props_df.empty:
+        col_a, col_b = st.columns([1, 2])
         
-        nuevo_prop = st.text_input("Nombre del Propietario", value=curr_row["propietario"] or "")
-        nuevo_tel = st.text_input("Teléfono (Ej: +584121234567)", value=curr_row["telefono"] or "")
-        
-        if st.button("Actualizar Propietario"):
-            update_propietario(apto_sel, nuevo_prop, nuevo_tel)
-            st.success(f"Datos del apto {apto_sel} actualizados.")
-            st.rerun()
+        with col_a:
+            st.markdown("#### Editar Información")
+            apto_sel = st.selectbox("Seleccionar Apartamento", props_df["apartamento"].tolist())
+            curr_row = props_df[props_df["apartamento"] == apto_sel].iloc[0]
             
-    with col_b:
-        st.markdown("#### Lista de Apartamentos")
-        props_display = props_df.copy()
-        props_display["alicuota"] = (props_display["alicuota"].astype(float) * 100).map("{:.1f}%".format)
-        st.dataframe(props_display[["apartamento", "alicuota", "propietario", "telefono"]], use_container_width=True)
+            nuevo_prop = st.text_input("Nombre del Propietario", value=curr_row.get("propietario", "") or "")
+            nuevo_tel = st.text_input("Teléfono (Ej: 584121234567)", value=curr_row.get("telefono", "") or "")
+            
+            if st.button("Actualizar Propietario"):
+                update_propietario(apto_sel, nuevo_prop, nuevo_tel)
+                st.success(f"Datos del apto {apto_sel} actualizados.")
+                st.rerun()
+                
+        with col_b:
+            st.markdown("#### Lista de Apartamentos")
+            props_display = props_df.copy()
+            if "alicuota" in props_display.columns:
+                props_display["alicuota"] = (props_display["alicuota"].astype(float) * 100).map("{:.1f}%".format)
+            cols_p = [c for c in ["apartamento", "alicuota", "propietario", "telefono"] if c in props_display.columns]
+            st.dataframe(props_display[cols_p], use_container_width=True)
 
 # --- 3. PREVISUALIZACIÓN Y ENVÍO DE RECIBOS ---
 elif menu == "3. Previsualización y Envío de Recibos":
@@ -137,8 +158,9 @@ elif menu == "3. Previsualización y Envío de Recibos":
     
     if gastos_df.empty:
         st.warning("No hay gastos registrados en este período para calcular recibos.")
+    elif props_df.empty:
+        st.warning("No se pudo obtener la información de propietarios.")
     else:
-        # Cálculos de gastos
         gastos_df["monto"] = gastos_df["monto"].astype(float)
         total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
         
@@ -150,17 +172,15 @@ elif menu == "3. Previsualización y Envío de Recibos":
         alicuota = float(prop_info["alicuota"])
         cuota_comun = total_comun * alicuota
         
-        # Gastos no comunes directos
         no_comunes_apto = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_recibo)]["monto"].sum()
         total_a_pagar = cuota_comun + no_comunes_apto
         
         st.markdown("---")
-        # Visual del Recibo
         recibo_texto = (
             f"🏢 *RESIDENCIAS EL ROBLE*\n"
             f"📄 *Aviso de Cobro - {periodo_sel}*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 *Propietario:* {prop_info['propietario'] or 'N/A'}\n"
+            f"👤 *Propietario:* {prop_info.get('propietario') or 'N/A'}\n"
             f"🏠 *Apartamento:* {apto_recibo} (Alícuota: {alicuota*100:.1f}%)\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🔹 *Total Gastos Comunes Edif:* ${total_comun:,.2f}\n"
@@ -178,8 +198,7 @@ elif menu == "3. Previsualización y Envío de Recibos":
         
         st.text_area("Vista previa del mensaje:", value=recibo_texto, height=260)
         
-        # Botón de WhatsApp
-        telefono_limpio = "".join(filter(str.isdigit, str(prop_info["telefono"])))
+        telefono_limpio = "".join(filter(str.isdigit, str(prop_info.get("telefono", ""))))
         if telefono_limpio:
             mensaje_url = urllib.parse.quote(recibo_texto)
             whatsapp_link = f"https://wa.me/{telefono_limpio}?text={mensaje_url}"
