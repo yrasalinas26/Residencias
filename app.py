@@ -13,126 +13,130 @@ st.set_page_config(
 
 DB_NAME = "condominio.db"
 
+# --- HELPER PARA FECHAS EN ESPAÑOL ---
+MESES_ESP = {
+    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+    5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+    9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+}
+
+def get_periodo_actual():
+    hoy = date.today()
+    return f"{MESES_ESP[hoy.month]} {hoy.year}"
+
+# --- CONEXIÓN A BASE DE DATOS Y CONTEXT MANAGER ---
+def get_connection():
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
+
 # --- INICIALIZACIÓN DE LA BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    
-    # 1. Tabla Datos del Edificio
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS edificio_info (
-            id INTEGER PRIMARY KEY,
-            nombre_edificio TEXT,
-            rif TEXT,
-            direccion TEXT,
-            banco_nombre TEXT,
-            num_cuenta TEXT,
-            pago_movil_telf TEXT,
-            pago_movil_cedula TEXT
-        )
-    ''')
-    
-    # Precargar datos por defecto del edificio si está vacía
-    c.execute("SELECT COUNT(*) FROM edificio_info")
-    if c.fetchone()[0] == 0:
+    with get_connection() as conn:
+        c = conn.cursor()
+        
+        # 1. Tabla Datos del Edificio
         c.execute('''
-            INSERT INTO edificio_info VALUES (
-                1, 
-                'Residencias El Roble', 
-                'J-00000000-0', 
-                'Caracas, Venezuela', 
-                'Banesco', 
-                '0134-0000-00-0000000000', 
-                '0412-0000000', 
-                'V-12345678'
+            CREATE TABLE IF NOT EXISTS edificio_info (
+                id INTEGER PRIMARY KEY,
+                nombre_edificio TEXT,
+                rif TEXT,
+                direccion TEXT,
+                banco_nombre TEXT,
+                num_cuenta TEXT,
+                pago_movil_telf TEXT,
+                pago_movil_cedula TEXT
             )
         ''')
-
-    # 2. Tabla Propietarios y Alícuotas
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS propietarios (
-            apartamento TEXT PRIMARY KEY,
-            propietario TEXT,
-            telefono TEXT,
-            alicuota REAL
-        )
-    ''')
-    
-    # Precargar los 13 apartamentos con las alícuotas de Residencias El Roble
-    c.execute("SELECT COUNT(*) FROM propietarios")
-    if c.fetchone()[0] == 0:
-        apts_iniciales = [
-            ("1A", "", "", 0.06), ("1B", "", "", 0.06),
-            ("2",  "", "", 0.12),
-            ("3A", "", "", 0.06), ("3B", "", "", 0.06),
-            ("4A", "", "", 0.06), ("4B", "", "", 0.06),
-            ("5A", "", "", 0.06), ("5B", "", "", 0.06),
-            ("6A", "", "", 0.06), ("6B", "", "", 0.06),
-            ("7",  "", "", 0.12),
-            ("PH", "", "", 0.16)
-        ]
-        c.executemany("INSERT INTO propietarios VALUES (?, ?, ?, ?)", apts_iniciales)
         
-    # 3. Tabla Gastos
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS gastos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            periodo TEXT,
-            concepto TEXT,
-            monto REAL,
-            tipo TEXT,
-            apartamento TEXT,
-            fecha TEXT
-        )
-    ''')
-    
-    # 4. Tabla Pagos / Comprobantes
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS pagos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            apartamento TEXT,
-            periodo TEXT,
-            monto REAL,
-            referencia TEXT,
-            fecha TEXT,
-            estado TEXT DEFAULT 'Pendiente'
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+        c.execute("SELECT COUNT(*) FROM edificio_info")
+        if c.fetchone()[0] == 0:
+            c.execute('''
+                INSERT INTO edificio_info VALUES (
+                    1, 'Residencias El Roble', 'J-00000000-0', 
+                    'Caracas, Venezuela', 'Banesco', 
+                    '0134-0000-00-0000000000', '0412-0000000', 'V-12345678'
+                )
+            ''')
 
-# Asegurar creación inicial al cargar el script
+        # 2. Tabla Propietarios y Alícuotas
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS propietarios (
+                apartamento TEXT PRIMARY KEY,
+                propietario TEXT,
+                telefono TEXT,
+                alicuota REAL
+            )
+        ''')
+        
+        c.execute("SELECT COUNT(*) FROM propietarios")
+        if c.fetchone()[0] == 0:
+            apts_iniciales = [
+                ("1A", "", "", 0.06), ("1B", "", "", 0.06),
+                ("2",  "", "", 0.12),
+                ("3A", "", "", 0.06), ("3B", "", "", 0.06),
+                ("4A", "", "", 0.06), ("4B", "", "", 0.06),
+                ("5A", "", "", 0.06), ("5B", "", "", 0.06),
+                ("6A", "", "", 0.06), ("6B", "", "", 0.06),
+                ("7",  "", "", 0.12),
+                ("PH", "", "", 0.16)
+            ]
+            c.executemany("INSERT INTO propietarios VALUES (?, ?, ?, ?)", apts_iniciales)
+            
+        # 3. Tabla Gastos
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS gastos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                periodo TEXT,
+                concepto TEXT,
+                monto REAL,
+                tipo TEXT,
+                apartamento TEXT,
+                fecha TEXT
+            )
+        ''')
+        
+        # 4. Tabla Pagos
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS pagos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                apartamento TEXT,
+                periodo TEXT,
+                monto REAL,
+                referencia TEXT,
+                fecha TEXT,
+                estado TEXT DEFAULT 'Pendiente'
+            )
+        ''')
+        conn.commit()
+
 init_db()
 
-# --- FUNCIONES ROBUSTAS DE CONSULTA Y EDICIÓN ---
+# --- FUNCIONES DE CONSULTA ---
 def run_query(query, params=(), fetch_all=True):
     try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute(query, params)
-        res = c.fetchall() if fetch_all else None
-        conn.commit()
-        conn.close()
-        return res
+        with get_connection() as conn:
+            c = conn.cursor()
+            c.execute(query, params)
+            conn.commit()
+            if fetch_all:
+                return c.fetchall()
+            return None
     except Exception as e:
-        init_db()  # Reintenta reparar la BD si falla
+        st.error(f"Error en base de datos: {e}")
         return [] if fetch_all else None
 
 def get_edificio_info():
     try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula FROM edificio_info WHERE id=1")
-        row = c.fetchone()
-        conn.close()
-        if row:
-            return {
-                "nombre": row[0], "rif": row[1], "direccion": row[2],
-                "banco": row[3], "cuenta": row[4], "pm_telf": row[5], "pm_cedula": row[6]
-            }
+        with get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula FROM edificio_info WHERE id=1")
+            row = c.fetchone()
+            if row:
+                return {
+                    "nombre": row[0], "rif": row[1], "direccion": row[2],
+                    "banco": row[3], "cuenta": row[4], "pm_telf": row[5], "pm_cedula": row[6]
+                }
     except Exception:
-        init_db()
+        pass
     return {
         "nombre": "Residencias El Roble", "rif": "J-00000000-0", "direccion": "Caracas, Venezuela",
         "banco": "Banesco", "cuenta": "0134-0000-00-0000000000", "pm_telf": "0412-0000000", "pm_cedula": "V-12345678"
@@ -140,45 +144,25 @@ def get_edificio_info():
 
 def get_propietarios():
     try:
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
-        conn.close()
-        if not df.empty:
-            return df
+        with get_connection() as conn:
+            return pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
     except Exception:
-        init_db()
-    
-    # Fallback si falla la consulta
-    conn = sqlite3.connect(DB_NAME)
-    try:
-        df = pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
-    except Exception:
-        df = pd.DataFrame(columns=["apartamento", "propietario", "telefono", "alicuota"])
-    finally:
-        conn.close()
-    return df
+        return pd.DataFrame(columns=["apartamento", "propietario", "telefono", "alicuota"])
 
 def get_gastos(periodo=None):
     try:
-        conn = sqlite3.connect(DB_NAME)
-        if periodo:
-            df = pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ?", conn, params=[periodo])
-        else:
-            df = pd.read_sql_query("SELECT * FROM gastos ORDER BY id DESC", conn)
-        conn.close()
-        return df
+        with get_connection() as conn:
+            if periodo:
+                return pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ?", conn, params=[periodo])
+            return pd.read_sql_query("SELECT * FROM gastos ORDER BY id DESC", conn)
     except Exception:
-        init_db()
         return pd.DataFrame(columns=["id", "periodo", "concepto", "monto", "tipo", "apartamento", "fecha"])
 
 def get_pagos():
     try:
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("SELECT * FROM pagos ORDER BY id DESC", conn)
-        conn.close()
-        return df
+        with get_connection() as conn:
+            return pd.read_sql_query("SELECT * FROM pagos ORDER BY id DESC", conn)
     except Exception:
-        init_db()
         return pd.DataFrame(columns=["id", "apartamento", "periodo", "monto", "referencia", "fecha", "estado"])
 
 # --- INTERFAZ DE USUARIO ---
@@ -199,10 +183,9 @@ if perfil == "⚙️ Administración":
         "5. Control de Pagos Recibidos"
     ])
     
-    # --- 1. CONFIGURACIÓN DEL EDIFICIO ---
+    # 1. DATOS DEL EDIFICIO
     if menu_admin == "1. Datos del Edificio y Cuentas Bancarias":
         st.subheader("⚙️ Configuración de Datos e Información del Edificio")
-        st.info("Esta información aparecerá automáticamente en la cabecera y datos de pago de los recibos.")
         
         with st.form("form_edificio"):
             col1, col2 = st.columns(2)
@@ -226,39 +209,29 @@ if perfil == "⚙️ Administración":
                 st.success("¡Información del edificio actualizada correctamente!")
                 st.rerun()
 
-    # --- 2. GESTIÓN DE PROPIETARIOS Y ALÍCUOTAS ---
+    # 2. PROPIETARIOS Y ALÍCUOTAS
     elif menu_admin == "2. Gestión de Propietarios y Alícuotas":
         st.subheader("👥 Directorio de Propietarios y Configuración de Alícuotas")
-        
         tab_listado, tab_nuevo = st.tabs(["📋 Modificar Propietarios y Alícuotas", "➕ Agregar Nuevo Apartamento"])
         
         with tab_listado:
             df_props = get_propietarios()
-            st.markdown("Modifique directamente los campos en la tabla y presione el botón para guardar.")
-            
             edited_df = st.data_editor(
                 df_props,
                 column_config={
                     "apartamento": st.column_config.TextColumn("Apto", disabled=True),
                     "propietario": "Nombre Propietario",
                     "telefono": "Teléfono (Ej: 584121234567)",
-                    "alicuota": st.column_config.NumberColumn(
-                        "Alícuota (Ej: 0.06 = 6%)", 
-                        format="%.4f", 
-                        min_value=0.0, 
-                        max_value=1.0, 
-                        step=0.01
-                    )
+                    "alicuota": st.column_config.NumberColumn("Alícuota (Ej: 0.06 = 6%)", format="%.4f", min_value=0.0, max_value=1.0, step=0.01)
                 },
                 use_container_width=True,
                 hide_index=True
             )
             
-            # Validación de la suma de alícuotas
             suma_alicuotas = edited_df["alicuota"].sum() if not edited_df.empty else 0.0
             st.caption(f"📊 Suma total de alícuotas actuales: **{suma_alicuotas*100:.2f}%**")
             if abs(suma_alicuotas - 1.0) > 0.001:
-                st.warning("⚠️ Nota: La suma total de alícuotas no da el 100% (1.0). Asegúrese de ajustar los valores.")
+                st.warning("⚠️ La suma total de alícuotas no da el 100% (1.0). Ajuste los valores.")
             
             if st.button("💾 Guardar Cambios en Propietarios y Alícuotas"):
                 for _, row in edited_df.iterrows():
@@ -267,44 +240,36 @@ if perfil == "⚙️ Administración":
                         (row["propietario"], str(row["telefono"]), float(row["alicuota"]), row["apartamento"]),
                         fetch_all=False
                     )
-                st.success("Información de propietarios y alícuotas actualizada exitosamente.")
+                st.success("Información actualizada exitosamente.")
                 st.rerun()
                 
         with tab_nuevo:
-            st.markdown("#### Registrar una nueva unidad o apartamento")
             with st.form("form_nuevo_apto"):
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    nuevo_apto = st.text_input("Identificador / Número de Apto (Ej: 8A, PH2):")
+                    nuevo_apto = st.text_input("Identificador / Número de Apto:")
                     nuevo_prop = st.text_input("Nombre del Propietario:")
                 with col_b:
                     nuevo_telf = st.text_input("Teléfono de Contacto:")
-                    nueva_aliq = st.number_input("Alícuota (Ej: 0.06 para 6%):", min_value=0.0, max_value=1.0, value=0.06, step=0.01, format="%.4f")
+                    nueva_aliq = st.number_input("Alícuota:", min_value=0.0, max_value=1.0, value=0.06, step=0.01, format="%.4f")
                 
                 guardar_nuevo = st.form_submit_button("➕ Registrar Apartamento")
-                if guardar_nuevo:
-                    if nuevo_apto:
-                        try:
-                            run_query(
-                                "INSERT INTO propietarios VALUES (?, ?, ?, ?)",
-                                (nuevo_apto.upper().strip(), nuevo_prop, nuevo_telf, nueva_aliq),
-                                fetch_all=False
-                            )
-                            st.success(f"Apartamento {nuevo_apto} agregado exitosamente.")
-                            st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.error("El número de apartamento ya se encuentra registrado.")
-                    else:
-                        st.error("Por favor ingrese la identificación del apartamento.")
+                if guardar_nuevo and nuevo_apto:
+                    try:
+                        run_query("INSERT INTO propietarios VALUES (?, ?, ?, ?)", (nuevo_apto.upper().strip(), nuevo_prop, nuevo_telf, nueva_aliq), fetch_all=False)
+                        st.success(f"Apartamento {nuevo_apto} agregado exitosamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error("El número de apartamento ya existe o fue inválido.")
 
-    # --- 3. REGISTRO DE GASTOS ---
+    # 3. REGISTRO DE GASTOS
     elif menu_admin == "3. Registro de Gastos del Mes":
         st.subheader("📝 Registrar Gastos del Condominio")
         col1, col2 = st.columns(2)
         
         with col1:
-            periodo = st.text_input("Período / Mes", value=f"{date.today().strftime('%B %Y').capitalize()}")
-            concepto = st.text_input("Concepto del Gasto (Ej: Limpieza, Vigilancia, Reparación)")
+            periodo = st.text_input("Período / Mes", value=get_periodo_actual())
+            concepto = st.text_input("Concepto del Gasto")
             monto = st.number_input("Monto ($)", min_value=0.0, step=10.0, format="%.2f")
             
         with col2:
@@ -323,18 +288,18 @@ if perfil == "⚙️ Administración":
                     fetch_all=False
                 )
                 st.success(f"Gasto '{concepto}' registrado exitosamente para {periodo}.")
+                st.rerun()
             else:
-                st.error("Por favor complete el concepto y un monto válido.")
+                st.error("Complete el concepto y un monto mayor a cero.")
 
         st.markdown("---")
         st.subheader("📋 Gastos Registrados")
-        df_gastos = get_gastos(periodo)
-        st.dataframe(df_gastos, use_container_width=True)
+        st.dataframe(get_gastos(periodo), use_container_width=True)
 
-    # --- 4. RECIBOS Y ENVÍO WHATSAPP ---
+    # 4. RECIBOS Y WHATSAPP
     elif menu_admin == "4. Recibos y Envío WhatsApp":
         st.subheader("📊 Previsualización y Envío de Recibos")
-        periodo_sel = st.text_input("Período a calcular", value=f"{date.today().strftime('%B %Y').capitalize()}")
+        periodo_sel = st.text_input("Período a calcular", value=get_periodo_actual())
         
         gastos_df = get_gastos(periodo_sel)
         props_df = get_propietarios()
@@ -349,10 +314,7 @@ if perfil == "⚙️ Administración":
             
             tab_gen, tab_ind = st.tabs(["📢 Recibo General (Grupo WhatsApp)", "👤 Recibo Individual (Privado)"])
             
-            # --- TAB GENERAL DE GRUPO ---
             with tab_gen:
-                st.markdown(f"#### 🏢 Resumen General de Gastos - {periodo_sel}")
-                
                 msg_general = (
                     f"🏢 *{info_edif.get('nombre', 'CONDOMINIO').upper()}*\n"
                     f"📄 RIF: {info_edif.get('rif', 'N/A')}\n"
@@ -397,19 +359,11 @@ if perfil == "⚙️ Administración":
                 )
                 
                 st.dataframe(pd.DataFrame(filas_resumen), use_container_width=True)
-                st.text_area("Vista previa mensaje para WhatsApp:", value=msg_general, height=260)
+                st.text_area("Vista previa mensaje para WhatsApp:", value=msg_general, height=220)
                 
                 url_general = urllib.parse.quote(msg_general)
-                wa_general_link = f"https://wa.me/?text={url_general}"
-                st.markdown(f'''
-                    <a href="{wa_general_link}" target="_blank">
-                        <button style="background-color:#128C7E; color:white; border:none; padding:12px 24px; border-radius:8px; cursor:pointer; font-size:16px; font-weight:bold;">
-                            📲 Compartir Relación General al Grupo de WhatsApp
-                        </button>
-                    </a>
-                ''', unsafe_allow_html=True)
+                st.link_button("📲 Compartir Relación General al Grupo de WhatsApp", f"https://wa.me/?text={url_general}")
 
-            # --- TAB RECIBO INDIVIDUAL ---
             with tab_ind:
                 apto_recibo = st.selectbox("Seleccionar Apartamento:", props_df["apartamento"].tolist())
                 prop_info = props_df[props_df["apartamento"] == apto_recibo].iloc[0]
@@ -443,27 +397,19 @@ if perfil == "⚙️ Administración":
                     f"Por favor enviar comprobante de pago por este medio. ¡Gracias!"
                 )
                 
-                st.text_area("Vista previa recibo individual:", value=recibo_ind, height=220)
+                st.text_area("Vista previa recibo individual:", value=recibo_ind, height=200)
                 
                 telefono_limpio = "".join(filter(str.isdigit, str(prop_info.get("telefono", ""))))
                 if telefono_limpio:
                     mensaje_url = urllib.parse.quote(recibo_ind)
-                    whatsapp_link = f"https://wa.me/{telefono_limpio}?text={mensaje_url}"
-                    st.markdown(f'''
-                        <a href="{whatsapp_link}" target="_blank">
-                            <button style="background-color:#25D366; color:white; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; font-size:16px;">
-                                📲 Enviar Recibo Privado por WhatsApp al Apto {apto_recibo}
-                            </button>
-                        </a>
-                    ''', unsafe_allow_html=True)
+                    st.link_button(f"📲 Enviar Recibo Privado por WhatsApp al Apto {apto_recibo}", f"https://wa.me/{telefono_limpio}?text={mensaje_url}")
                 else:
                     st.info("💡 Asigne un número de teléfono en el Directorio para habilitar el botón directo.")
 
-    # --- 5. CONTROL DE PAGOS ---
+    # 5. CONTROL DE PAGOS
     elif menu_admin == "5. Control de Pagos Recibidos":
         st.subheader("💳 Reportes de Pago Registrados por Propietarios")
         pagos_df = get_pagos()
-        
         if pagos_df.empty:
             st.info("No hay reporte de pagos registrados por los residentes aún.")
         else:
@@ -477,7 +423,7 @@ else:
         st.warning("No hay lista de apartamentos configurada.")
     else:
         apto_sel = st.selectbox("Seleccione su Apartamento:", props_df["apartamento"].tolist())
-        periodo_consulta = st.text_input("Período a consultar", value=f"{date.today().strftime('%B %Y').capitalize()}")
+        periodo_consulta = st.text_input("Período a consultar", value=get_periodo_actual())
         
         prop_data = props_df[props_df["apartamento"] == apto_sel].iloc[0]
         gastos_df = get_gastos(periodo_consulta)
