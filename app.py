@@ -70,7 +70,7 @@ def init_db():
                 )
             ''')
 
-        # 2. Tabla Propietarios y Alícuotas (Agregado campo clave_residente)
+        # 2. Tabla Propietarios y Alícuotas
         c.execute('''
             CREATE TABLE IF NOT EXISTS propietarios (
                 apartamento TEXT PRIMARY KEY,
@@ -81,7 +81,7 @@ def init_db():
             )
         ''')
         
-        # Migración por si la tabla existía sin clave_residente
+        # Migración clave residente
         try:
             c.execute("ALTER TABLE propietarios ADD COLUMN clave_residente TEXT DEFAULT '1234'")
         except sqlite3.OperationalError:
@@ -199,12 +199,13 @@ if "apto_usuario" not in st.session_state:
 info_edif = get_edificio_info()
 
 # --- PANTALLA DE ACCESO UNIFICADA ---
-# --- PANTALLA DE ACCESO UNIFICADA ---
 if not st.session_state.autenticado:
     st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_html=True)
     st.markdown(f"<h4 style='text-align: center;'>{info_edif.get('nombre', '')}</h4>", unsafe_allow_html=True)
-    st.caption(f"<p style='text-align: center;'>RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}</p>", unsafe_allow_html=True)
+    st.caption(f"RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}")
     st.markdown("---")
+    
+    col_left, col_center, col_right = st.columns([1, 2, 1])
     with col_center:
         st.subheader("🔑 Inicio de Sesión")
         with st.form("form_login"):
