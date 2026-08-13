@@ -33,7 +33,7 @@ def init_db():
     with get_connection() as conn:
         c = conn.cursor()
         
-        # 1. Tabla Datos del Edificio y Clave de Admin
+        # 1. Tabla Datos del Edificio y Credenciales Admin
         c.execute('''
             CREATE TABLE IF NOT EXISTS edificio_info (
                 id INTEGER PRIMARY KEY,
@@ -44,15 +44,21 @@ def init_db():
                 num_cuenta TEXT,
                 pago_movil_telf TEXT,
                 pago_movil_cedula TEXT,
+                usuario_admin TEXT,
                 clave_admin TEXT
             )
         ''')
         
-        # Migración rápida por si la tabla ya existía sin el campo clave_admin
+        # Migraciones por si las columnas no existían
+        try:
+            c.execute("ALTER TABLE edificio_info ADD COLUMN usuario_admin TEXT DEFAULT 'admin'")
+        except sqlite3.OperationalError:
+            pass
+            
         try:
             c.execute("ALTER TABLE edificio_info ADD COLUMN clave_admin TEXT DEFAULT '1234'")
         except sqlite3.OperationalError:
-            pass  # La columna ya existe
+            pass
         
         c.execute("SELECT COUNT(*) FROM edificio_info")
         if c.fetchone()[0] == 0:
@@ -60,7 +66,7 @@ def init_db():
                 INSERT INTO edificio_info VALUES (
                     1, 'Residencias El Roble', 'J-00000000-0', 
                     'Caracas, Venezuela', 'Banesco', 
-                    '0134-0000-00-0000000000', '0412-0000000', 'V-12345678', '1234'
+                    '0134-0000-00-0000000000', '0412-0000000', 'V-12345678', 'admin', '1234'
                 )
             ''')
 
@@ -135,20 +141,21 @@ def get_edificio_info():
     try:
         with get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula, clave_admin FROM edificio_info WHERE id=1")
+            c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula, usuario_admin, clave_admin FROM edificio_info WHERE id=1")
             row = c.fetchone()
             if row:
                 return {
                     "nombre": row[0], "rif": row[1], "direccion": row[2],
                     "banco": row[3], "cuenta": row[4], "pm_telf": row[5], "pm_cedula": row[6],
-                    "clave_admin": row[7] if row[7] else "1234"
+                    "usuario_admin": row[7] if row[7] else "admin",
+                    "clave_admin": row[8] if row[8] else "1234"
                 }
     except Exception:
         pass
     return {
         "nombre": "Residencias El Roble", "rif": "J-00000000-0", "direccion": "Caracas, Venezuela",
         "banco": "Banesco", "cuenta": "0134-0000-00-0000000000", "pm_telf": "0412-0000000", "pm_cedula": "V-12345678",
-        "clave_admin": "1234"
+        "usuario_admin": "admin", "clave_admin": "1234"
     }
 
 def get_propietarios():
@@ -185,22 +192,29 @@ perfil = st.sidebar.radio("Seleccione el Perfil:", ["👤 Portal Residente", "�
 if perfil == "⚙️ Administración":
     st.sidebar.markdown("---")
     
-    # --- MÓDULO DE AUTENTICACIÓN ---
+    # --- MÓDULO DE AUTENTICACIÓN (USUARIO Y CLAVE) ---
     if "admin_autenticado" not in st.session_state:
         st.session_state.admin_autenticado = False
 
     if not st.session_state.admin_autenticado:
         st.subheader("🔒 Acceso Restringido - Administración")
-        st.info("Inicie sesión con su clave de administrador para acceder a este módulo.")
+        st.info("Ingrese su usuario y clave de administrador.")
         
-        clave_ingresada = st.text_input("Ingrese la Clave de Administrador:", type="password")
-        if st.button("🔑 Ingresar"):
-            if clave_ingresada == info_edif.get("clave_admin", "1234"):
-                st.session_state.admin_autenticado = True
-                st.success("¡Acceso concedido!")
-                st.rerun()
-            else:
-                st.error("❌ Clave incorrecta. Intente nuevamente.")
+        with st.form("form_login"):
+            usuario_ingresado = st.text_input("Usuario Administrador:")
+            clave_ingresada = st.text_input("Clave de Acceso:", type="password")
+            submit_login = st.form_submit_button("🔑 Ingresar")
+            
+            if submit_login:
+                user_ok = info_edif.get("usuario_admin", "admin")
+                pass_ok = info_edif.get("clave_admin", "1234")
+                
+                if usuario_ingresado.strip() == user_ok and clave_ingresada == pass_ok:
+                    st.session_state.admin_autenticado = True
+                    st.success("¡Acceso concedido!")
+                    st.rerun()
+                else:
+                    st.error("❌ Usuario o clave incorrectos. Intente nuevamente.")
     else:
         # Botón para cerrar sesión en la barra lateral
         if st.sidebar.button("🔒 Cerrar Sesión Admin"):
@@ -208,15 +222,15 @@ if perfil == "⚙️ Administración":
             st.rerun()
 
         menu_admin = st.sidebar.selectbox("Opciones de Administración:", [
-            "1. Datos del Edificio, Cuentas y Clave",
+            "1. Datos del Edificio, Cuentas y Credenciales",
             "2. Gestión de Propietarios y Alícuotas",
             "3. Registro de Gastos del Mes",
             "4. Recibos y Envío WhatsApp",
             "5. Control de Pagos Recibidos"
         ])
         
-        # 1. DATOS DEL EDIFICIO Y CLAVE DE ACCESO
-        if menu_admin == "1. Datos del Edificio, Cuentas y Clave":
+        # 1. DATOS DEL EDIFICIO Y CREDENCIALES
+        if menu_admin == "1. Datos del Edificio, Cuentas y Credenciales":
             st.subheader("⚙️ Configuración de Datos del Edificio y Seguridad")
             
             with st.form("form_edificio"):
@@ -225,7 +239,12 @@ if perfil == "⚙️ Administración":
                     nom_edif = st.text_input("Nombre del Edificio / Condominio:", value=info_edif.get("nombre", ""))
                     rif_edif = st.text_input("RIF / Identificación Fiscal:", value=info_edif.get("rif", ""))
                     dir_edif = st.text_input("Dirección:", value=info_edif.get("direccion", ""))
-                    clave_actual = st.text_input("Clave de Acceso Administrador:", value=info_edif.get("clave_admin", "1234"), type="password")
+                    
+                    st.markdown("---")
+                    st.markdown("🔑 **Credenciales de Administrador:**")
+                    user_actual = st.text_input("Usuario Admin:", value=info_edif.get("usuario_admin", "admin"))
+                    clave_actual = st.text_input("Clave Admin:", value=info_edif.get("clave_admin", "1234"), type="password")
+                    
                 with col2:
                     banco_nom = st.text_input("Banco:", value=info_edif.get("banco", ""))
                     cuenta_num = st.text_input("Número de Cuenta Corriente:", value=info_edif.get("cuenta", ""))
@@ -236,10 +255,10 @@ if perfil == "⚙️ Administración":
                 if guardar_info:
                     run_query('''
                         UPDATE edificio_info 
-                        SET nombre_edificio=?, rif=?, direccion=?, banco_nombre=?, num_cuenta=?, pago_movil_telf=?, pago_movil_cedula=?, clave_admin=?
+                        SET nombre_edificio=?, rif=?, direccion=?, banco_nombre=?, num_cuenta=?, pago_movil_telf=?, pago_movil_cedula=?, usuario_admin=?, clave_admin=?
                         WHERE id=1
-                    ''', (nom_edif, rif_edif, dir_edif, banco_nom, cuenta_num, pm_telf, pm_ced, clave_actual), fetch_all=False)
-                    st.success("¡Información y clave de administración actualizadas correctamente!")
+                    ''', (nom_edif, rif_edif, dir_edif, banco_nom, cuenta_num, pm_telf, pm_ced, user_actual.strip(), clave_actual), fetch_all=False)
+                    st.success("¡Información del edificio y credenciales actualizadas correctamente!")
                     st.rerun()
 
         # 2. PROPIETARIOS Y ALÍCUOTAS
