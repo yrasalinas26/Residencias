@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 import urllib.parse
 from datetime import date
+import base64
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -81,7 +82,6 @@ def init_db():
             )
         ''')
         
-        # Migración clave residente
         try:
             c.execute("ALTER TABLE propietarios ADD COLUMN clave_residente TEXT DEFAULT '1234'")
         except sqlite3.OperationalError:
@@ -101,7 +101,7 @@ def init_db():
             ]
             c.executemany("INSERT INTO propietarios VALUES (?, ?, ?, ?, ?)", apts_iniciales)
             
-        # 3. Tabla Gastos
+        # 3. Tabla Gastos (Incluye campo 'comprobante' para imágenes)
         c.execute('''
             CREATE TABLE IF NOT EXISTS gastos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,9 +110,16 @@ def init_db():
                 monto REAL,
                 tipo TEXT,
                 apartamento TEXT,
-                fecha TEXT
+                fecha TEXT,
+                comprobante TEXT
             )
         ''')
+        
+        # Migración para agregar la columna de imagen si la tabla ya existía
+        try:
+            c.execute("ALTER TABLE gastos ADD COLUMN comprobante TEXT")
+        except sqlite3.OperationalError:
+            pass
         
         # 4. Tabla Pagos
         c.execute('''
@@ -179,7 +186,7 @@ def get_gastos(periodo=None):
                 return pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ?", conn, params=[periodo])
             return pd.read_sql_query("SELECT * FROM gastos ORDER BY id DESC", conn)
     except Exception:
-        return pd.DataFrame(columns=["id", "periodo", "concepto", "monto", "tipo", "apartamento", "fecha"])
+        return pd.DataFrame(columns=["id", "periodo", "concepto", "monto", "tipo", "apartamento", "fecha", "comprobante"])
 
 def get_pagos():
     try:
@@ -256,7 +263,7 @@ else:
         menu_admin = st.sidebar.selectbox("Opciones:", [
             "1. Datos del Edificio y Credenciales",
             "2. Gestión de Propietarios, Alícuotas y Claves",
-            "3. Registro de Gastos del Mes",
+            "3. Registro de Gastos e Imágenes",
             "4. Recibos y Envío WhatsApp",
             "5. Control de Pagos Recibidos"
         ])
@@ -340,31 +347,59 @@ else:
                         except Exception:
                             st.error("El número de apartamento ya existe.")
 
-        # 3. REGISTRO DE GASTOS
-        elif menu_admin == "3. Registro de Gastos del Mes":
-            st.subheader("📝 Registrar Gastos del Condominio")
-            col1, col2 = st.columns(2)
-            with col1:
-                periodo = st.text_input("Período / Mes", value=get_periodo_actual())
-                concepto = st.text_input("Concepto del Gasto")
-                monto = st.number_input("Monto ($)", min_value=0.0, step=10.0, format="%.2f")
-            with col2:
-                tipo_gasto = st.selectbox("Tipo de Gasto", ["Común", "No Común"])
-                apto_asig = "-"
-                if tipo_gasto == "No Común":
-                    df_props = get_propietarios()
-                    apto_asig = st.selectbox("Asignar a Apartamento:", df_props["apartamento"].tolist() if not df_props.empty else ["1A"])
-                fecha_gasto = st.date_input("Fecha de Registro", date.today())
-
-            if st.button("➕ Agregar Gasto"):
-                if concepto and monto > 0:
-                    run_query("INSERT INTO gastos (periodo, concepto, monto, tipo, apartamento, fecha) VALUES (?, ?, ?, ?, ?, ?)",
-                              (periodo, concepto, monto, tipo_gasto, apto_asig, str(fecha_gasto)), fetch_all=False)
-                    st.success("Gasto registrado.")
-                    st.rerun()
+        # 3. REGISTRO DE GASTOS CON FOTO/IMAGEN
+        elif menu_admin == "3. Registro de Gastos e Imágenes":
+            st.subheader("📝 Registrar Gastos del Condominio y Comprobantes")
+            
+            with st.form("form_gasto"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    periodo = st.text_input("Período / Mes", value=get_periodo_actual())
+                    concepto = st.text_input("Concepto del Gasto")
+                    monto = st.number_input("Monto ($)", min_value=0.0, step=10.0, format="%.2f")
+                with col2:
+                    tipo_gasto = st.selectbox("Tipo de Gasto", ["Común", "No Común"])
+                    apto_asig = "-"
+                    if tipo_gasto == "No Común":
+                        df_props = get_propietarios()
+                        apto_asig = st.selectbox("Asignar a Apartamento:", df_props["apartamento"].tolist() if not df_props.empty else ["1A"])
+                    fecha_gasto = st.date_input("Fecha de Registro", date.today())
+                
+                # Carga de Imagen
+                archivo_imagen = st.file_uploader("Adjuntar Foto o Factura del Gasto (Opcional)", type=["png", "jpg", "jpeg"])
+                
+                if st.form_submit_button("➕ Guardar Gasto"):
+                    if concepto and monto > 0:
+                        img_str = None
+                        if archivo_imagen is not None:
+                            img_str = base64.b64encode(archivo_imagen.read()).decode('utf-8')
+                        
+                        run_query(
+                            "INSERT INTO gastos (periodo, concepto, monto, tipo, apartamento, fecha, comprobante) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (periodo, concepto, monto, tipo_gasto, apto_asig, str(fecha_gasto), img_str), 
+                            fetch_all=False
+                        )
+                        st.success("Gasto guardado con éxito.")
+                        st.rerun()
+                    else:
+                        st.error("Por favor ingresa un concepto y un monto mayor a cero.")
 
             st.markdown("---")
-            st.dataframe(get_gastos(periodo), use_container_width=True)
+            st.subheader("📋 Gastos Registrados")
+            df_gastos = get_gastos(periodo)
+            
+            if not df_gastos.empty:
+                for _, row in df_gastos.iterrows():
+                    with st.expander(f"📌 {row['concepto']} - ${row['monto']:,.2f} ({row['fecha']})"):
+                        st.write(f"**Tipo:** {row['tipo']} | **Período:** {row['periodo']} | **Apto:** {row['apartamento']}")
+                        if row.get('comprobante') and pd.notna(row['comprobante']):
+                            try:
+                                img_bytes = base64.b64decode(row['comprobante'])
+                                st.image(img_bytes, caption=f"Comprobante: {row['concepto']}", use_column_width=True)
+                            except Exception:
+                                st.warning("No se pudo cargar la imagen.")
+            else:
+                st.info("No hay gastos registrados para este período.")
 
         # 4. RECIBOS Y WHATSAPP
         elif menu_admin == "4. Recibos y Envío WhatsApp":
@@ -446,6 +481,17 @@ else:
             c1.metric("Alícuota", f"{alicuota*100:.1f}%")
             c2.metric("Cuota Común", f"${cuota_comun:,.2f}")
             c3.metric("Total a Pagar", f"${total_pagar:,.2f}")
+            
+            st.markdown("---")
+            st.subheader("🧾 Comprobantes y Facturas del Mes")
+            for _, row in gastos_df.iterrows():
+                if row.get('comprobante') and pd.notna(row['comprobante']):
+                    with st.expander(f"📷 Ver factura: {row['concepto']} (${row['monto']:,.2f})"):
+                        try:
+                            img_bytes = base64.b64decode(row['comprobante'])
+                            st.image(img_bytes, caption=row['concepto'], use_column_width=True)
+                        except Exception:
+                            st.write("No fue posible cargar la vista previa de la imagen.")
             
             st.markdown("---")
             st.markdown("### 💳 Datos para la Transferencia")
