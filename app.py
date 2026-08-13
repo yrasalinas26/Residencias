@@ -34,7 +34,7 @@ def init_db():
     with get_connection() as conn:
         c = conn.cursor()
         
-        # 1. Tabla Datos del Edificio y Credenciales Admin (Incluye imagen_edificio)
+        # 1. Tabla Datos del Edificio y Credenciales Admin
         c.execute('''
             CREATE TABLE IF NOT EXISTS edificio_info (
                 id INTEGER PRIMARY KEY,
@@ -51,7 +51,6 @@ def init_db():
             )
         ''')
         
-        # Migraciones para columnas añadidas progresivamente
         for col, dtype, val in [
             ("usuario_admin", "TEXT", "'admin'"),
             ("clave_admin", "TEXT", "'1234'"),
@@ -184,7 +183,7 @@ def get_gastos(periodo=None):
     try:
         with get_connection() as conn:
             if periodo:
-                return pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ?", conn, params=[periodo])
+                return pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ? ORDER BY id DESC", conn, params=[periodo])
             return pd.read_sql_query("SELECT * FROM gastos ORDER BY id DESC", conn)
     except Exception:
         return pd.DataFrame(columns=["id", "periodo", "concepto", "monto", "tipo", "apartamento", "fecha", "comprobante"])
@@ -200,7 +199,7 @@ def get_pagos():
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 if "rol" not in st.session_state:
-    st.session_state.rol = None  # "admin" o "residente"
+    st.session_state.rol = None
 if "apto_usuario" not in st.session_state:
     st.session_state.apto_usuario = None
 
@@ -210,7 +209,6 @@ info_edif = get_edificio_info()
 if not st.session_state.autenticado:
     st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_html=True)
     
-    # Muestra de la Foto del Edificio en el Login
     if info_edif.get("imagen"):
         try:
             img_edif_bytes = base64.b64decode(info_edif["imagen"])
@@ -237,13 +235,11 @@ if not st.session_state.autenticado:
                 usr_admin = info_edif.get("usuario_admin", "admin").strip().upper()
                 pass_admin = info_edif.get("clave_admin", "1234")
                 
-                # 1. Validar Credencial Admin
                 if usr == usr_admin and clave_ingresada == pass_admin:
                     st.session_state.autenticado = True
                     st.session_state.rol = "admin"
                     st.rerun()
                 else:
-                    # 2. Validar Credenciales de Propietarios
                     df_props = get_propietarios()
                     residente_match = df_props[df_props["apartamento"].str.upper() == usr]
                     
@@ -291,7 +287,6 @@ else:
         if menu_admin == "1. Datos del Edificio, Imagen y Credenciales":
             st.subheader("⚙️ Configuración del Edificio y Credencial Principal")
             
-            # Vista previa de la imagen actual
             if info_edif.get("imagen"):
                 try:
                     img_bytes = base64.b64decode(info_edif["imagen"])
@@ -317,7 +312,6 @@ else:
                 nueva_foto_edificio = st.file_uploader("🖼️ Cambiar o Subir Foto del Edificio (PNG, JPG)", type=["png", "jpg", "jpeg"])
                     
                 if st.form_submit_button("💾 Guardar Cambios"):
-                    # Conservar imagen antigua o procesar la nueva
                     str_foto = info_edif.get("imagen")
                     if nueva_foto_edificio is not None:
                         str_foto = base64.b64encode(nueva_foto_edificio.read()).decode('utf-8')
@@ -382,7 +376,7 @@ else:
                         except Exception:
                             st.error("El número de apartamento ya existe.")
 
-        # 3. REGISTRO DE GASTOS CON FOTO/IMAGEN
+        # 3. REGISTRO DE GASTOS CON OPCIÓN DE ELIMINAR
         elif menu_admin == "3. Registro de Gastos e Imágenes":
             st.subheader("📝 Registrar Gastos del Condominio y Comprobantes")
             
@@ -419,7 +413,7 @@ else:
                         st.error("Por favor ingresa un concepto y un monto mayor a cero.")
 
             st.markdown("---")
-            st.subheader("📋 Gastos Registrados")
+            st.subheader(f"📋 Gastos Registrados ({periodo})")
             df_gastos = get_gastos(periodo)
             
             if not df_gastos.empty:
@@ -429,9 +423,15 @@ else:
                         if row.get('comprobante') and pd.notna(row['comprobante']):
                             try:
                                 img_bytes = base64.b64decode(row['comprobante'])
-                                st.image(img_bytes, caption=f"Comprobante: {row['concepto']}", use_column_width=True)
+                                st.image(img_bytes, caption=f"Comprobante: {row['concepto']}", use_column_width=300)
                             except Exception:
                                 st.warning("No se pudo cargar la imagen.")
+                        
+                        # BOTÓN PARA ELIMINAR EL GASTO
+                        if st.button(f"🗑️ Eliminar este gasto", key=f"del_{row['id']}"):
+                            run_query("DELETE FROM gastos WHERE id = ?", (row['id'],), fetch_all=False)
+                            st.success(f"Gasto '{row['concepto']}' eliminado.")
+                            st.rerun()
             else:
                 st.info("No hay gastos registrados para este período.")
 
@@ -523,7 +523,7 @@ else:
                     with st.expander(f"📷 Ver factura: {row['concepto']} (${row['monto']:,.2f})"):
                         try:
                             img_bytes = base64.b64decode(row['comprobante'])
-                            st.image(img_bytes, caption=row['concepto'], use_column_width=True)
+                            st.image(img_bytes, caption=row['concepto'], use_column_width=300)
                         except Exception:
                             st.write("No fue posible cargar la vista previa de la imagen.")
             
