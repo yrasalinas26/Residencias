@@ -49,7 +49,7 @@ def init_db():
             )
         ''')
         
-        # Migraciones por si las columnas no existían
+        # Migraciones
         try:
             c.execute("ALTER TABLE edificio_info ADD COLUMN usuario_admin TEXT DEFAULT 'admin'")
         except sqlite3.OperationalError:
@@ -70,29 +70,36 @@ def init_db():
                 )
             ''')
 
-        # 2. Tabla Propietarios y Alícuotas
+        # 2. Tabla Propietarios y Alícuotas (Agregado campo clave_residente)
         c.execute('''
             CREATE TABLE IF NOT EXISTS propietarios (
                 apartamento TEXT PRIMARY KEY,
                 propietario TEXT,
                 telefono TEXT,
-                alicuota REAL
+                alicuota REAL,
+                clave_residente TEXT DEFAULT '1234'
             )
         ''')
         
+        # Migración por si la tabla existía sin clave_residente
+        try:
+            c.execute("ALTER TABLE propietarios ADD COLUMN clave_residente TEXT DEFAULT '1234'")
+        except sqlite3.OperationalError:
+            pass
+
         c.execute("SELECT COUNT(*) FROM propietarios")
         if c.fetchone()[0] == 0:
             apts_iniciales = [
-                ("1A", "", "", 0.06), ("1B", "", "", 0.06),
-                ("2",  "", "", 0.12),
-                ("3A", "", "", 0.06), ("3B", "", "", 0.06),
-                ("4A", "", "", 0.06), ("4B", "", "", 0.06),
-                ("5A", "", "", 0.06), ("5B", "", "", 0.06),
-                ("6A", "", "", 0.06), ("6B", "", "", 0.06),
-                ("7",  "", "", 0.12),
-                ("PH", "", "", 0.16)
+                ("1A", "", "", 0.06, "1234"), ("1B", "", "", 0.06, "1234"),
+                ("2",  "", "", 0.12, "1234"),
+                ("3A", "", "", 0.06, "1234"), ("3B", "", "", 0.06, "1234"),
+                ("4A", "", "", 0.06, "1234"), ("4B", "", "", 0.06, "1234"),
+                ("5A", "", "", 0.06, "1234"), ("5B", "", "", 0.06, "1234"),
+                ("6A", "", "", 0.06, "1234"), ("6B", "", "", 0.06, "1234"),
+                ("7",  "", "", 0.12, "1234"),
+                ("PH", "", "", 0.16, "1234")
             ]
-            c.executemany("INSERT INTO propietarios VALUES (?, ?, ?, ?)", apts_iniciales)
+            c.executemany("INSERT INTO propietarios VALUES (?, ?, ?, ?, ?)", apts_iniciales)
             
         # 3. Tabla Gastos
         c.execute('''
@@ -163,7 +170,7 @@ def get_propietarios():
         with get_connection() as conn:
             return pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
     except Exception:
-        return pd.DataFrame(columns=["apartamento", "propietario", "telefono", "alicuota"])
+        return pd.DataFrame(columns=["apartamento", "propietario", "telefono", "alicuota", "clave_residente"])
 
 def get_gastos(periodo=None):
     try:
@@ -181,149 +188,166 @@ def get_pagos():
     except Exception:
         return pd.DataFrame(columns=["id", "apartamento", "periodo", "monto", "referencia", "fecha", "estado"])
 
-# --- INTERFAZ DE USUARIO ---
+# --- ESTADOS DE SESIÓN ---
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+if "rol" not in st.session_state:
+    st.session_state.rol = None  # "admin" o "residente"
+if "apto_usuario" not in st.session_state:
+    st.session_state.apto_usuario = None
+
 info_edif = get_edificio_info()
 
-st.title(f"🏢 {info_edif.get('nombre', 'Sistema de Condominio')}")
-st.caption(f"RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}")
-
-perfil = st.sidebar.radio("Seleccione el Perfil:", ["👤 Portal Residente", "⚙️ Administración"])
-
-if perfil == "⚙️ Administración":
-    st.sidebar.markdown("---")
+# --- PANTALLA DE ACCESO UNIFICADA ---
+if not st.session_state.autenticado:
+    st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_text=True)
+    st.markdown(f"<h4 style='text-align: center;'>{info_edif.get('nombre', '')}</h4>", unsafe_allow_text=True)
+    st.caption(f"<p style='text-align: center;'>RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}</p>", unsafe_allow_html=True)
+    st.markdown("---")
     
-    # --- MÓDULO DE AUTENTICACIÓN (USUARIO Y CLAVE) ---
-    if "admin_autenticado" not in st.session_state:
-        st.session_state.admin_autenticado = False
-
-    if not st.session_state.admin_autenticado:
-        st.subheader("🔒 Acceso Restringido - Administración")
-        st.info("Ingrese su usuario y clave de administrador.")
-        
+    col_left, col_center, col_right = st.columns([1, 2, 1])
+    with col_center:
+        st.subheader("🔑 Inicio de Sesión")
         with st.form("form_login"):
-            usuario_ingresado = st.text_input("Usuario Administrador:")
-            clave_ingresada = st.text_input("Clave de Acceso:", type="password")
-            submit_login = st.form_submit_button("🔑 Ingresar")
+            usuario_ingresado = st.text_input("Usuario:")
+            clave_ingresada = st.text_input("Clave:", type="password")
+            submit_login = st.form_submit_button("Ingresar")
             
             if submit_login:
-                user_ok = info_edif.get("usuario_admin", "admin")
-                pass_ok = info_edif.get("clave_admin", "1234")
+                usr = usuario_ingresado.strip().upper()
+                usr_admin = info_edif.get("usuario_admin", "admin").strip().upper()
+                pass_admin = info_edif.get("clave_admin", "1234")
                 
-                if usuario_ingresado.strip() == user_ok and clave_ingresada == pass_ok:
-                    st.session_state.admin_autenticado = True
-                    st.success("¡Acceso concedido!")
+                # 1. Validar Credencial Admin
+                if usr == usr_admin and clave_ingresada == pass_admin:
+                    st.session_state.autenticado = True
+                    st.session_state.rol = "admin"
                     st.rerun()
                 else:
-                    st.error("❌ Usuario o clave incorrectos. Intente nuevamente.")
-    else:
-        # Botón para cerrar sesión en la barra lateral
-        if st.sidebar.button("🔒 Cerrar Sesión Admin"):
-            st.session_state.admin_autenticado = False
-            st.rerun()
+                    # 2. Validar Credenciales de Propietarios (Apto como usuario)
+                    df_props = get_propietarios()
+                    residente_match = df_props[df_props["apartamento"].str.upper() == usr]
+                    
+                    if not residente_match.empty:
+                        clave_correcta = str(residente_match.iloc[0].get("clave_residente", "1234"))
+                        if clave_ingresada == clave_correcta:
+                            st.session_state.autenticado = True
+                            st.session_state.rol = "residente"
+                            st.session_state.apto_usuario = residente_match.iloc[0]["apartamento"]
+                            st.rerun()
+                        else:
+                            st.error("❌ Usuario o clave incorrectos.")
+                    else:
+                        st.error("❌ Usuario o clave incorrectos.")
 
-        menu_admin = st.sidebar.selectbox("Opciones de Administración:", [
-            "1. Datos del Edificio, Cuentas y Credenciales",
-            "2. Gestión de Propietarios y Alícuotas",
+# --- ÁREA PRIVADA (UNA VEZ AUTENTICADO) ---
+else:
+    st.sidebar.markdown(f"**Bienvenido:** `{st.session_state.apto_usuario if st.session_state.rol == 'residente' else 'Administrador'}`")
+    if st.sidebar.button("🔒 Cerrar Sesión"):
+        st.session_state.autenticado = False
+        st.session_state.rol = None
+        st.session_state.apto_usuario = None
+        st.rerun()
+
+    # --- MÓDULO ADMINISTRACIÓN ---
+    if st.session_state.rol == "admin":
+        st.title(f"🏢 {info_edif.get('nombre', '')} - Módulo de Control")
+        
+        menu_admin = st.sidebar.selectbox("Opciones:", [
+            "1. Datos del Edificio y Credenciales",
+            "2. Gestión de Propietarios, Alícuotas y Claves",
             "3. Registro de Gastos del Mes",
             "4. Recibos y Envío WhatsApp",
             "5. Control de Pagos Recibidos"
         ])
         
-        # 1. DATOS DEL EDIFICIO Y CREDENCIALES
-        if menu_admin == "1. Datos del Edificio, Cuentas y Credenciales":
-            st.subheader("⚙️ Configuración de Datos del Edificio y Seguridad")
-            
+        # 1. DATOS DEL EDIFICIO Y CREDENCIALES ADMIN
+        if menu_admin == "1. Datos del Edificio y Credenciales":
+            st.subheader("⚙️ Configuración de Datos y Credencial Principal")
             with st.form("form_edificio"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    nom_edif = st.text_input("Nombre del Edificio / Condominio:", value=info_edif.get("nombre", ""))
+                    nom_edif = st.text_input("Nombre del Edificio:", value=info_edif.get("nombre", ""))
                     rif_edif = st.text_input("RIF / Identificación Fiscal:", value=info_edif.get("rif", ""))
                     dir_edif = st.text_input("Dirección:", value=info_edif.get("direccion", ""))
-                    
                     st.markdown("---")
-                    st.markdown("🔑 **Credenciales de Administrador:**")
-                    user_actual = st.text_input("Usuario Admin:", value=info_edif.get("usuario_admin", "admin"))
-                    clave_actual = st.text_input("Clave Admin:", value=info_edif.get("clave_admin", "1234"), type="password")
-                    
+                    user_actual = st.text_input("Usuario Administrador:", value=info_edif.get("usuario_admin", "admin"))
+                    clave_actual = st.text_input("Clave Administrador:", value=info_edif.get("clave_admin", "1234"), type="password")
                 with col2:
                     banco_nom = st.text_input("Banco:", value=info_edif.get("banco", ""))
-                    cuenta_num = st.text_input("Número de Cuenta Corriente:", value=info_edif.get("cuenta", ""))
+                    cuenta_num = st.text_input("Número de Cuenta:", value=info_edif.get("cuenta", ""))
                     pm_telf = st.text_input("Teléfono Pago Móvil:", value=info_edif.get("pm_telf", ""))
                     pm_ced = st.text_input("Cédula / RIF Pago Móvil:", value=info_edif.get("pm_cedula", ""))
                     
-                guardar_info = st.form_submit_button("💾 Guardar Cambios")
-                if guardar_info:
+                if st.form_submit_button("💾 Guardar Cambios"):
                     run_query('''
                         UPDATE edificio_info 
                         SET nombre_edificio=?, rif=?, direccion=?, banco_nombre=?, num_cuenta=?, pago_movil_telf=?, pago_movil_cedula=?, usuario_admin=?, clave_admin=?
                         WHERE id=1
                     ''', (nom_edif, rif_edif, dir_edif, banco_nom, cuenta_num, pm_telf, pm_ced, user_actual.strip(), clave_actual), fetch_all=False)
-                    st.success("¡Información del edificio y credenciales actualizadas correctamente!")
+                    st.success("Configuración actualizada correctamente.")
                     st.rerun()
 
-        # 2. PROPIETARIOS Y ALÍCUOTAS
-        elif menu_admin == "2. Gestión de Propietarios y Alícuotas":
-            st.subheader("👥 Directorio de Propietarios y Configuración de Alícuotas")
-            tab_listado, tab_nuevo = st.tabs(["📋 Modificar Propietarios y Alícuotas", "➕ Agregar Nuevo Apartamento"])
+        # 2. PROPIETARIOS, ALÍCUOTAS Y CLAVES
+        elif menu_admin == "2. Gestión de Propietarios, Alícuotas y Claves":
+            st.subheader("👥 Directorio de Propietarios y Acceso")
+            tab_listado, tab_nuevo = st.tabs(["📋 Modificar Propietarios", "➕ Agregar Nuevo Apartamento"])
             
             with tab_listado:
                 df_props = get_propietarios()
                 edited_df = st.data_editor(
                     df_props,
                     column_config={
-                        "apartamento": st.column_config.TextColumn("Apto", disabled=True),
+                        "apartamento": st.column_config.TextColumn("Apto (Usuario)", disabled=True),
                         "propietario": "Nombre Propietario",
-                        "telefono": "Teléfono (Ej: 584121234567)",
-                        "alicuota": st.column_config.NumberColumn("Alícuota (Ej: 0.06 = 6%)", format="%.4f", min_value=0.0, max_value=1.0, step=0.01)
+                        "telefono": "Teléfono",
+                        "alicuota": st.column_config.NumberColumn("Alícuota", format="%.4f", min_value=0.0, max_value=1.0, step=0.01),
+                        "clave_residente": st.column_config.TextColumn("Clave de Acceso Apto")
                     },
                     use_container_width=True,
                     hide_index=True
                 )
                 
                 suma_alicuotas = edited_df["alicuota"].sum() if not edited_df.empty else 0.0
-                st.caption(f"📊 Suma total de alícuotas actuales: **{suma_alicuotas*100:.2f}%**")
-                if abs(suma_alicuotas - 1.0) > 0.001:
-                    st.warning("⚠️ La suma total de alícuotas no da el 100% (1.0). Ajuste los valores.")
+                st.caption(f"📊 Suma total de alícuotas: **{suma_alicuotas*100:.2f}%**")
                 
-                if st.button("💾 Guardar Cambios en Propietarios y Alícuotas"):
+                if st.button("💾 Guardar Cambios"):
                     for _, row in edited_df.iterrows():
                         run_query(
-                            "UPDATE propietarios SET propietario = ?, telefono = ?, alicuota = ? WHERE apartamento = ?",
-                            (row["propietario"], str(row["telefono"]), float(row["alicuota"]), row["apartamento"]),
+                            "UPDATE propietarios SET propietario = ?, telefono = ?, alicuota = ?, clave_residente = ? WHERE apartamento = ?",
+                            (row["propietario"], str(row["telefono"]), float(row["alicuota"]), str(row["clave_residente"]), row["apartamento"]),
                             fetch_all=False
                         )
-                    st.success("Información actualizada exitosamente.")
+                    st.success("Directorio de propietarios actualizado.")
                     st.rerun()
                     
             with tab_nuevo:
                 with st.form("form_nuevo_apto"):
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        nuevo_apto = st.text_input("Identificador / Número de Apto:")
-                        nuevo_prop = st.text_input("Nombre del Propietario:")
+                        nuevo_apto = st.text_input("Apto / Usuario:")
+                        nuevo_prop = st.text_input("Nombre:")
+                        nueva_clave = st.text_input("Clave de Acceso Apto:", value="1234")
                     with col_b:
-                        nuevo_telf = st.text_input("Teléfono de Contacto:")
+                        nuevo_telf = st.text_input("Teléfono:")
                         nueva_aliq = st.number_input("Alícuota:", min_value=0.0, max_value=1.0, value=0.06, step=0.01, format="%.4f")
                     
-                    guardar_nuevo = st.form_submit_button("➕ Registrar Apartamento")
-                    if guardar_nuevo and nuevo_apto:
+                    if st.form_submit_button("➕ Registrar Apartamento") and nuevo_apto:
                         try:
-                            run_query("INSERT INTO propietarios VALUES (?, ?, ?, ?)", (nuevo_apto.upper().strip(), nuevo_prop, nuevo_telf, nueva_aliq), fetch_all=False)
-                            st.success(f"Apartamento {nuevo_apto} agregado exitosamente.")
+                            run_query("INSERT INTO propietarios VALUES (?, ?, ?, ?, ?)", (nuevo_apto.upper().strip(), nuevo_prop, nuevo_telf, nueva_aliq, nueva_clave), fetch_all=False)
+                            st.success(f"Apartamento {nuevo_apto} registrado.")
                             st.rerun()
-                        except Exception as e:
-                            st.error("El número de apartamento ya existe o fue inválido.")
+                        except Exception:
+                            st.error("El número de apartamento ya existe.")
 
         # 3. REGISTRO DE GASTOS
         elif menu_admin == "3. Registro de Gastos del Mes":
             st.subheader("📝 Registrar Gastos del Condominio")
             col1, col2 = st.columns(2)
-            
             with col1:
                 periodo = st.text_input("Período / Mes", value=get_periodo_actual())
                 concepto = st.text_input("Concepto del Gasto")
                 monto = st.number_input("Monto ($)", min_value=0.0, step=10.0, format="%.2f")
-                
             with col2:
                 tipo_gasto = st.selectbox("Tipo de Gasto", ["Común", "No Común"])
                 apto_asig = "-"
@@ -334,51 +358,33 @@ if perfil == "⚙️ Administración":
 
             if st.button("➕ Agregar Gasto"):
                 if concepto and monto > 0:
-                    run_query(
-                        "INSERT INTO gastos (periodo, concepto, monto, tipo, apartamento, fecha) VALUES (?, ?, ?, ?, ?, ?)",
-                        (periodo, concepto, monto, tipo_gasto, apto_asig, str(fecha_gasto)),
-                        fetch_all=False
-                    )
-                    st.success(f"Gasto '{concepto}' registrado exitosamente para {periodo}.")
+                    run_query("INSERT INTO gastos (periodo, concepto, monto, tipo, apartamento, fecha) VALUES (?, ?, ?, ?, ?, ?)",
+                              (periodo, concepto, monto, tipo_gasto, apto_asig, str(fecha_gasto)), fetch_all=False)
+                    st.success("Gasto registrado.")
                     st.rerun()
-                else:
-                    st.error("Complete el concepto y un monto mayor a cero.")
 
             st.markdown("---")
-            st.subheader("📋 Gastos Registrados")
             st.dataframe(get_gastos(periodo), use_container_width=True)
 
         # 4. RECIBOS Y WHATSAPP
         elif menu_admin == "4. Recibos y Envío WhatsApp":
-            st.subheader("📊 Previsualización y Envío de Recibos")
+            st.subheader("📊 Recibos y Envíos WhatsApp")
             periodo_sel = st.text_input("Período a calcular", value=get_periodo_actual())
-            
             gastos_df = get_gastos(periodo_sel)
             props_df = get_propietarios()
             
-            if gastos_df.empty or props_df.empty:
-                st.warning("No hay gastos registrados para este período o faltan datos en el directorio.")
-            else:
+            if not gastos_df.empty and not props_df.empty:
                 gastos_df["monto"] = gastos_df["monto"].astype(float)
                 total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
                 total_no_comun = gastos_df[gastos_df["tipo"] == "No Común"]["monto"].sum()
                 total_general = total_comun + total_no_comun
                 
-                tab_gen, tab_ind = st.tabs(["📢 Recibo General (Grupo WhatsApp)", "👤 Recibo Individual (Privado)"])
-                
+                tab_gen, tab_ind = st.tabs(["📢 Recibo General", "👤 Recibo Individual"])
                 with tab_gen:
-                    msg_general = (
-                        f"🏢 *{info_edif.get('nombre', 'CONDOMINIO').upper()}*\n"
-                        f"📄 RIF: {info_edif.get('rif', 'N/A')}\n"
-                        f"📋 *RELACIÓN GENERAL DE GASTOS Y COBRO - {periodo_sel.upper()}*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"💵 *TOTAL GASTOS COMUNES:* ${total_comun:,.2f}\n"
-                    )
+                    msg_general = f"🏢 *{info_edif.get('nombre', '').upper()}*\n📋 *RELACIÓN GENERAL - {periodo_sel.upper()}*\n━━━━━━━━━━━━━━━━━━━━\n💵 *TOTAL GASTOS COMUNES:* ${total_comun:,.2f}\n"
                     if total_no_comun > 0:
-                        msg_general += f"🔧 *TOTAL GASTOS NO COMUNES:* ${total_no_comun:,.2f}\n"
-                    msg_general += f"💰 *TOTAL MES EDIFICIO:* ${total_general:,.2f}\n"
-                    msg_general += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    msg_general += f"📊 *DISTRIBUCIÓN POR APARTAMENTO:*\n"
+                        msg_general += f"🔧 *TOTAL NO COMUNES:* ${total_no_comun:,.2f}\n"
+                    msg_general += f"💰 *TOTAL GENERAL:* ${total_general:,.2f}\n━━━━━━━━━━━━━━━━━━━━\n"
                     
                     filas_resumen = []
                     for _, prop in props_df.iterrows():
@@ -387,134 +393,75 @@ if perfil == "⚙️ Administración":
                         cuota_c = total_comun * alicuota
                         no_c = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto)]["monto"].sum()
                         tot_apto = cuota_c + no_c
-                        
-                        filas_resumen.append({
-                            "Apto": apto,
-                            "Alícuota": f"{alicuota*100:.1f}%",
-                            "Propietario": prop.get("propietario") or "-",
-                            "Cuota Común ($)": round(cuota_c, 2),
-                            "Gastos Ind. ($)": round(no_c, 2),
-                            "Total a Pagar ($)": round(tot_apto, 2)
-                        })
-                        
-                        det_no_c = f" (+$ {no_c:,.2f} no común)" if no_c > 0 else ""
-                        msg_general += f"▫️ *Apto {apto}* ({alicuota*100:.1f}%): *${tot_apto:,.2f}*{det_no_c}\n"
-                    
-                    msg_general += (
-                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"💳 *DATOS DE PAGO:*\n"
-                        f"Banco: {info_edif.get('banco', 'N/A')}\n"
-                        f"Cuenta: {info_edif.get('cuenta', 'N/A')}\n"
-                        f"Pago Móvil: {info_edif.get('pm_telf', 'N/A')} / {info_edif.get('pm_cedula', 'N/A')}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"Por favor remitir sus comprobantes de pago por el portal o al privado. ¡Muchas gracias!"
-                    )
+                        filas_resumen.append({"Apto": apto, "Alícuota": f"{alicuota*100:.1f}%", "Propietario": prop.get("propietario") or "-", "Total ($)": round(tot_apto, 2)})
+                        msg_general += f"▫️ *Apto {apto}*: ${tot_apto:,.2f}\n"
                     
                     st.dataframe(pd.DataFrame(filas_resumen), use_container_width=True)
-                    st.text_area("Vista previa mensaje para WhatsApp:", value=msg_general, height=220)
-                    
-                    url_general = urllib.parse.quote(msg_general)
-                    st.link_button("📲 Compartir Relación General al Grupo de WhatsApp", f"https://wa.me/?text={url_general}")
+                    url_gen = urllib.parse.quote(msg_general)
+                    st.link_button("📲 Compartir al Grupo de WhatsApp", f"https://wa.me/?text={url_gen}")
 
                 with tab_ind:
                     apto_recibo = st.selectbox("Seleccionar Apartamento:", props_df["apartamento"].tolist())
                     prop_info = props_df[props_df["apartamento"] == apto_recibo].iloc[0]
-                    
                     alicuota_ind = float(prop_info["alicuota"])
                     cuota_comun_ind = total_comun * alicuota_ind
                     no_comunes_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_recibo)]["monto"].sum()
                     total_ind = cuota_comun_ind + no_comunes_ind
                     
                     recibo_ind = (
-                        f"🏢 *{info_edif.get('nombre', 'CONDOMINIO').upper()}*\n"
-                        f"📄 *Aviso de Cobro - {periodo_sel}*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"👤 *Propietario:* {prop_info.get('propietario') or 'N/A'}\n"
-                        f"🏠 *Apartamento:* {apto_recibo} (Alícuota: {alicuota_ind*100:.1f}%)\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🔹 *Gastos Comunes Edificio:* ${total_comun:,.2f}\n"
-                        f"🔹 *Su Cuota Común ({alicuota_ind*100:.1f}%):* ${cuota_comun_ind:,.2f}\n"
+                        f"🏢 *{info_edif.get('nombre', '').upper()}*\n📄 *Aviso de Cobro - {periodo_sel}*\n"
+                        f"🏠 *Apartamento:* {apto_recibo}\n💰 *TOTAL A PAGAR:* ${total_ind:,.2f}\n"
                     )
-                    if no_comunes_ind > 0:
-                        recibo_ind += f"🔹 *Gastos Propios / Ind.:* ${no_comunes_ind:,.2f}\n"
-                    recibo_ind += (
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"💰 *TOTAL A PAGAR:* ${total_ind:,.2f}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"💳 *DATOS DE PAGO:*\n"
-                        f"Banco: {info_edif.get('banco', 'N/A')}\n"
-                        f"Cuenta: {info_edif.get('cuenta', 'N/A')}\n"
-                        f"Pago Móvil: {info_edif.get('pm_telf', 'N/A')} / {info_edif.get('pm_cedula', 'N/A')}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"Por favor enviar comprobante de pago por este medio. ¡Gracias!"
-                    )
-                    
-                    st.text_area("Vista previa recibo individual:", value=recibo_ind, height=200)
-                    
-                    telefono_limpio = "".join(filter(str.isdigit, str(prop_info.get("telefono", ""))))
-                    if telefono_limpio:
-                        mensaje_url = urllib.parse.quote(recibo_ind)
-                        st.link_button(f"📲 Enviar Recibo Privado por WhatsApp al Apto {apto_recibo}", f"https://wa.me/{telefono_limpio}?text={mensaje_url}")
-                    else:
-                        st.info("💡 Asigne un número de teléfono en el Directorio para habilitar el botón directo.")
+                    st.text_area("Vista previa:", value=recibo_ind, height=150)
+                    telf = "".join(filter(str.isdigit, str(prop_info.get("telefono", ""))))
+                    if telf:
+                        st.link_button(f"📲 Enviar WhatsApp al Apto {apto_recibo}", f"https://wa.me/{telf}?text={urllib.parse.quote(recibo_ind)}")
 
         # 5. CONTROL DE PAGOS
         elif menu_admin == "5. Control de Pagos Recibidos":
-            st.subheader("💳 Reportes de Pago Registrados por Propietarios")
-            pagos_df = get_pagos()
-            if pagos_df.empty:
-                st.info("No hay reporte de pagos registrados por los residentes aún.")
-            else:
-                st.dataframe(pagos_df, use_container_width=True)
+            st.subheader("💳 Pagos Registrados por Residentes")
+            st.dataframe(get_pagos(), use_container_width=True)
 
-# --- PORTAL RESIDENTE ---
-else:
-    st.subheader(f"🏠 Portal de Consulta de Propietarios - {info_edif.get('nombre', '')}")
-    props_df = get_propietarios()
-    if props_df.empty:
-        st.warning("No hay lista de apartamentos configurada.")
-    else:
-        apto_sel = st.selectbox("Seleccione su Apartamento:", props_df["apartamento"].tolist())
-        periodo_consulta = st.text_input("Período a consultar", value=get_periodo_actual())
+    # --- MÓDULO RESIDENTE ---
+    elif st.session_state.rol == "residente":
+        apto_actual = st.session_state.apto_usuario
+        st.title(f"🏠 Apartamento {apto_actual}")
         
-        prop_data = props_df[props_df["apartamento"] == apto_sel].iloc[0]
+        periodo_consulta = st.text_input("Período a consultar", value=get_periodo_actual())
+        props_df = get_propietarios()
+        prop_data = props_df[props_df["apartamento"] == apto_actual].iloc[0]
         gastos_df = get_gastos(periodo_consulta)
         
         if gastos_df.empty:
-            st.info(f"No hay recibo generado aún para el período {periodo_consulta}.")
+            st.info(f"No hay recibo emitido para el período {periodo_consulta}.")
         else:
             gastos_df["monto"] = gastos_df["monto"].astype(float)
             total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
             alicuota = float(prop_data["alicuota"])
             cuota_comun = total_comun * alicuota
-            gastos_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_sel)]["monto"].sum()
+            gastos_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_actual)]["monto"].sum()
             total_pagar = cuota_comun + gastos_ind
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Alícuota", f"{alicuota*100:.1f}%")
-            c2.metric("Cuota Gastos Comunes", f"${cuota_comun:,.2f}")
+            c2.metric("Cuota Común", f"${cuota_comun:,.2f}")
             c3.metric("Total a Pagar", f"${total_pagar:,.2f}")
             
             st.markdown("---")
-            st.markdown("### 💳 Datos para el Pago")
-            st.write(f"**Banco:** {info_edif.get('banco', '')}")
-            st.write(f"**Cuenta:** {info_edif.get('cuenta', '')}")
-            st.write(f"**Pago Móvil:** {info_edif.get('pm_telf', '')} | C.I/RIF: {info_edif.get('pm_cedula', '')}")
+            st.markdown("### 💳 Datos para la Transferencia")
+            st.write(f"**Banco:** {info_edif.get('banco', '')} | **Cuenta:** {info_edif.get('cuenta', '')}")
+            st.write(f"**Pago Móvil:** {info_edif.get('pm_telf', '')} | **C.I/RIF:** {info_edif.get('pm_cedula', '')}")
             
             st.markdown("---")
             st.markdown("### 📤 Reportar Transferencia / Pago Móvil")
             with st.form("form_pago"):
                 monto_pago = st.number_input("Monto Transferido ($)", value=float(total_pagar))
                 referencia = st.text_input("Número de Referencia")
-                submit_pago = st.form_submit_button("Registrar Comprobante")
                 
-                if submit_pago:
+                if st.form_submit_button("Registrar Comprobante"):
                     if referencia:
-                        run_query(
-                            "INSERT INTO pagos (apartamento, periodo, monto, referencia, fecha) VALUES (?, ?, ?, ?, ?)",
-                            (apto_sel, periodo_consulta, monto_pago, referencia, str(date.today())),
-                            fetch_all=False
-                        )
-                        st.success("¡Pago reportado con éxito! La junta/administrador verificará el depósito.")
+                        run_query("INSERT INTO pagos (apartamento, periodo, monto, referencia, fecha) VALUES (?, ?, ?, ?, ?)",
+                                  (apto_actual, periodo_consulta, monto_pago, referencia, str(date.today())), fetch_all=False)
+                        st.success("¡Pago reportado exitosamente!")
                     else:
-                        st.error("Por favor ingrese el número de referencia del pago.")
+                        st.error("Por favor ingrese la referencia del pago.")
