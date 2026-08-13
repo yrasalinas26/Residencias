@@ -34,7 +34,7 @@ def init_db():
     with get_connection() as conn:
         c = conn.cursor()
         
-        # 1. Tabla Datos del Edificio y Credenciales Admin
+        # 1. Tabla Datos del Edificio y Credenciales Admin (Incluye imagen_edificio)
         c.execute('''
             CREATE TABLE IF NOT EXISTS edificio_info (
                 id INTEGER PRIMARY KEY,
@@ -46,20 +46,21 @@ def init_db():
                 pago_movil_telf TEXT,
                 pago_movil_cedula TEXT,
                 usuario_admin TEXT,
-                clave_admin TEXT
+                clave_admin TEXT,
+                imagen_edificio TEXT
             )
         ''')
         
-        # Migraciones
-        try:
-            c.execute("ALTER TABLE edificio_info ADD COLUMN usuario_admin TEXT DEFAULT 'admin'")
-        except sqlite3.OperationalError:
-            pass
-            
-        try:
-            c.execute("ALTER TABLE edificio_info ADD COLUMN clave_admin TEXT DEFAULT '1234'")
-        except sqlite3.OperationalError:
-            pass
+        # Migraciones para columnas añadidas progresivamente
+        for col, dtype, val in [
+            ("usuario_admin", "TEXT", "'admin'"),
+            ("clave_admin", "TEXT", "'1234'"),
+            ("imagen_edificio", "TEXT", "NULL")
+        ]:
+            try:
+                c.execute(f"ALTER TABLE edificio_info ADD COLUMN {col} {dtype} DEFAULT {val}")
+            except sqlite3.OperationalError:
+                pass
         
         c.execute("SELECT COUNT(*) FROM edificio_info")
         if c.fetchone()[0] == 0:
@@ -67,7 +68,7 @@ def init_db():
                 INSERT INTO edificio_info VALUES (
                     1, 'Residencias El Roble', 'J-00000000-0', 
                     'Caracas, Venezuela', 'Banesco', 
-                    '0134-0000-00-0000000000', '0412-0000000', 'V-12345678', 'admin', '1234'
+                    '0134-0000-00-0000000000', '0412-0000000', 'V-12345678', 'admin', '1234', NULL
                 )
             ''')
 
@@ -101,7 +102,7 @@ def init_db():
             ]
             c.executemany("INSERT INTO propietarios VALUES (?, ?, ?, ?, ?)", apts_iniciales)
             
-        # 3. Tabla Gastos (Incluye campo 'comprobante' para imágenes)
+        # 3. Tabla Gastos
         c.execute('''
             CREATE TABLE IF NOT EXISTS gastos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +116,6 @@ def init_db():
             )
         ''')
         
-        # Migración para agregar la columna de imagen si la tabla ya existía
         try:
             c.execute("ALTER TABLE gastos ADD COLUMN comprobante TEXT")
         except sqlite3.OperationalError:
@@ -155,21 +155,22 @@ def get_edificio_info():
     try:
         with get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula, usuario_admin, clave_admin FROM edificio_info WHERE id=1")
+            c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula, usuario_admin, clave_admin, imagen_edificio FROM edificio_info WHERE id=1")
             row = c.fetchone()
             if row:
                 return {
                     "nombre": row[0], "rif": row[1], "direccion": row[2],
                     "banco": row[3], "cuenta": row[4], "pm_telf": row[5], "pm_cedula": row[6],
                     "usuario_admin": row[7] if row[7] else "admin",
-                    "clave_admin": row[8] if row[8] else "1234"
+                    "clave_admin": row[8] if row[8] else "1234",
+                    "imagen": row[9]
                 }
     except Exception:
         pass
     return {
         "nombre": "Residencias El Roble", "rif": "J-00000000-0", "direccion": "Caracas, Venezuela",
         "banco": "Banesco", "cuenta": "0134-0000-00-0000000000", "pm_telf": "0412-0000000", "pm_cedula": "V-12345678",
-        "usuario_admin": "admin", "clave_admin": "1234"
+        "usuario_admin": "admin", "clave_admin": "1234", "imagen": None
     }
 
 def get_propietarios():
@@ -208,8 +209,19 @@ info_edif = get_edificio_info()
 # --- PANTALLA DE ACCESO UNIFICADA ---
 if not st.session_state.autenticado:
     st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_html=True)
+    
+    # Muestra de la Foto del Edificio en el Login
+    if info_edif.get("imagen"):
+        try:
+            img_edif_bytes = base64.b64decode(info_edif["imagen"])
+            col_l, col_m, col_r = st.columns([1, 1, 1])
+            with col_m:
+                st.image(img_edif_bytes, use_column_width=True)
+        except Exception:
+            pass
+            
     st.markdown(f"<h4 style='text-align: center;'>{info_edif.get('nombre', '')}</h4>", unsafe_allow_html=True)
-    st.caption(f"RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}")
+    st.caption(f"<p style='text-align: center;'>RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}</p>", unsafe_allow_html=True)
     st.markdown("---")
     
     col_left, col_center, col_right = st.columns([1, 2, 1])
@@ -231,7 +243,7 @@ if not st.session_state.autenticado:
                     st.session_state.rol = "admin"
                     st.rerun()
                 else:
-                    # 2. Validar Credenciales de Propietarios (Apto como usuario)
+                    # 2. Validar Credenciales de Propietarios
                     df_props = get_propietarios()
                     residente_match = df_props[df_props["apartamento"].str.upper() == usr]
                     
@@ -247,8 +259,15 @@ if not st.session_state.autenticado:
                     else:
                         st.error("❌ Usuario o clave incorrectos.")
 
-# --- ÁREA PRIVADA (UNA VEZ AUTENTICADO) ---
+# --- ÁREA PRIVADA ---
 else:
+    if info_edif.get("imagen"):
+        try:
+            img_edif_bytes = base64.b64decode(info_edif["imagen"])
+            st.sidebar.image(img_edif_bytes, use_column_width=True)
+        except Exception:
+            pass
+
     st.sidebar.markdown(f"**Bienvenido:** `{st.session_state.apto_usuario if st.session_state.rol == 'residente' else 'Administrador'}`")
     if st.sidebar.button("🔒 Cerrar Sesión"):
         st.session_state.autenticado = False
@@ -261,16 +280,25 @@ else:
         st.title(f"🏢 {info_edif.get('nombre', '')} - Módulo de Control")
         
         menu_admin = st.sidebar.selectbox("Opciones:", [
-            "1. Datos del Edificio y Credenciales",
+            "1. Datos del Edificio, Imagen y Credenciales",
             "2. Gestión de Propietarios, Alícuotas y Claves",
             "3. Registro de Gastos e Imágenes",
             "4. Recibos y Envío WhatsApp",
             "5. Control de Pagos Recibidos"
         ])
         
-        # 1. DATOS DEL EDIFICIO Y CREDENCIALES ADMIN
-        if menu_admin == "1. Datos del Edificio y Credenciales":
-            st.subheader("⚙️ Configuración de Datos y Credencial Principal")
+        # 1. DATOS DEL EDIFICIO, IMAGEN Y CREDENCIALES
+        if menu_admin == "1. Datos del Edificio, Imagen y Credenciales":
+            st.subheader("⚙️ Configuración del Edificio y Credencial Principal")
+            
+            # Vista previa de la imagen actual
+            if info_edif.get("imagen"):
+                try:
+                    img_bytes = base64.b64decode(info_edif["imagen"])
+                    st.image(img_bytes, caption="Foto actual del edificio", width=300)
+                except Exception:
+                    st.warning("No se pudo cargar la imagen actual.")
+            
             with st.form("form_edificio"):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -285,14 +313,21 @@ else:
                     cuenta_num = st.text_input("Número de Cuenta:", value=info_edif.get("cuenta", ""))
                     pm_telf = st.text_input("Teléfono Pago Móvil:", value=info_edif.get("pm_telf", ""))
                     pm_ced = st.text_input("Cédula / RIF Pago Móvil:", value=info_edif.get("pm_cedula", ""))
+                
+                nueva_foto_edificio = st.file_uploader("🖼️ Cambiar o Subir Foto del Edificio (PNG, JPG)", type=["png", "jpg", "jpeg"])
                     
                 if st.form_submit_button("💾 Guardar Cambios"):
+                    # Conservar imagen antigua o procesar la nueva
+                    str_foto = info_edif.get("imagen")
+                    if nueva_foto_edificio is not None:
+                        str_foto = base64.b64encode(nueva_foto_edificio.read()).decode('utf-8')
+                        
                     run_query('''
                         UPDATE edificio_info 
-                        SET nombre_edificio=?, rif=?, direccion=?, banco_nombre=?, num_cuenta=?, pago_movil_telf=?, pago_movil_cedula=?, usuario_admin=?, clave_admin=?
+                        SET nombre_edificio=?, rif=?, direccion=?, banco_nombre=?, num_cuenta=?, pago_movil_telf=?, pago_movil_cedula=?, usuario_admin=?, clave_admin=?, imagen_edificio=?
                         WHERE id=1
-                    ''', (nom_edif, rif_edif, dir_edif, banco_nom, cuenta_num, pm_telf, pm_ced, user_actual.strip(), clave_actual), fetch_all=False)
-                    st.success("Configuración actualizada correctamente.")
+                    ''', (nom_edif, rif_edif, dir_edif, banco_nom, cuenta_num, pm_telf, pm_ced, user_actual.strip(), clave_actual, str_foto), fetch_all=False)
+                    st.success("Información del edificio actualizada correctamente.")
                     st.rerun()
 
         # 2. PROPIETARIOS, ALÍCUOTAS Y CLAVES
@@ -365,7 +400,6 @@ else:
                         apto_asig = st.selectbox("Asignar a Apartamento:", df_props["apartamento"].tolist() if not df_props.empty else ["1A"])
                     fecha_gasto = st.date_input("Fecha de Registro", date.today())
                 
-                # Carga de Imagen
                 archivo_imagen = st.file_uploader("Adjuntar Foto o Factura del Gasto (Opcional)", type=["png", "jpg", "jpeg"])
                 
                 if st.form_submit_button("➕ Guardar Gasto"):
