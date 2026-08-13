@@ -1,9 +1,9 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import urllib.parse
 from datetime import date
 import base64
+from sqlalchemy import create_engine, text
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -11,8 +11,6 @@ st.set_page_config(
     page_icon="🏢",
     layout="wide"
 )
-
-DB_NAME = "condominio.db"
 
 # --- HELPER PARA FECHAS EN ESPAÑOL ---
 MESES_ESP = {
@@ -25,19 +23,43 @@ def get_periodo_actual():
     hoy = date.today()
     return f"{MESES_ESP[hoy.month]} {hoy.year}"
 
-# --- CONEXIÓN A BASE DE DATOS Y CONTEXT MANAGER ---
-def get_connection():
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
+# --- CONEXIÓN DE BASE DE DATOS (SUPABASE CON FALLBACK A SQLITE) ---
+@st.cache_resource
+def get_db_engine():
+    try:
+        if "supabase" in st.secrets and "DB_URL" in st.secrets["supabase"]:
+            db_url = st.secrets["supabase"]["DB_URL"]
+            return create_engine(db_url, pool_pre_ping=True)
+    except Exception:
+        pass
+    return create_engine("sqlite:///condominio.db", check_same_thread=False)
 
-# --- INICIALIZACIÓN DE LA BASE DE DATOS ---
-def init_db():
-    with get_connection() as conn:
-        c = conn.cursor()
+engine = get_db_engine()
+
+def execute_query(query, params=None, fetch=False):
+    """Ejecuta consultas SQL garantizando el commit inmediato de transacciones."""
+    with engine.begin() as conn:
+        if params:
+            result = conn.execute(text(query), params)
+        else:
+            result = conn.execute(text(query))
         
-        # 1. Tabla Datos del Edificio y Credenciales Admin
-        c.execute('''
+        if fetch:
+            return result.fetchall()
+        return None
+
+def get_dataframe(query, params=None):
+    """Obtiene resultados en un DataFrame de Pandas."""
+    with engine.connect() as conn:
+        return pd.read_sql_query(text(query), conn, params=params)
+
+# --- INICIALIZACIÓN Y MIGRACIÓN DE LA BASE DE DATOS ---
+def init_db():
+    with engine.begin() as conn:
+        # 1. Tabla Datos del Edificio
+        conn.execute(text('''
             CREATE TABLE IF NOT EXISTS edificio_info (
-                id INTEGER PRIMARY KEY,
+                id INT PRIMARY KEY,
                 nombre_edificio TEXT,
                 rif TEXT,
                 direccion TEXT,
@@ -45,155 +67,110 @@ def init_db():
                 num_cuenta TEXT,
                 pago_movil_telf TEXT,
                 pago_movil_cedula TEXT,
-                usuario_admin TEXT,
-                clave_admin TEXT,
+                usuario_admin TEXT DEFAULT 'admin',
+                clave_admin TEXT DEFAULT '1234',
                 imagen_edificio TEXT
             )
-        ''')
+        '''))
         
-        for col, dtype, val in [
-            ("usuario_admin", "TEXT", "'admin'"),
-            ("clave_admin", "TEXT", "'1234'"),
-            ("imagen_edificio", "TEXT", "NULL")
-        ]:
-            try:
-                c.execute(f"ALTER TABLE edificio_info ADD COLUMN {col} {dtype} DEFAULT {val}")
-            except sqlite3.OperationalError:
-                pass
-        
-        c.execute("SELECT COUNT(*) FROM edificio_info")
-        if c.fetchone()[0] == 0:
-            c.execute('''
-                INSERT INTO edificio_info VALUES (
-                    1, 'Residencias El Roble', 'J-00000000-0', 
-                    'Caracas, Venezuela', 'Banesco', 
-                    '0134-0000-00-0000000000', '0412-0000000', 'V-12345678', 'admin', '1234', NULL
-                )
-            ''')
+        # Insertar registro base si no existe
+        res = conn.execute(text("SELECT COUNT(*) FROM edificio_info")).scalar()
+        if res == 0:
+            conn.execute(text('''
+                INSERT INTO edificio_info (id, nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula, usuario_admin, clave_admin)
+                VALUES (1, 'Residencias El Roble', 'J-00000000-0', 'Caracas, Venezuela', 'Banesco', '0134-0000-00-0000000000', '0412-0000000', 'V-12345678', 'admin', '1234')
+            '''))
 
         # 2. Tabla Propietarios y Alícuotas
-        c.execute('''
+        conn.execute(text('''
             CREATE TABLE IF NOT EXISTS propietarios (
-                apartamento TEXT PRIMARY KEY,
+                apartamento VARCHAR(10) PRIMARY KEY,
                 propietario TEXT,
                 telefono TEXT,
-                alicuota REAL,
+                alicuota NUMERIC(5,4),
                 clave_residente TEXT DEFAULT '1234'
             )
-        ''')
-        
-        try:
-            c.execute("ALTER TABLE propietarios ADD COLUMN clave_residente TEXT DEFAULT '1234'")
-        except sqlite3.OperationalError:
-            pass
+        '''))
 
-        c.execute("SELECT COUNT(*) FROM propietarios")
-        if c.fetchone()[0] == 0:
-            apts_iniciales = [
-                ("1A", "", "", 0.06, "1234"), ("1B", "", "", 0.06, "1234"),
-                ("2",  "", "", 0.12, "1234"),
-                ("3A", "", "", 0.06, "1234"), ("3B", "", "", 0.06, "1234"),
-                ("4A", "", "", 0.06, "1234"), ("4B", "", "", 0.06, "1234"),
-                ("5A", "", "", 0.06, "1234"), ("5B", "", "", 0.06, "1234"),
-                ("6A", "", "", 0.06, "1234"), ("6B", "", "", 0.06, "1234"),
-                ("7",  "", "", 0.12, "1234"),
-                ("PH", "", "", 0.16, "1234")
-            ]
-            c.executemany("INSERT INTO propietarios VALUES (?, ?, ?, ?, ?)", apts_iniciales)
-            
-        # 3. Tabla Gastos
-        c.execute('''
+        res_p = conn.execute(text("SELECT COUNT(*) FROM propietarios")).scalar()
+        if res_p == 0:
+            conn.execute(text('''
+                INSERT INTO propietarios (apartamento, propietario, telefono, alicuota, clave_residente) VALUES
+                ('1A', '', '', 0.06, '1234'), ('1B', '', '', 0.06, '1234'),
+                ('2',  '', '', 0.12, '1234'),
+                ('3A', '', '', 0.06, '1234'), ('3B', '', '', 0.06, '1234'),
+                ('4A', '', '', 0.06, '1234'), ('4B', '', '', 0.06, '1234'),
+                ('5A', '', '', 0.06, '1234'), ('5B', '', '', 0.06, '1234'),
+                ('6A', '', '', 0.06, '1234'), ('6B', '', '', 0.06, '1234'),
+                ('7',  '', '', 0.12, '1234'),
+                ('PH', '', '', 0.16, '1234')
+            '''))
+
+        # 3. Tabla Gastos (Incluye Proveedores y Cuotas Extra)
+        conn.execute(text('''
             CREATE TABLE IF NOT EXISTS gastos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 periodo TEXT,
                 concepto TEXT,
-                monto REAL,
+                monto NUMERIC(10,2),
                 tipo TEXT,
-                apartamento TEXT,
+                apartamento TEXT DEFAULT '-',
                 fecha TEXT,
-                comprobante TEXT
+                comprobante TEXT,
+                proveedor TEXT DEFAULT '-',
+                estado_proveedor TEXT DEFAULT 'Pagado'
             )
-        ''')
-        
-        try:
-            c.execute("ALTER TABLE gastos ADD COLUMN comprobante TEXT")
-        except sqlite3.OperationalError:
-            pass
-        
-        # 4. Tabla Pagos
-        c.execute('''
+        '''))
+
+        # 4. Tabla Pagos de Propietarios (Verificación)
+        conn.execute(text('''
             CREATE TABLE IF NOT EXISTS pagos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 apartamento TEXT,
                 periodo TEXT,
-                monto REAL,
+                monto NUMERIC(10,2),
                 referencia TEXT,
                 fecha TEXT,
-                estado TEXT DEFAULT 'Pendiente'
+                comprobante_pago TEXT,
+                estado TEXT DEFAULT 'Pendiente',
+                notas TEXT DEFAULT ''
             )
-        ''')
-        conn.commit()
+        '''))
 
 init_db()
 
 # --- FUNCIONES DE CONSULTA ---
-def run_query(query, params=(), fetch_all=True):
-    try:
-        with get_connection() as conn:
-            c = conn.cursor()
-            c.execute(query, params)
-            conn.commit()
-            if fetch_all:
-                return c.fetchall()
-            return None
-    except Exception as e:
-        st.error(f"Error en base de datos: {e}")
-        return [] if fetch_all else None
-
 def get_edificio_info():
     try:
-        with get_connection() as conn:
-            c = conn.cursor()
-            c.execute("SELECT nombre_edificio, rif, direccion, banco_nombre, num_cuenta, pago_movil_telf, pago_movil_cedula, usuario_admin, clave_admin, imagen_edificio FROM edificio_info WHERE id=1")
-            row = c.fetchone()
-            if row:
-                return {
-                    "nombre": row[0], "rif": row[1], "direccion": row[2],
-                    "banco": row[3], "cuenta": row[4], "pm_telf": row[5], "pm_cedula": row[6],
-                    "usuario_admin": row[7] if row[7] else "admin",
-                    "clave_admin": row[8] if row[8] else "1234",
-                    "imagen": row[9]
-                }
+        df = get_dataframe("SELECT * FROM edificio_info WHERE id=1")
+        if not df.empty:
+            row = df.iloc[0]
+            return {
+                "nombre": row.get("nombre_edificio", "Residencias El Roble"),
+                "rif": row.get("rif", "J-00000000-0"),
+                "direccion": row.get("direccion", "Caracas, Venezuela"),
+                "banco": row.get("banco_nombre", "Banesco"),
+                "cuenta": row.get("num_cuenta", "0134-0000-00-0000000000"),
+                "pm_telf": row.get("pago_movil_telf", "0412-0000000"),
+                "pm_cedula": row.get("pago_movil_cedula", "V-12345678"),
+                "usuario_admin": row.get("usuario_admin") or "admin",
+                "clave_admin": str(row.get("clave_admin")) if row.get("clave_admin") else "1234",
+                "imagen": row.get("imagen_edificio")
+            }
     except Exception:
         pass
-    return {
-        "nombre": "Residencias El Roble", "rif": "J-00000000-0", "direccion": "Caracas, Venezuela",
-        "banco": "Banesco", "cuenta": "0134-0000-00-0000000000", "pm_telf": "0412-0000000", "pm_cedula": "V-12345678",
-        "usuario_admin": "admin", "clave_admin": "1234", "imagen": None
-    }
+    return {"nombre": "Residencias El Roble", "rif": "J-00000000-0", "direccion": "Caracas", "banco": "Banesco", "cuenta": "0134", "pm_telf": "0412", "pm_cedula": "V-1234", "usuario_admin": "admin", "clave_admin": "1234", "imagen": None}
 
 def get_propietarios():
-    try:
-        with get_connection() as conn:
-            return pd.read_sql_query("SELECT * FROM propietarios ORDER BY apartamento", conn)
-    except Exception:
-        return pd.DataFrame(columns=["apartamento", "propietario", "telefono", "alicuota", "clave_residente"])
+    return get_dataframe("SELECT * FROM propietarios ORDER BY apartamento")
 
 def get_gastos(periodo=None):
-    try:
-        with get_connection() as conn:
-            if periodo:
-                return pd.read_sql_query("SELECT * FROM gastos WHERE periodo = ? ORDER BY id DESC", conn, params=[periodo])
-            return pd.read_sql_query("SELECT * FROM gastos ORDER BY id DESC", conn)
-    except Exception:
-        return pd.DataFrame(columns=["id", "periodo", "concepto", "monto", "tipo", "apartamento", "fecha", "comprobante"])
+    if periodo:
+        return get_dataframe("SELECT * FROM gastos WHERE periodo = :p ORDER BY id DESC", {"p": periodo})
+    return get_dataframe("SELECT * FROM gastos ORDER BY id DESC")
 
 def get_pagos():
-    try:
-        with get_connection() as conn:
-            return pd.read_sql_query("SELECT * FROM pagos ORDER BY id DESC", conn)
-    except Exception:
-        return pd.DataFrame(columns=["id", "apartamento", "periodo", "monto", "referencia", "fecha", "estado"])
+    return get_dataframe("SELECT * FROM pagos ORDER BY id DESC")
 
 # --- ESTADOS DE SESIÓN ---
 if "autenticado" not in st.session_state:
@@ -209,11 +186,11 @@ info_edif = get_edificio_info()
 if not st.session_state.autenticado:
     st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_html=True)
     
-    if info_edif.get("imagen"):
+    if info_edif.get("imagen") and pd.notna(info_edif["imagen"]):
         try:
             img_edif_bytes = base64.b64decode(info_edif["imagen"])
-            col_l, col_m, col_r = st.columns([1, 1, 1])
-            with col_m:
+            c_l, c_m, c_r = st.columns([1, 1, 1])
+            with c_m:
                 st.image(img_edif_bytes, use_column_width=True)
         except Exception:
             pass
@@ -257,7 +234,7 @@ if not st.session_state.autenticado:
 
 # --- ÁREA PRIVADA ---
 else:
-    if info_edif.get("imagen"):
+    if info_edif.get("imagen") and pd.notna(info_edif["imagen"]):
         try:
             img_edif_bytes = base64.b64decode(info_edif["imagen"])
             st.sidebar.image(img_edif_bytes, use_column_width=True)
@@ -271,28 +248,23 @@ else:
         st.session_state.apto_usuario = None
         st.rerun()
 
-    # --- MÓDULO ADMINISTRACIÓN ---
+    # ==========================================
+    # MÓDULO ADMINISTRADOR
+    # ==========================================
     if st.session_state.rol == "admin":
-        st.title(f"🏢 {info_edif.get('nombre', '')} - Módulo de Control")
+        st.title(f"🏢 {info_edif.get('nombre', '')} - Control Administrativo")
         
         menu_admin = st.sidebar.selectbox("Opciones:", [
-            "1. Datos del Edificio, Imagen y Credenciales",
-            "2. Gestión de Propietarios, Alícuotas y Claves",
-            "3. Registro de Gastos e Imágenes",
+            "1. Datos del Edificio y Credenciales",
+            "2. Propietarios, Alícuotas y Claves",
+            "3. Gastos, Proveedores y Cuotas Extra",
             "4. Recibos y Envío WhatsApp",
-            "5. Control de Pagos Recibidos"
+            "5. Verificación de Pagos de Residentes"
         ])
         
-        # 1. DATOS DEL EDIFICIO, IMAGEN Y CREDENCIALES
-        if menu_admin == "1. Datos del Edificio, Imagen y Credenciales":
-            st.subheader("⚙️ Configuración del Edificio y Credencial Principal")
-            
-            if info_edif.get("imagen"):
-                try:
-                    img_bytes = base64.b64decode(info_edif["imagen"])
-                    st.image(img_bytes, caption="Foto actual del edificio", width=300)
-                except Exception:
-                    st.warning("No se pudo cargar la imagen actual.")
+        # 1. DATOS DEL EDIFICIO
+        if menu_admin == "1. Datos del Edificio y Credenciales":
+            st.subheader("⚙️ Configuración General y Datos Bancarios")
             
             with st.form("form_edificio"):
                 col1, col2 = st.columns(2)
@@ -309,50 +281,52 @@ else:
                     pm_telf = st.text_input("Teléfono Pago Móvil:", value=info_edif.get("pm_telf", ""))
                     pm_ced = st.text_input("Cédula / RIF Pago Móvil:", value=info_edif.get("pm_cedula", ""))
                 
-                nueva_foto_edificio = st.file_uploader("🖼️ Cambiar o Subir Foto del Edificio (PNG, JPG)", type=["png", "jpg", "jpeg"])
+                nueva_foto_edificio = st.file_uploader("🖼️ Foto del Edificio (PNG, JPG)", type=["png", "jpg", "jpeg"])
                     
                 if st.form_submit_button("💾 Guardar Cambios"):
                     str_foto = info_edif.get("imagen")
                     if nueva_foto_edificio is not None:
                         str_foto = base64.b64encode(nueva_foto_edificio.read()).decode('utf-8')
                         
-                    run_query('''
+                    execute_query('''
                         UPDATE edificio_info 
-                        SET nombre_edificio=?, rif=?, direccion=?, banco_nombre=?, num_cuenta=?, pago_movil_telf=?, pago_movil_cedula=?, usuario_admin=?, clave_admin=?, imagen_edificio=?
+                        SET nombre_edificio=:n, rif=:r, direccion=:d, banco_nombre=:b, num_cuenta=:c, pago_movil_telf=:pt, pago_movil_cedula=:pc, usuario_admin=:u, clave_admin=:cl, imagen_edificio=:img
                         WHERE id=1
-                    ''', (nom_edif, rif_edif, dir_edif, banco_nom, cuenta_num, pm_telf, pm_ced, user_actual.strip(), clave_actual, str_foto), fetch_all=False)
-                    st.success("Información del edificio actualizada correctamente.")
+                    ''', {
+                        "n": nom_edif, "r": rif_edif, "d": dir_edif, "b": banco_nom, "c": cuenta_num,
+                        "pt": pm_telf, "pc": pm_ced, "u": user_actual.strip(), "cl": clave_actual, "img": str_foto
+                    })
+                    st.success("Configuración actualizada correctamente.")
                     st.rerun()
 
-        # 2. PROPIETARIOS, ALÍCUOTAS Y CLAVES
-        elif menu_admin == "2. Gestión de Propietarios, Alícuotas y Claves":
-            st.subheader("👥 Directorio de Propietarios y Acceso")
-            tab_listado, tab_nuevo = st.tabs(["📋 Modificar Propietarios", "➕ Agregar Nuevo Apartamento"])
+        # 2. PROPIETARIOS
+        elif menu_admin == "2. Propietarios, Alícuotas y Claves":
+            st.subheader("👥 Directorio de Propietarios")
+            tab_listado, tab_nuevo = st.tabs(["📋 Modificar Propietarios", "➕ Agregar Apartamento"])
             
             with tab_listado:
                 df_props = get_propietarios()
                 edited_df = st.data_editor(
                     df_props,
                     column_config={
-                        "apartamento": st.column_config.TextColumn("Apto (Usuario)", disabled=True),
+                        "apartamento": st.column_config.TextColumn("Apto", disabled=True),
                         "propietario": "Nombre Propietario",
-                        "telefono": "Teléfono",
-                        "alicuota": st.column_config.NumberColumn("Alícuota", format="%.4f", min_value=0.0, max_value=1.0, step=0.01),
-                        "clave_residente": st.column_config.TextColumn("Clave de Acceso Apto")
+                        "telefono": "Teléfono WhatsApp",
+                        "alicuota": st.column_config.NumberColumn("Alícuota", format="%.4f", min_value=0.0, max_value=1.0),
+                        "clave_residente": "Clave de Acceso"
                     },
                     use_container_width=True,
                     hide_index=True
                 )
                 
-                suma_alicuotas = edited_df["alicuota"].sum() if not edited_df.empty else 0.0
-                st.caption(f"📊 Suma total de alícuotas: **{suma_alicuotas*100:.2f}%**")
+                suma_aliq = edited_df["alicuota"].astype(float).sum() if not edited_df.empty else 0.0
+                st.caption(f"📊 Suma Total de Alícuotas: **{suma_aliq*100:.2f}%**")
                 
-                if st.button("💾 Guardar Cambios"):
+                if st.button("💾 Guardar Cambios de Propietarios"):
                     for _, row in edited_df.iterrows():
-                        run_query(
-                            "UPDATE propietarios SET propietario = ?, telefono = ?, alicuota = ?, clave_residente = ? WHERE apartamento = ?",
-                            (row["propietario"], str(row["telefono"]), float(row["alicuota"]), str(row["clave_residente"]), row["apartamento"]),
-                            fetch_all=False
+                        execute_query(
+                            "UPDATE propietarios SET propietario = :p, telefono = :t, alicuota = :a, clave_residente = :c WHERE apartamento = :ap",
+                            {"p": row["propietario"], "t": str(row["telefono"]), "a": float(row["alicuota"]), "c": str(row["clave_residente"]), "ap": row["apartamento"]}
                         )
                     st.success("Directorio de propietarios actualizado.")
                     st.rerun()
@@ -361,187 +335,288 @@ else:
                 with st.form("form_nuevo_apto"):
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        nuevo_apto = st.text_input("Apto / Usuario:")
-                        nuevo_prop = st.text_input("Nombre:")
-                        nueva_clave = st.text_input("Clave de Acceso Apto:", value="1234")
+                        nuevo_apto = st.text_input("Apto / Identificador:")
+                        nuevo_prop = st.text_input("Nombre del Propietario:")
+                        nueva_clave = st.text_input("Clave de Acceso:", value="1234")
                     with col_b:
-                        nuevo_telf = st.text_input("Teléfono:")
-                        nueva_aliq = st.number_input("Alícuota:", min_value=0.0, max_value=1.0, value=0.06, step=0.01, format="%.4f")
+                        nuevo_telf = st.text_input("Teléfono WhatsApp:")
+                        nueva_aliq = st.number_input("Alícuota (ej. 0.06):", min_value=0.0, max_value=1.0, value=0.06, format="%.4f")
                     
                     if st.form_submit_button("➕ Registrar Apartamento") and nuevo_apto:
                         try:
-                            run_query("INSERT INTO propietarios VALUES (?, ?, ?, ?, ?)", (nuevo_apto.upper().strip(), nuevo_prop, nuevo_telf, nueva_aliq, nueva_clave), fetch_all=False)
+                            execute_query("INSERT INTO propietarios VALUES (:ap, :pr, :tl, :al, :cl)", {
+                                "ap": nuevo_apto.upper().strip(), "pr": nuevo_prop, "tl": nuevo_telf, "al": nueva_aliq, "cl": nueva_clave
+                            })
                             st.success(f"Apartamento {nuevo_apto} registrado.")
                             st.rerun()
                         except Exception:
                             st.error("El número de apartamento ya existe.")
 
-        # 3. REGISTRO DE GASTOS CON OPCIÓN DE ELIMINAR
-        elif menu_admin == "3. Registro de Gastos e Imágenes":
-            st.subheader("📝 Registrar Gastos del Condominio y Comprobantes")
+        # 3. GASTOS, PROVEEDORES Y CUOTAS EXTRA
+        elif menu_admin == "3. Gastos, Proveedores y Cuotas Extra":
+            st.subheader("📝 Registro de Gastos, Proveedores y Cuotas Extraordinarias")
             
             with st.form("form_gasto"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    periodo = st.text_input("Período / Mes", value=get_periodo_actual())
-                    concepto = st.text_input("Concepto del Gasto")
-                    monto = st.number_input("Monto ($)", min_value=0.0, step=10.0, format="%.2f")
+                    periodo = st.text_input("Período / Mes:", value=get_periodo_actual())
+                    concepto = st.text_input("Concepto del Gasto o Cuota Extra:")
+                    monto = st.number_input("Monto Total ($):", min_value=0.0, step=10.0, format="%.2f")
+                    proveedor = st.text_input("Proveedor / Empresa del Servicio:", value="-")
                 with col2:
-                    tipo_gasto = st.selectbox("Tipo de Gasto", ["Común", "No Común"])
+                    tipo_gasto = st.selectbox("Tipo de Carga:", ["Común", "Cuota Extraordinaria", "No Común"])
                     apto_asig = "-"
                     if tipo_gasto == "No Común":
                         df_props = get_propietarios()
                         apto_asig = st.selectbox("Asignar a Apartamento:", df_props["apartamento"].tolist() if not df_props.empty else ["1A"])
-                    fecha_gasto = st.date_input("Fecha de Registro", date.today())
+                    
+                    estado_prov = st.selectbox("Estatus del Pago al Proveedor:", ["Pagado", "Pendiente de Pago"])
+                    fecha_gasto = st.date_input("Fecha de Registro:", date.today())
                 
-                archivo_imagen = st.file_uploader("Adjuntar Foto o Factura del Gasto (Opcional)", type=["png", "jpg", "jpeg"])
+                archivo_imagen = st.file_uploader("📷 Adjuntar Factura o Comprobante de Servicio (Opcional)", type=["png", "jpg", "jpeg"])
                 
-                if st.form_submit_button("➕ Guardar Gasto"):
+                if st.form_submit_button("💾 Guardar Registro"):
                     if concepto and monto > 0:
                         img_str = None
                         if archivo_imagen is not None:
                             img_str = base64.b64encode(archivo_imagen.read()).decode('utf-8')
                         
-                        run_query(
-                            "INSERT INTO gastos (periodo, concepto, monto, tipo, apartamento, fecha, comprobante) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (periodo, concepto, monto, tipo_gasto, apto_asig, str(fecha_gasto), img_str), 
-                            fetch_all=False
-                        )
-                        st.success("Gasto guardado con éxito.")
+                        execute_query('''
+                            INSERT INTO gastos (periodo, concepto, monto, tipo, apartamento, fecha, comprobante, proveedor, estado_proveedor)
+                            VALUES (:p, :c, :m, :t, :a, :f, :comp, :prov, :ep)
+                        ''', {
+                            "p": periodo, "c": concepto, "m": monto, "t": tipo_gasto,
+                            "a": apto_asig, "f": str(fecha_gasto), "comp": img_str,
+                            "prov": proveedor, "ep": estado_prov
+                        })
+                        st.success("✅ Gasto registrado y guardado exitosamente.")
                         st.rerun()
                     else:
-                        st.error("Por favor ingresa un concepto y un monto mayor a cero.")
+                        st.error("Por favor completa el concepto y un monto mayor a cero.")
 
             st.markdown("---")
-            st.subheader(f"📋 Gastos Registrados ({periodo})")
+            st.subheader(f"📋 Gastos e Inventario del Período ({periodo})")
             df_gastos = get_gastos(periodo)
             
             if not df_gastos.empty:
                 for _, row in df_gastos.iterrows():
-                    with st.expander(f"📌 {row['concepto']} - ${row['monto']:,.2f} ({row['fecha']})"):
-                        st.write(f"**Tipo:** {row['tipo']} | **Período:** {row['periodo']} | **Apto:** {row['apartamento']}")
-                        if row.get('comprobante') and pd.notna(row['comprobante']):
-                            try:
-                                img_bytes = base64.b64decode(row['comprobante'])
-                                st.image(img_bytes, caption=f"Comprobante: {row['concepto']}", use_column_width=300)
-                            except Exception:
-                                st.warning("No se pudo cargar la imagen.")
+                    color_tipo = "🔴" if row['tipo'] == 'Cuota Extraordinaria' else ("🟡" if row['tipo'] == 'No Común' else "🔵")
+                    with st.expander(f"{color_tipo} {row['concepto']} - ${float(row['monto']):,.2f} [{row['tipo']}]"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.write(f"**Fecha:** {row['fecha']}")
+                            st.write(f"**Proveedor:** {row.get('proveedor', '-')}")
+                            st.write(f"**Estatus Pago Proveedor:** `{row.get('estado_proveedor', 'Pagado')}`")
+                        with c2:
+                            st.write(f"**Asignación:** {row['apartamento']}")
+                            if row.get('comprobante') and pd.notna(row['comprobante']):
+                                try:
+                                    img_bytes = base64.b64decode(row['comprobante'])
+                                    st.image(img_bytes, caption="Factura / Comprobante", width=250)
+                                except Exception:
+                                    st.warning("No se pudo cargar la imagen.")
                         
-                        # BOTÓN PARA ELIMINAR EL GASTO
-                        if st.button(f"🗑️ Eliminar este gasto", key=f"del_{row['id']}"):
-                            run_query("DELETE FROM gastos WHERE id = ?", (row['id'],), fetch_all=False)
-                            st.success(f"Gasto '{row['concepto']}' eliminado.")
+                        if st.button("🗑️ Eliminar Registro", key=f"del_{row['id']}"):
+                            execute_query("DELETE FROM gastos WHERE id = :id", {"id": row['id']})
+                            st.success(f"Registro '{row['concepto']}' eliminado.")
                             st.rerun()
             else:
-                st.info("No hay gastos registrados para este período.")
+                st.info("No hay gastos ni cuotas extras en este período.")
 
         # 4. RECIBOS Y WHATSAPP
         elif menu_admin == "4. Recibos y Envío WhatsApp":
-            st.subheader("📊 Recibos y Envíos WhatsApp")
-            periodo_sel = st.text_input("Período a calcular", value=get_periodo_actual())
+            st.subheader("📊 Emisión de Recibos y Notificaciones")
+            periodo_sel = st.text_input("Período a Calcular:", value=get_periodo_actual())
             gastos_df = get_gastos(periodo_sel)
             props_df = get_propietarios()
             
             if not gastos_df.empty and not props_df.empty:
                 gastos_df["monto"] = gastos_df["monto"].astype(float)
                 total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
+                total_cuota_extra = gastos_df[gastos_df["tipo"] == "Cuota Extraordinaria"]["monto"].sum()
                 total_no_comun = gastos_df[gastos_df["tipo"] == "No Común"]["monto"].sum()
-                total_general = total_comun + total_no_comun
+                total_general = total_comun + total_cuota_extra + total_no_comun
                 
-                tab_gen, tab_ind = st.tabs(["📢 Recibo General", "👤 Recibo Individual"])
+                tab_gen, tab_ind = st.tabs(["📢 Recibo General", "👤 Recibo Individual por Apto"])
                 with tab_gen:
-                    msg_general = f"🏢 *{info_edif.get('nombre', '').upper()}*\n📋 *RELACIÓN GENERAL - {periodo_sel.upper()}*\n━━━━━━━━━━━━━━━━━━━━\n💵 *TOTAL GASTOS COMUNES:* ${total_comun:,.2f}\n"
+                    msg_general = f"🏢 *{info_edif.get('nombre', '').upper()}*\n📋 *RELACIÓN DE COBRO - {periodo_sel.upper()}*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    msg_general += f"💵 *Gastos Comunes:* ${total_comun:,.2f}\n"
+                    if total_cuota_extra > 0:
+                        msg_general += f"🚨 *Cuota Extraordinaria:* ${total_cuota_extra:,.2f}\n"
                     if total_no_comun > 0:
-                        msg_general += f"🔧 *TOTAL NO COMUNES:* ${total_no_comun:,.2f}\n"
-                    msg_general += f"💰 *TOTAL GENERAL:* ${total_general:,.2f}\n━━━━━━━━━━━━━━━━━━━━\n"
+                        msg_general += f"🔧 *Gastos No Comunes:* ${total_no_comun:,.2f}\n"
+                    msg_general += f"💰 *TOTAL MES:* ${total_general:,.2f}\n━━━━━━━━━━━━━━━━━━━━\n"
                     
                     filas_resumen = []
                     for _, prop in props_df.iterrows():
                         apto = prop["apartamento"]
                         alicuota = float(prop["alicuota"])
-                        cuota_c = total_comun * alicuota
+                        c_comun = total_comun * alicuota
+                        c_extra = total_cuota_extra * alicuota
                         no_c = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto)]["monto"].sum()
-                        tot_apto = cuota_c + no_c
-                        filas_resumen.append({"Apto": apto, "Alícuota": f"{alicuota*100:.1f}%", "Propietario": prop.get("propietario") or "-", "Total ($)": round(tot_apto, 2)})
+                        tot_apto = c_comun + c_extra + no_c
+                        
+                        filas_resumen.append({
+                            "Apto": apto, "Alícuota": f"{alicuota*100:.1f}%",
+                            "Cuota Común": round(c_comun, 2), "Cuota Extra": round(c_extra, 2),
+                            "No Común": round(no_c, 2), "TOTAL ($)": round(tot_apto, 2)
+                        })
                         msg_general += f"▫️ *Apto {apto}*: ${tot_apto:,.2f}\n"
                     
                     st.dataframe(pd.DataFrame(filas_resumen), use_container_width=True)
                     url_gen = urllib.parse.quote(msg_general)
-                    st.link_button("📲 Compartir al Grupo de WhatsApp", f"https://wa.me/?text={url_gen}")
+                    st.link_button("📲 Enviar Resumen al Grupo de WhatsApp", f"https://wa.me/?text={url_gen}")
 
                 with tab_ind:
                     apto_recibo = st.selectbox("Seleccionar Apartamento:", props_df["apartamento"].tolist())
                     prop_info = props_df[props_df["apartamento"] == apto_recibo].iloc[0]
                     alicuota_ind = float(prop_info["alicuota"])
-                    cuota_comun_ind = total_comun * alicuota_ind
-                    no_comunes_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_recibo)]["monto"].sum()
-                    total_ind = cuota_comun_ind + no_comunes_ind
                     
-                    recibo_ind = (
-                        f"🏢 *{info_edif.get('nombre', '').upper()}*\n📄 *Aviso de Cobro - {periodo_sel}*\n"
-                        f"🏠 *Apartamento:* {apto_recibo}\n💰 *TOTAL A PAGAR:* ${total_ind:,.2f}\n"
-                    )
-                    st.text_area("Vista previa:", value=recibo_ind, height=150)
+                    c_comun_i = total_comun * alicuota_ind
+                    c_extra_i = total_cuota_extra * alicuota_ind
+                    no_c_i = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_recibo)]["monto"].sum()
+                    total_ind = c_comun_i + c_extra_i + no_c_i
+                    
+                    recibo_ind = f"🏢 *{info_edif.get('nombre', '').upper()}*\n📄 *AVISO DE COBRO - {periodo_sel}*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    recibo_ind += f"🏠 *Apartamento:* {apto_recibo} ({prop_info.get('propietario', '')})\n"
+                    recibo_ind += f"📊 *Alícuota:* {alicuota_ind*100:.1f}%\n"
+                    recibo_ind += f"▫️ Cuota Común: ${c_comun_i:,.2f}\n"
+                    if c_extra_i > 0:
+                        recibo_ind += f"🚨 Cuota Extraordinaria: ${c_extra_i:,.2f}\n"
+                    if no_c_i > 0:
+                        recibo_ind += f"🔧 Gastos No Comunes: ${no_c_i:,.2f}\n"
+                    recibo_ind += f"━━━━━━━━━━━━━━━━━━━━\n💰 *TOTAL A PAGAR:* ${total_ind:,.2f}\n"
+                    
+                    st.text_area("Vista previa del mensaje:", value=recibo_ind, height=180)
                     telf = "".join(filter(str.isdigit, str(prop_info.get("telefono", ""))))
                     if telf:
-                        st.link_button(f"📲 Enviar WhatsApp al Apto {apto_recibo}", f"https://wa.me/{telf}?text={urllib.parse.quote(recibo_ind)}")
+                        st.link_button(f"📲 Enviar WhatsApp Privado a Apto {apto_recibo}", f"https://wa.me/{telf}?text={urllib.parse.quote(recibo_ind)}")
 
-        # 5. CONTROL DE PAGOS
-        elif menu_admin == "5. Control de Pagos Recibidos":
-            st.subheader("💳 Pagos Registrados por Residentes")
-            st.dataframe(get_pagos(), use_container_width=True)
+        # 5. VERIFICACIÓN DE PAGOS
+        elif menu_admin == "5. Verificación de Pagos de Residentes":
+            st.subheader("💳 Verificación y Aprobación de Pagos Recibidos")
+            df_pagos = get_pagos()
+            
+            if not df_pagos.empty:
+                for _, row in df_pagos.iterrows():
+                    estado = row.get("estado", "Pendiente")
+                    color_status = "🟡" if estado == "Pendiente" else ("🟢" if estado == "Aprobado" else "🔴")
+                    
+                    with st.expander(f"{color_status} Apto {row['apartamento']} - ${float(row['monto']):,.2f} (Ref: {row['referencia']}) [{estado}]"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.write(f"**Período:** {row['periodo']}")
+                            st.write(f"**Fecha de Pago:** {row['fecha']}")
+                            st.write(f"**Número de Referencia:** `{row['referencia']}`")
+                            st.write(f"**Estatus:** `{estado}`")
+                        with c2:
+                            if row.get('comprobante_pago') and pd.notna(row['comprobante_pago']):
+                                try:
+                                    img_bytes = base64.b64decode(row['comprobante_pago'])
+                                    st.image(img_bytes, caption=f"Comprobante Apto {row['apartamento']}", width=250)
+                                except Exception:
+                                    st.warning("No se pudo cargar la captura del comprobante.")
+                            else:
+                                st.info("El residente no adjunto foto del comprobante.")
+                        
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.button("✅ Aprobar Pago", key=f"ap_{row['id']}"):
+                                execute_query("UPDATE pagos SET estado = 'Aprobado' WHERE id = :id", {"id": row['id']})
+                                st.success("Pago marcado como APROBADO.")
+                                st.rerun()
+                        with col_btn2:
+                            if st.button("❌ Rechazar Pago", key=f"rec_{row['id']}"):
+                                execute_query("UPDATE pagos SET estado = 'Rechazado' WHERE id = :id", {"id": row['id']})
+                                st.error("Pago RECHAZADO.")
+                                st.rerun()
+            else:
+                st.info("No hay pagos registrados por verificar.")
 
-    # --- MÓDULO RESIDENTE ---
+    # ==========================================
+    # MÓDULO RESIDENTE
+    # ==========================================
     elif st.session_state.rol == "residente":
         apto_actual = st.session_state.apto_usuario
-        st.title(f"🏠 Apartamento {apto_actual}")
+        st.title(f"🏠 Panel Residente - Apartamento {apto_actual}")
         
-        periodo_consulta = st.text_input("Período a consultar", value=get_periodo_actual())
+        tab_recibo, tab_reportar = st.tabs(["📄 Consulta de Recibo", "📤 Reportar Pago Realizado"])
+        
         props_df = get_propietarios()
         prop_data = props_df[props_df["apartamento"] == apto_actual].iloc[0]
+        periodo_consulta = st.text_input("Período a Consultar:", value=get_periodo_actual())
         gastos_df = get_gastos(periodo_consulta)
         
-        if gastos_df.empty:
-            st.info(f"No hay recibo emitido para el período {periodo_consulta}.")
-        else:
-            gastos_df["monto"] = gastos_df["monto"].astype(float)
-            total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
-            alicuota = float(prop_data["alicuota"])
-            cuota_comun = total_comun * alicuota
-            gastos_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_actual)]["monto"].sum()
-            total_pagar = cuota_comun + gastos_ind
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Alícuota", f"{alicuota*100:.1f}%")
-            c2.metric("Cuota Común", f"${cuota_comun:,.2f}")
-            c3.metric("Total a Pagar", f"${total_pagar:,.2f}")
-            
-            st.markdown("---")
-            st.subheader("🧾 Comprobantes y Facturas del Mes")
-            for _, row in gastos_df.iterrows():
-                if row.get('comprobante') and pd.notna(row['comprobante']):
-                    with st.expander(f"📷 Ver factura: {row['concepto']} (${row['monto']:,.2f})"):
-                        try:
-                            img_bytes = base64.b64decode(row['comprobante'])
-                            st.image(img_bytes, caption=row['concepto'], use_column_width=300)
-                        except Exception:
-                            st.write("No fue posible cargar la vista previa de la imagen.")
-            
-            st.markdown("---")
-            st.markdown("### 💳 Datos para la Transferencia")
+        with tab_recibo:
+            if gastos_df.empty:
+                st.info(f"No hay relación de cobro emitida aún para el período {periodo_consulta}.")
+            else:
+                gastos_df["monto"] = gastos_df["monto"].astype(float)
+                total_comun = gastos_df[gastos_df["tipo"] == "Común"]["monto"].sum()
+                total_extra = gastos_df[gastos_df["tipo"] == "Cuota Extraordinaria"]["monto"].sum()
+                alicuota = float(prop_data["alicuota"])
+                
+                cuota_comun = total_comun * alicuota
+                cuota_extra = total_extra * alicuota
+                gastos_ind = gastos_df[(gastos_df["tipo"] == "No Común") & (gastos_df["apartamento"] == apto_actual)]["monto"].sum()
+                total_pagar = cuota_comun + cuota_extra + gastos_ind
+                
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Alícuota", f"{alicuota*100:.1f}%")
+                c2.metric("Cuota Común", f"${cuota_comun:,.2f}")
+                c3.metric("Cuota Extra", f"${cuota_extra:,.2f}")
+                c4.metric("Total Mes", f"${total_pagar:,.2f}")
+                
+                st.markdown("---")
+                st.subheader("🧾 Soportes y Facturas del Mes")
+                for _, row in gastos_df.iterrows():
+                    if row.get('comprobante') and pd.notna(row['comprobante']):
+                        with st.expander(f"📷 Ver Factura: {row['concepto']} (${float(row['monto']):,.2f})"):
+                            try:
+                                img_bytes = base64.b64decode(row['comprobante'])
+                                st.image(img_bytes, caption=row['concepto'], width=300)
+                            except Exception:
+                                st.write("Vista previa no disponible.")
+
+        with tab_reportar:
+            st.markdown("### 💳 Datos Bancarios para Transferencias")
             st.write(f"**Banco:** {info_edif.get('banco', '')} | **Cuenta:** {info_edif.get('cuenta', '')}")
             st.write(f"**Pago Móvil:** {info_edif.get('pm_telf', '')} | **C.I/RIF:** {info_edif.get('pm_cedula', '')}")
+            st.markdown("---")
+            
+            st.subheader("📤 Formulario de Reporte de Pago")
+            with st.form("form_reporte_pago"):
+                monto_pagado = st.number_input("Monto Transferido ($):", min_value=0.0, format="%.2f")
+                referencia_pago = st.text_input("Número de Referencia del Banco / Pago Móvil:")
+                fecha_pago = st.date_input("Fecha del Pago:", date.today())
+                captura_comp = st.file_uploader("📷 Adjuntar Captura o Foto del Comprobante (Obligatorio)", type=["png", "jpg", "jpeg"])
+                
+                if st.form_submit_button("📤 Registrar Comprobante de Pago"):
+                    if referencia_pago and captura_comp is not None and monto_pagado > 0:
+                        img_pago_str = base64.b64encode(captura_comp.read()).decode('utf-8')
+                        execute_query('''
+                            INSERT INTO pagos (apartamento, periodo, monto, referencia, fecha, comprobante_pago, estado)
+                            VALUES (:ap, :p, :m, :r, :f, :comp, 'Pendiente')
+                        ''', {
+                            "ap": apto_actual, "p": periodo_consulta, "m": monto_pagado,
+                            "r": referencia_pago, "f": str(fecha_pago), "comp": img_pago_str
+                        })
+                        st.success("✅ ¡Pago reportado exitosamente! El administrador lo verificará a la brevedad.")
+                        st.rerun()
+                    else:
+                        st.error("Por favor ingresa el monto, número de referencia y adjunta la imagen del comprobante.")
             
             st.markdown("---")
-            st.markdown("### 📤 Reportar Transferencia / Pago Móvil")
-            with st.form("form_pago"):
-                monto_pago = st.number_input("Monto Transferido ($)", value=float(total_pagar))
-                referencia = st.text_input("Número de Referencia")
-                
-                if st.form_submit_button("Registrar Comprobante"):
-                    if referencia:
-                        run_query("INSERT INTO pagos (apartamento, periodo, monto, referencia, fecha) VALUES (?, ?, ?, ?, ?)",
-                                  (apto_actual, periodo_consulta, monto_pago, referencia, str(date.today())), fetch_all=False)
-                        st.success("¡Pago reportado exitosamente!")
-                    else:
-                        st.error("Por favor ingrese la referencia del pago.")
+            st.subheader("📜 Tus Pagos Reportados")
+            df_mis_pagos = get_dataframe("SELECT * FROM pagos WHERE apartamento = :ap ORDER BY id DESC", {"ap": apto_actual})
+            if not df_mis_pagos.empty:
+                st.dataframe(
+                    df_mis_pagos[["periodo", "fecha", "monto", "referencia", "estado"]],
+                    column_config={
+                        "periodo": "Período", "fecha": "Fecha", "monto": "Monto ($)",
+                        "referencia": "Referencia", "estado": "Estatus"
+                    },
+                    use_container_width=True, hide_index=True
+                )
+            else:
+                st.info("No has reportado pagos recientemente.")
