@@ -199,13 +199,12 @@ if "apto_usuario" not in st.session_state:
 info_edif = get_edificio_info()
 
 # --- PANTALLA DE ACCESO UNIFICADA ---
+# --- PANTALLA DE ACCESO UNIFICADA ---
 if not st.session_state.autenticado:
-    st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_html:
-    st.markdown(f"<h4 style='text-align: center;'>{info_edif.get('nombre', '')}</h4>", unsafe_allow_text=True)
+    st.markdown("<h2 style='text-align: center;'>🏢 Sistema de Condominio</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h4 style='text-align: center;'>{info_edif.get('nombre', '')}</h4>", unsafe_allow_html=True)
     st.caption(f"<p style='text-align: center;'>RIF: {info_edif.get('rif', '')} | {info_edif.get('direccion', '')}</p>", unsafe_allow_html=True)
     st.markdown("---")
-    
-    col_left, col_center, col_right = st.columns([1, 2, 1])
     with col_center:
         st.subheader("🔑 Inicio de Sesión")
         with st.form("form_login"):
