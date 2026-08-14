@@ -1,3 +1,10 @@
+import sys
+import subprocess
+
+try:
+    import sqlalchemy
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "sqlalchemy", "psycopg2-binary", "pandas"])
 import streamlit as st
 import pandas as pd
 import urllib.parse
