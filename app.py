@@ -1,40 +1,33 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
+from datetime import datetime
 
-# ---------------------------------------------------------
-# CONEXIÓN A LA BASE DE DATOS (SUPABASE / POSTGRESQL)
-# ---------------------------------------------------------
-# Usamos el puerto 5432 directo y deshabilitamos prepared statements
-DB_URL = "postgresql://postgres.psathqqomnsvzhytvbsu:man09go06yra@aws-0-ca-central-1.pooler.supabase.com:5432/postgres"
+# -----------------------------------------------------------------------------
+# CONFIGURACIÓN DE LA PÁGINA
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Sistema de Control de Condominio",
+    page_icon="🏢",
+    layout="wide"
+)
 
-@st.cache_resource
-def get_db_engine():
-    return create_engine(
-        DB_URL, 
-        pool_pre_ping=True,
-        connect_args={"prepare_threshold": None}
-    )
+# -----------------------------------------------------------------------------
+# 1. CONEXIÓN Y CREACIÓN DE TABLAS
+# -----------------------------------------------------------------------------
+DB_URL = st.secrets["connections"]["postgresql"]["dialect"] + "://" + \
+         st.secrets["connections"]["postgresql"]["username"] + ":" + \
+         st.secrets["connections"]["postgresql"]["password"] + "@" + \
+         st.secrets["connections"]["postgresql"]["host"] + ":" + \
+         str(st.secrets["connections"]["postgresql"]["port"]) + "/" + \
+         st.secrets["connections"]["postgresql"]["database"]
 
-engine = get_db_engine()
+engine = create_engine(DB_URL)
 
-# ---------------------------------------------------------
-# INICIALIZACIÓN DE TABLAS Y DATOS DEL EDIFICIO
-# ---------------------------------------------------------
 def init_db():
-    with engine.begin() as conn:
-        # 1. Tabla de Propietarios / Apartamentos
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS propietarios (
-                apartamento VARCHAR(10) PRIMARY KEY,
-                propietario VARCHAR(100) DEFAULT 'Por asignar',
-                telefono VARCHAR(50) DEFAULT '',
-                email VARCHAR(100) DEFAULT '',
-                alicuota NUMERIC(5,4) NOT NULL
-            );
-        """))
-
-        # 2. Tabla de Gastos Comunes
+    """Crea las tablas necesarias si no existen y actualiza columnas pendientes."""
+    with engine.connect() as conn:
+        # Tabla de Gastos Comunes
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS gastos (
                 id SERIAL PRIMARY KEY,
@@ -45,508 +38,252 @@ def init_db():
                 fecha DATE DEFAULT CURRENT_DATE
             );
         """))
-        # --- AGREGAR ESTAS DOS LÍNEAS DE ABAJO ---
         conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS mes_anio VARCHAR(7);"))
         conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
 
-        # 3. Tabla de Pagos
+        # Tabla de Pagos Reportados por Propietarios
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS pagos (
+            CREATE TABLE IF NOT EXISTS pagos_reportados (
                 id SERIAL PRIMARY KEY,
                 apartamento VARCHAR(10) NOT NULL,
                 mes_anio VARCHAR(7) NOT NULL,
-                monto NUMERIC(12,2) NOT NULL,
-                referencia VARCHAR(100) DEFAULT '',
+                monto NUMERIC(12, 2) NOT NULL,
+                metodo_pago VARCHAR(50) NOT NULL,
+                referencia VARCHAR(100) NOT NULL,
+                fecha_pago DATE NOT NULL,
+                comprobante_nombre VARCHAR(255),
                 estatus VARCHAR(20) DEFAULT 'Pendiente',
-                fecha_registro DATE DEFAULT CURRENT_DATE
+                fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """))
+        conn.commit()
 
-        # 4. Tabla de Configuración del Edificio
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS configuracion (
-                id INT PRIMARY KEY DEFAULT 1,
-                nombre_edificio VARCHAR(150) NOT NULL,
-                rif VARCHAR(30) DEFAULT '',
-                direccion TEXT DEFAULT '',
-                logo_url TEXT DEFAULT ''
-            );
-        """))
+init_db()
 
-        # 5. Tabla de Cuotas Extras
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS cuotas_extras (
-                id SERIAL PRIMARY KEY,
-                concepto VARCHAR(200) NOT NULL,
-                monto_total NUMERIC(12,2) NOT NULL,
-                estatus VARCHAR(20) DEFAULT 'Aprobado',
-                fecha_registro DATE DEFAULT CURRENT_DATE
-            );
-        """))
-        conn.execute(text("ALTER TABLE cuotas_extras ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
+# -----------------------------------------------------------------------------
+# ESTADO DE LA SESIÓN PARA NAVEGACIÓN NEUTRA
+# -----------------------------------------------------------------------------
+if "rol_activo" not in st.session_state:
+    st.session_state.rol_activo = "Inicio"
 
-        # Insertar configuración básica si no existe
-        res_cfg = conn.execute(text("SELECT COUNT(*) FROM configuracion")).fetchone()
-        if res_cfg[0] == 0:
-            conn.execute(text("""
-                INSERT INTO configuracion (id, nombre_edificio, rif, direccion, logo_url)
-                VALUES (1, 'Residencias El Roble', 'J-12345678-0', 'Av. Principal, Caracas', '')
-            """))
+# -----------------------------------------------------------------------------
+# 2. VISTAS DE LA APLICACIÓN
+# -----------------------------------------------------------------------------
 
-        # Insertar apartamentos base si la tabla está vacía
-        result = conn.execute(text("SELECT COUNT(*) FROM propietarios")).fetchone()
-        if result[0] == 0:
-            apts_data = [
-                ('1A', 0.0600), ('1B', 0.0600),
-                ('2',  0.1200),
-                ('3A', 0.0600), ('3B', 0.0600),
-                ('4A', 0.0600), ('4B', 0.0600),
-                ('5A', 0.0600), ('5B', 0.0600),
-                ('6A', 0.0600), ('6B', 0.0600),
-                ('7',  0.1200),
-                ('PH', 0.1600)
-            ]
-            for apt, alic in apts_data:
-                conn.execute(
-                    text("INSERT INTO propietarios (apartamento, alicuota) VALUES (:apt, :alic)"),
-                    {"apt": apt, "alic": alic}
-                )
+def vista_inicio_neutro():
+    """Pantalla neutra de bienvenida para selección de perfil."""
+    st.markdown("<h1 style='text-align: center;'>🏢 Portal de Administración de Condominio</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray; font-size: 18px;'>Bienvenido. Selecciona tu perfil de acceso para continuar.</p>", unsafe_allow_html=True)
+    st.write("---")
 
-try:
-    init_db()
-except Exception as e:
-    st.error(f"Error al inicializar la base de datos: {e}")
-    st.stop()
+    col_space1, col1, col2, col_space2 = st.columns([1, 2, 2, 1])
 
-# ---------------------------------------------------------
-# CARGAR CONFIGURACIÓN DEL EDIFICIO
-# ---------------------------------------------------------
-def get_config():
-    with engine.connect() as conn:
-        res = conn.execute(text("SELECT nombre_edificio, rif, direccion, logo_url FROM configuracion WHERE id = 1")).fetchone()
-        if res:
-            return {
-                "nombre": res[0],
-                "rif": res[1],
-                "direccion": res[2],
-                "logo": res[3]
-            }
-        return {"nombre": "Mi Edificio", "rif": "", "direccion": "", "logo": ""}
-
-config = get_config()
-
-# ---------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA
-# ---------------------------------------------------------
-st.set_page_config(
-    page_title=config["nombre"],
-    page_icon="🏢",
-    layout="wide"
-)
-
-# ---------------------------------------------------------
-# AUTENTICACIÓN
-# ---------------------------------------------------------
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.title(f"🏢 {config['nombre']}")
-    if config["rif"]:
-        st.caption(f"RIF: {config['rif']}")
-    if config["logo"]:
-        st.image(config["logo"], width=200)
-        
-    st.subheader("Acceso al Sistema de Condominio")
-    
-    with st.form("login_form"):
-        usuario = st.text_input("Usuario")
-        clave = st.text_input("Clave", type="password")
-        submit = st.form_submit_button("Ingresar")
-        
-        if submit:
-            if usuario == "admin" and clave == "elroble2026":
-                st.session_state.authenticated = True
-                st.session_state.user = usuario
-                st.rerun()
-            elif usuario == "propietario" and clave == "roble123":
-                st.session_state.authenticated = True
-                st.session_state.user = usuario
-                st.rerun()
-            else:
-                st.error("Usuario o clave incorrectos")
-    st.stop()
-
-# ---------------------------------------------------------
-# MENÚ LATERAL Y NAVEGACIÓN
-# ---------------------------------------------------------
-if config["logo"]:
-    st.sidebar.image(config["logo"], use_column_width=True)
-
-st.sidebar.title(config["nombre"])
-if config["rif"]:
-    st.sidebar.caption(f"RIF: {config['rif']}")
-st.sidebar.caption(f"Usuario activo: {st.session_state.get('user', 'Usuario')}")
-
-if st.sidebar.button("Cerrar Sesión"):
-    st.session_state.authenticated = False
-    st.rerun()
-
-menu = st.sidebar.radio(
-    "Navegación",
-    [
-        "📋 Información del Edificio",
-        "⚙️ Configuración del Edificio",
-        "💵 Gastos Comunes",
-        "📌 Cuotas Extras",
-        "📊 Estado de Cuenta y Alícuotas",
-        "💳 Registro y Verificación de Pagos"
-    ]
-)
-
-# ---------------------------------------------------------
-# 1. INFORMACIÓN DEL EDIFICIO
-# ---------------------------------------------------------
-if menu == "📋 Información del Edificio":
-    st.header(f"🏢 {config['nombre']}")
-    if config["rif"]:
-        st.subheader(f"RIF: {config['rif']}")
-    if config["direccion"]:
-        st.write(f"📍 **Dirección:** {config['direccion']}")
-    
-    if config["logo"]:
-        st.image(config["logo"], width=250)
-
-    st.markdown("---")
-    
-    try:
-        with engine.connect() as conn:
-            df_props = pd.read_sql(
-                text("SELECT apartamento, propietario, telefono, email, CAST(alicuota * 100 AS FLOAT) as alicuota_porcentaje FROM propietarios ORDER BY apartamento"),
-                conn
-            )
-    except Exception as err:
-        st.error(f"⚠️ Error al leer la tabla 'propietarios': {err}")
-        st.stop()
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Apartamentos", f"{len(df_props)}")
-    col2.metric("Suma Total Alícuotas", f"{df_props['alicuota_porcentaje'].sum():.2f}%" if not df_props.empty else "0.00%")
-    col3.metric("Alícuota Penthouse", "16.00%")
-
-    st.subheader("Listado de Apartamentos")
-    st.dataframe(
-        df_props.rename(columns={
-            "apartamento": "Apto",
-            "propietario": "Propietario",
-            "telefono": "Teléfono",
-            "email": "Correo",
-            "alicuota_porcentaje": "Alícuota (%)"
-        }),
-        use_container_width=True
-    )
-
-    with st.expander("✏️ Actualizar Datos de Propietario"):
-        with st.form("update_owner"):
-            apt_list = df_props['apartamento'].tolist() if not df_props.empty else []
-            apt_select = st.selectbox("Seleccionar Apartamento", apt_list)
-            nombre = st.text_input("Nombre del Propietario")
-            telefono = st.text_input("Teléfono")
-            email = st.text_input("Correo Electrónico")
-            btn_actualizar = st.form_submit_button("Guardar Cambios")
-
-            if btn_actualizar and apt_select:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("""
-                            UPDATE propietarios 
-                            SET propietario = :nombre, telefono = :telefono, email = :email 
-                            WHERE apartamento = :apt
-                        """),
-                        {"nombre": nombre, "telefono": telefono, "email": email, "apt": apt_select}
-                    )
-                st.success(f"Datos del apartamento {apt_select} actualizados.")
-                st.rerun()
-
-# ---------------------------------------------------------
-# 2. CONFIGURACIÓN DEL EDIFICIO
-# ---------------------------------------------------------
-elif menu == "⚙️ Configuración del Edificio":
-    st.header("⚙️ Editar Datos del Edificio")
-    st.info("Modifica el nombre oficial, RIF, dirección e imagen del edificio.")
-
-    with st.form("form_config"):
-        nuevo_nombre = st.text_input("Nombre del Edificio / Condominio", value=config["nombre"])
-        nuevo_rif = st.text_input("RIF / Documento Fiscal", value=config["rif"])
-        nueva_direccion = st.text_area("Dirección Física", value=config["direccion"])
-        nuevo_logo = st.text_input("URL de Imagen / Logo", value=config["logo"])
-
-        btn_guardar_config = st.form_submit_button("💾 Guardar Configuración")
-
-        if btn_guardar_config:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("""
-                        UPDATE configuracion 
-                        SET nombre_edificio = :nom, rif = :rif, direccion = :dir, logo_url = :logo
-                        WHERE id = 1
-                    """),
-                    {"nom": nuevo_nombre, "rif": nuevo_rif, "dir": nueva_direccion, "logo": nuevo_logo}
-                )
-            st.success("Configuración actualizada correctamente.")
+    with col1:
+        st.info("### 🔑 Portal de Propietarios")
+        st.write("Accede para reportar pagos de condominio y verificar el historial de tus comprobantes.")
+        if st.button("Ingresar como Propietario", use_container_width=True, type="primary"):
+            st.session_state.rol_activo = "Propietario"
             st.rerun()
 
-# ---------------------------------------------------------
-# 3. GASTOS COMUNES (CON PREVISUALIZACIÓN Y APROBACIÓN)
-# ---------------------------------------------------------
-elif menu == "💵 Gastos Comunes":
-    st.header("💵 Carga y Verificación de Gastos Comunes")
+    with col2:
+        st.warning("### ⚙️ Panel de Administración")
+        st.write("Gestión de gastos comunes, aprobación de pagos reportados y avisos de cobro del edificio.")
+        if st.button("Ingresar como Administrador", use_container_width=True):
+            st.session_state.rol_activo = "Administrador"
+            st.rerun()
+
+
+def vista_propietario():
+    col_head, col_btn = st.columns([4, 1])
+    with col_head:
+        st.title("👤 Portal de Propietarios")
+    with col_btn:
+        st.write("")
+        if st.button("🚪 Cambiar Rol"):
+            st.session_state.rol_activo = "Inicio"
+            st.rerun()
+            
+    opcion = st.radio(
+        "¿Qué deseas realizar?",
+        ["📥 Reportar un Pago", "📋 Ver Mis Pagos Reportados"],
+        horizontal=True
+    )
     
-    col1, col2 = st.columns(2)
-    mes = col1.selectbox("Mes", ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"])
-    anio = col2.text_input("Año", value="2026")
-    mes_anio = f"{anio}-{mes}"
+    APARTAMENTOS = [f"Apto {i}" for i in range(1, 14)] # Ajusta si usas otra nomenclatura
+    METODOS_PAGO = ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"]
 
-    with st.form("form_gastos"):
-        concepto = st.text_input("Concepto del Gasto (Ej: Mantenimiento Ascensor, Vigilancia)")
-        monto = st.number_input("Monto ($)", min_value=0.0, step=10.0, format="%.2f")
-        estatus_inicial = st.selectbox("Estatus del Gasto", ["Pendiente", "Aprobado"])
-        btn_gasto = st.form_submit_button("Registrar Gasto")
+    if opcion == "📥 Reportar un Pago":
+        st.subheader("Reportar Comprobante de Pago")
+        
+        with st.form("form_pago_propietario", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                apartamento = st.selectbox("Selecciona tu Apartamento", APARTAMENTOS)
+                mes_anio = st.text_input("Mes / Año a Pagar", value=datetime.now().strftime("%Y-%m"), help="Formato: AAAA-MM (Ej: 2026-08)")
+                monto = st.number_input("Monto Pagado ($ / Bs)", min_value=0.01, step=0.01, format="%.2f")
 
-        if btn_gasto:
-            if concepto and monto > 0:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("INSERT INTO gastos (mes_anio, concepto, monto, estatus) VALUES (:m, :c, :mo, :e)"),
-                        {"m": mes_anio, "c": concepto, "mo": monto, "e": estatus_inicial}
-                    )
+            with col2:
+                metodo = st.selectbox("Método de Pago", METODOS_PAGO)
+                referencia = st.text_input("Número de Referencia")
+                fecha_pago = st.date_input("Fecha de Transferencia", value=datetime.now().date())
+
+            comprobante = st.file_uploader("Adjuntar Comprobante (Imagen/PDF)", type=["png", "jpg", "jpeg", "pdf"])
+            
+            submit = st.form_submit_button("🚀 Registrar Pago")
+
+            if submit:
+                if not referencia.strip():
+                    st.error("⚠️ Por favor ingrese el número de referencia del pago.")
+                else:
+                    nombre_archivo = comprobante.name if comprobante else "Sin archivo"
+                    with engine.connect() as conn:
+                        conn.execute(text("""
+                            INSERT INTO pagos_reportados 
+                            (apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus)
+                            VALUES (:apto, :mes, :monto, :metodo, :ref, :fecha, :comp, 'Pendiente')
+                        """), {
+                            "apto": apartamento,
+                            "mes": mes_anio,
+                            "monto": monto,
+                            "metodo": metodo,
+                            "ref": referencia,
+                            "fecha": fecha_pago,
+                            "comp": nombre_archivo
+                        })
+                        conn.commit()
+                    st.success(f"✅ ¡Pago registrado con éxito para el {apartamento}! Quedó registrado bajo revisión ('Pendiente').")
+
+    elif opcion == "📋 Ver Mis Pagos Reportados":
+        st.subheader("Historial de Pagos")
+        apto_consulta = st.selectbox("Selecciona tu Apartamento para consultar", APARTAMENTOS)
+        
+        with engine.connect() as conn:
+            df_mis_pagos = pd.read_sql(
+                text("SELECT mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE apartamento = :apto ORDER BY id DESC"),
+                conn,
+                params={"apto": apto_consulta}
+            )
+        
+        if df_mis_pagos.empty:
+            st.info(f"No existen registros de pago para el {apto_consulta}.")
+        else:
+            st.dataframe(df_mis_pagos, use_container_width=True)
+
+
+def vista_administrador():
+    col_head, col_btn = st.columns([4, 1])
+    with col_head:
+        st.title("⚙️ Panel de Administración")
+    with col_btn:
+        st.write("")
+        if st.button("🚪 Cambiar Rol"):
+            st.session_state.rol_activo = "Inicio"
+            st.rerun()
+
+    # Autenticación simple para el administrador
+    if "admin_autenticado" not in st.session_state:
+        st.session_state.admin_autenticado = False
+
+    if not st.session_state.admin_autenticado:
+        st.subheader("🔒 Acceso Restringido")
+        clave = st.text_input("Ingresa la clave de administrador:", type="password")
+        if st.button("Ingresar"):
+            if clave == "admin123": # Puedes cambiar esta contraseña por la que prefieras
+                st.session_state.admin_autenticado = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
+        return
+
+    # Si la clave es correcta, se muestra el contenido del administrador:
+    tab1, tab2, tab3 = st.tabs(["📊 Gastos del Condominio", "✅ Aprobar Pagos", "📄 Resumen General"])
+    
+    # --- TAB 1: REGISTRO DE GASTOS ---
+    with tab1:
+        st.subheader("Registrar Nuevo Gasto Común")
+        with st.form("form_gastos"):
+            mes = st.text_input("Mes / Año", value=datetime.now().strftime("%Y-%m"))
+            concepto = st.text_input("Concepto del Gasto")
+            monto_gasto = st.number_input("Monto", min_value=0.0, step=0.01)
+            btn_gasto = st.form_submit_button("Guardar Gasto")
+            
+            if btn_gasto and concepto:
+                with engine.connect() as conn:
+                    conn.execute(text("""
+                        INSERT INTO gastos (mes_anio, concepto, monto, estatus)
+                        VALUES (:mes, :concepto, :monto, 'Aprobado')
+                    """), {"mes": mes, "concepto": concepto, "monto": monto_gasto})
+                    conn.commit()
                 st.success("Gasto registrado correctamente.")
                 st.rerun()
 
-    st.markdown("---")
-    st.subheader(f"Gastos Registrados para {mes_anio}")
-
-    with engine.connect() as conn:
-        df_gastos = pd.read_sql(
-            text("SELECT id, concepto, monto, estatus, fecha FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
-            conn,
-            params={"m": mes_anio}
-        )
-
-    if not df_gastos.empty:
-        st.dataframe(df_gastos, use_container_width=True)
-        monto_aprobado = df_gastos[df_gastos['estatus'] == 'Aprobado']['monto'].sum()
-        st.metric("Total Gastos Aprobados (Mes)", f"${monto_aprobado:,.2f}")
-
-        st.markdown("### 🔍 Previsualizar, Aprobar o Eliminar Gasto")
-        gasto_id = st.number_input("Seleccione ID del Gasto", min_value=int(df_gastos['id'].min()), max_value=int(df_gastos['id'].max()), step=1)
-        
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
-        if col_btn1.button("✅ Aprobar Gasto"):
-            with engine.begin() as conn:
-                conn.execute(text("UPDATE gastos SET estatus = 'Aprobado' WHERE id = :id"), {"id": gasto_id})
-            st.success(f"Gasto ID {gasto_id} Aprobado")
-            st.rerun()
-            
-        if col_btn2.button("⏳ Marcar Pendiente"):
-            with engine.begin() as conn:
-                conn.execute(text("UPDATE gastos SET estatus = 'Pendiente' WHERE id = :id"), {"id": gasto_id})
-            st.warning(f"Gasto ID {gasto_id} marcado como Pendiente")
-            st.rerun()
-
-        if col_btn3.button("🗑️ Eliminar Gasto"):
-            with engine.begin() as conn:
-                conn.execute(text("DELETE FROM gastos WHERE id = :id"), {"id": gasto_id})
-            st.error(f"Gasto ID {gasto_id} Eliminado")
-            st.rerun()
-    else:
-        st.info("No hay gastos registrados para este mes.")
-
-# ---------------------------------------------------------
-# 4. CUOTAS EXTRAS (CON PREVISUALIZACIÓN Y APROBACIÓN)
-# ---------------------------------------------------------
-elif menu == "📌 Cuotas Extras":
-    st.header("📌 Registro, Aprobación y Reparto de Cuotas Extras")
-    st.info("Registra un gasto especial o extraordinario. Puedes cambiar su estado a Pendiente o Aprobado.")
-
-    with st.form("form_cuota_extra"):
-        concepto_extra = st.text_input("Concepto de la Cuota Extra")
-        monto_extra = st.number_input("Monto Total de la Cuota Extra ($)", min_value=0.0, step=50.0, format="%.2f")
-        estatus_extra_init = st.selectbox("Estatus de la Cuota Extra", ["Aprobado", "Pendiente"])
-        btn_cuota_extra = st.form_submit_button("Calcular y Registrar Cuota Extra")
-
-        if btn_cuota_extra:
-            if concepto_extra and monto_extra > 0:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("INSERT INTO cuotas_extras (concepto, monto_total, estatus) VALUES (:c, :m, :e)"),
-                        {"c": concepto_extra, "m": monto_extra, "e": estatus_extra_init}
-                    )
-                st.success("Cuota extra registrada con éxito.")
-                st.rerun()
-
-    st.markdown("---")
-    
-    with engine.connect() as conn:
-        df_extras = pd.read_sql(
-            text("SELECT id, concepto, monto_total, estatus, fecha_registro FROM cuotas_extras ORDER BY id DESC"),
-            conn
-        )
-        df_props = pd.read_sql(
-            text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"),
-            conn
-        )
-
-    if not df_extras.empty:
-        st.subheader("Cuotas Extras Registradas")
-        st.dataframe(df_extras, use_container_width=True)
-
-        st.markdown("### 🔍 Cambiar Estatus o Eliminar Cuota Extra")
-        extra_id_action = st.number_input("Seleccione ID de la Cuota Extra", min_value=int(df_extras['id'].min()), max_value=int(df_extras['id'].max()), step=1, key="extra_act")
-        
-        c_ex1, c_ex2, c_ex3 = st.columns(3)
-        if c_ex1.button("✅ Aprobar Cuota Extra"):
-            with engine.begin() as conn:
-                conn.execute(text("UPDATE cuotas_extras SET estatus = 'Aprobado' WHERE id = :id"), {"id": extra_id_action})
-            st.success(f"Cuota Extra ID {extra_id_action} Aprobada")
-            st.rerun()
-
-        if c_ex2.button("⏳ Marcar Pendiente "):
-            with engine.begin() as conn:
-                conn.execute(text("UPDATE cuotas_extras SET estatus = 'Pendiente' WHERE id = :id"), {"id": extra_id_action})
-            st.warning(f"Cuota Extra ID {extra_id_action} Pendiente")
-            st.rerun()
-
-        if c_ex3.button("🗑️ Eliminar Cuota Extra"):
-            with engine.begin() as conn:
-                conn.execute(text("DELETE FROM cuotas_extras WHERE id = :id"), {"id": extra_id_action})
-            st.error(f"Cuota Extra ID {extra_id_action} Eliminada")
-            st.rerun()
-
-        st.markdown("---")
-        st.subheader("📋 Previsualizar Reparto por Apartamento")
-        extra_selected_id = st.selectbox("Seleccionar Cuota Extra a Consultar", df_extras['id'].tolist(), format_func=lambda x: f"ID {x} - {df_extras[df_extras['id']==x]['concepto'].values[0]}")
-        
-        monto_sel = df_extras[df_extras['id'] == extra_selected_id]['monto_total'].values[0]
-        
-        df_reparto_extra = df_props.copy()
-        df_reparto_extra['Alícuota (%)'] = (df_reparto_extra['alicuota'] * 100).round(2).astype(str) + "%"
-        df_reparto_extra['Monto a Pagar ($)'] = (df_reparto_extra['alicuota'] * float(monto_sel)).round(2)
-
-        st.dataframe(
-            df_reparto_extra[['apartamento', 'propietario', 'Alícuota (%)', 'Monto a Pagar ($)']].rename(columns={
-                "apartamento": "Apto",
-                "propietario": "Propietario"
-            }),
-            use_container_width=True
-        )
-    else:
-        st.info("No hay cuotas extras registradas.")
-
-# ---------------------------------------------------------
-# 5. ESTADO DE CUENTA Y ALÍCUOTAS
-# ---------------------------------------------------------
-elif menu == "📊 Estado de Cuenta y Alícuotas":
-    st.header("📊 Cálculo de Cuotas por Alícuota (Solo Gastos Aprobados)")
-
-    col1, col2 = st.columns(2)
-    mes = col1.selectbox("Mes a Consultar", ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"])
-    anio = col2.text_input("Año a Consultar", value="2026")
-    mes_anio = f"{anio}-{mes}"
-
-    try:
-        with engine.connect() as conn:
-            total_gastos = conn.execute(
-                text("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
-                {"m": mes_anio}
-            ).scalar() or 0.0
-            
-            df_props = pd.read_sql(
-                text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"), 
-                conn
-            )
-    except Exception as e:
-        st.error(f"Error al consultar la base de datos: {e}")
-        st.stop()
-    
-    st.metric("Total Gastos Aprobados a Repartir", f"${float(total_gastos):,.2f}")
-
-    if not df_props.empty:
-        df_props['Alícuota (%)'] = (df_props['alicuota'] * 100).round(2).astype(str) + "%"
-        df_props['Cuota Asignada ($)'] = (df_props['alicuota'] * float(total_gastos)).round(2)
-
-        st.subheader(f"Cuotas Correspondientes al Período {mes_anio}")
-        st.dataframe(
-            df_props[['apartamento', 'propietario', 'Alícuota (%)', 'Cuota Asignada ($)']].rename(columns={
-                "apartamento": "Apartamento",
-                "propietario": "Propietario"
-            }),
-            use_container_width=True
-        )
-
-# ---------------------------------------------------------
-# 6. REGISTRO Y VERIFICACIÓN DE PAGOS
-# ---------------------------------------------------------
-elif menu == "💳 Registro y Verificación de Pagos":
-    st.header("💳 Registro y Verificación de Pagos")
-
-    tab1, tab2 = st.tabs(["Reportar Pago", "Verificar Pagos"])
-
-    with tab1:
-        st.subheader("Reportar Pago de Condominio")
-        
-        with engine.connect() as conn:
-            df_props = pd.read_sql(
-                text("SELECT apartamento FROM propietarios ORDER BY apartamento"), 
-                conn
-            )
-        
-        with st.form("form_pago"):
-            apt = st.selectbox("Apartamento", df_props['apartamento'].tolist())
-            mes_pago = st.selectbox("Mes de Pago", ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"])
-            anio_pago = st.text_input("Año de Pago", value="2026", key="pago_anio")
-            mes_anio_pago = f"{anio_pago}-{mes_pago}"
-            
-            monto_pago = st.number_input("Monto Pagado ($)", min_value=0.0, format="%.2f")
-            referencia = st.text_input("Número de Referencia")
-            
-            btn_pago = st.form_submit_button("Guardar Pago")
-
-            if btn_pago:
-                if monto_pago > 0:
-                    with engine.begin() as conn:
-                        conn.execute(
-                            text("""
-                                INSERT INTO pagos (apartamento, mes_anio, monto, referencia, estatus)
-                                VALUES (:apt, :m, :mo, :ref, 'Pendiente')
-                            """),
-                            {"apt": apt, "m": mes_anio_pago, "mo": monto_pago, "ref": referencia}
-                        )
-                    st.success("Pago registrado correctamente (Estatus: Pendiente).")
-                    st.rerun()
-
+    # --- TAB 2: APROBACIÓN DE PAGOS REPORTADOS ---
     with tab2:
-        st.subheader("Lista de Pagos Registrados")
-        
+        st.subheader("Pagos Pendientes por Validar")
         with engine.connect() as conn:
-            df_pagos = pd.read_sql(
-                text("SELECT id, apartamento, mes_anio, monto, referencia, estatus, fecha_registro FROM pagos ORDER BY id DESC"), 
+            df_pendientes = pd.read_sql(
+                text("SELECT id, apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus FROM pagos_reportados WHERE estatus = 'Pendiente' ORDER BY id ASC"),
                 conn
             )
         
-        if not df_pagos.empty:
-            st.dataframe(df_pagos, use_container_width=True)
-            
-            with st.expander("Aprobar o Reclamar Pago"):
-                pago_id = st.number_input("ID del Pago", min_value=1, step=1)
-                nuevo_estatus = st.selectbox("Nuevo Estatus", ["Aprobado", "Pendiente", "Rechazado"])
-                if st.button("Cambiar Estatus"):
-                    with engine.begin() as conn:
-                        conn.execute(
-                            text("UPDATE pagos SET estatus = :est WHERE id = :id"),
-                            {"est": nuevo_estatus, "id": pago_id}
-                        )
-                    st.success(f"Pago ID {pago_id} cambiado a '{nuevo_estatus}'.")
-                    st.rerun()
+        if df_pendientes.empty:
+            st.info("🎉 No hay pagos pendientes por revisar.")
         else:
-            st.info("Aún no se han registrado pagos.")
+            st.dataframe(df_pendientes, use_container_width=True)
+            
+            pago_id = st.selectbox("Selecciona ID del Pago a Gestionar:", df_pendientes["id"].tolist())
+            col_a, col_r = st.columns(2)
+            
+            with col_a:
+                if st.button("✅ Aprobar Pago"):
+                    with engine.connect() as conn:
+                        conn.execute(text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :id"), {"id": pago_id})
+                        conn.commit()
+                    st.success(f"Pago #{pago_id} Aprobado.")
+                    st.rerun()
+                    
+            with col_r:
+                if st.button("❌ Rechazar Pago"):
+                    with engine.connect() as conn:
+                        conn.execute(text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"), {"id": pago_id})
+                        conn.commit()
+                    st.warning(f"Pago #{pago_id} Rechazado.")
+                    st.rerun()
+
+    # --- TAB 3: RESUMEN DE GASTOS Y ALÍCUOTAS ---
+    with tab3:
+        st.subheader("Total Gastos por Mes")
+        mes_filtro = st.text_input("Filtrar por Mes (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="filtro_admin")
+        
+        with engine.connect() as conn:
+            df_gastos_mes = pd.read_sql(
+                text("SELECT concepto, monto FROM gastos WHERE mes_anio = :mes AND estatus = 'Aprobado'"),
+                conn,
+                params={"mes": mes_filtro}
+            )
+        
+        total_gastos = df_gastos_mes["monto"].sum() if not df_gastos_mes.empty else 0.0
+        st.metric("Total Gastos Comunes del Mes", f"${total_gastos:,.2f}")
+        st.dataframe(df_gastos_mes, use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# CONTROL DE NAVEGACIÓN PRINCIPAL
+# -----------------------------------------------------------------------------
+st.sidebar.title("🏢 Condominio")
+
+# Permite regresar al inicio desde la barra lateral si se desea
+if st.sidebar.button("🏠 Ir al Inicio"):
+    st.session_state.rol_activo = "Inicio"
+    st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.caption("Sistema de Administración de Residencias")
+
+# Renderizar la vista activa según el estado de la sesión
+if st.session_state.rol_activo == "Inicio":
+    vista_inicio_neutro()
+elif st.session_state.rol_activo == "Propietario":
+    vista_propietario()
+elif st.session_state.rol_activo == "Administrador":
+    vista_administrador()
