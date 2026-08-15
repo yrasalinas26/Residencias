@@ -14,7 +14,6 @@ st.set_page_config(
 # ---------------------------------------------------------
 # CONEXIÓN A LA BASE DE DATOS (SUPABASE / POSTGRESQL)
 # ---------------------------------------------------------
-# Conexión directa a Supabase (Transaction Pooler)
 DB_URL = "postgresql://postgres.psathqqomnsvzhytvbsu:man09go06yra@aws-0-ca-central-1.pooler.supabase.com:6543/postgres"
 
 @st.cache_resource
@@ -105,7 +104,6 @@ if not st.session_state.authenticated:
         submit = st.form_submit_button("Ingresar")
         
         if submit:
-            # Claves de acceso (puedes cambiarlas aquí)
             if usuario == "admin" and clave == "elroble2026":
                 st.session_state.authenticated = True
                 st.session_state.user = usuario
@@ -144,7 +142,11 @@ menu = st.sidebar.radio(
 if menu == "📋 Información del Edificio":
     st.header("🏢 Información del Edificio y Propietarios")
     
-    df_props = pd.read_sql("SELECT apartamento, propietario, telefono, email, (alicuota * 100) as alicuota_porcentaje FROM propietarios ORDER BY apartamento", engine)
+    # CORREGIDO: Se envuelve la consulta en text()
+    df_props = pd.read_sql(
+        text("SELECT apartamento, propietario, telefono, email, (alicuota * 100) as alicuota_porcentaje FROM propietarios ORDER BY apartamento"), 
+        engine
+    )
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Apartamentos", "13")
@@ -244,7 +246,11 @@ elif menu == "📊 Estado de Cuenta y Alícuotas":
     total_gastos = df_gastos['total'].iloc[0] if df_gastos['total'].iloc[0] is not None else 0.0
     st.metric("Total Gastos del Mes a Repartir", f"${total_gastos:,.2f}")
 
-    df_props = pd.read_sql("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento", engine)
+    # CORREGIDO: Se envuelve la consulta en text()
+    df_props = pd.read_sql(
+        text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"), 
+        engine
+    )
     
     # Cálculo de la cuota individual
     df_props['Alícuota (%)'] = (df_props['alicuota'] * 100).round(2).astype(str) + "%"
@@ -269,7 +275,12 @@ elif menu == "💳 Registro y Verificación de Pagos":
 
     with tab1:
         st.subheader("Reportar Pago de Condominio")
-        df_props = pd.read_sql("SELECT apartamento FROM propietarios ORDER BY apartamento", engine)
+        
+        # CORREGIDO: Se envuelve la consulta en text()
+        df_props = pd.read_sql(
+            text("SELECT apartamento FROM propietarios ORDER BY apartamento"), 
+            engine
+        )
         
         with st.form("form_pago"):
             apt = st.selectbox("Apartamento", df_props['apartamento'].tolist())
@@ -298,7 +309,12 @@ elif menu == "💳 Registro y Verificación de Pagos":
 
     with tab2:
         st.subheader("Lista de Pagos Registrados")
-        df_pagos = pd.read_sql("SELECT id, apartamento, mes_anio, monto, referencia, estatus, fecha_registro FROM pagos ORDER BY id DESC", engine)
+        
+        # CORREGIDO: Se envuelve la consulta en text()
+        df_pagos = pd.read_sql(
+            text("SELECT id, apartamento, mes_anio, monto, referencia, estatus, fecha_registro FROM pagos ORDER BY id DESC"), 
+            engine
+        )
         
         if not df_pagos.empty:
             st.dataframe(df_pagos, use_container_width=True)
