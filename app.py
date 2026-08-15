@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 1. GESTIÓN TOLERANTE DE CONEXIÓN A BASE DE DATOS
+# 1. GESTIÓN DE CONEXIÓN A BASE DE DATOS
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def obtener_engine():
@@ -29,7 +29,6 @@ def obtener_engine():
         else:
             return None, "No se encontraron credenciales de base de datos en Secrets."
 
-        # Configuración optimizada para Supabase (evita errores con el pooler PgBouncer)
         engine = create_engine(
             url,
             connect_args={"prepare_threshold": None},
@@ -47,6 +46,7 @@ def inicializar_tablas():
         return False
     try:
         with engine.connect() as conn:
+            # Tabla de Gastos
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS gastos (
                     id SERIAL PRIMARY KEY,
@@ -57,6 +57,7 @@ def inicializar_tablas():
                     fecha DATE DEFAULT CURRENT_DATE
                 );
             """))
+            # Tabla de Pagos Reportados
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS pagos_reportados (
                     id SERIAL PRIMARY KEY,
@@ -71,46 +72,58 @@ def inicializar_tablas():
                     fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
+            # Tabla de credenciales por apartamento
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS propietarios (
+                    apartamento VARCHAR(10) PRIMARY KEY,
+                    clave VARCHAR(100) NOT NULL DEFAULT '1234'
+                );
+            """))
             conn.commit()
         return True
     except Exception as e:
-        st.sidebar.error(f"⚠️ Error al inicializar tablas en Supabase: {e}")
+        st.sidebar.error(f"⚠️ Error al inicializar tablas: {e}")
         return False
 
-# Intenta preparar las tablas de forma silenciosa al arrancar
-db_lista = inicializar_tablas()
+inicializar_tablas()
 
 # -----------------------------------------------------------------------------
-# CONTROL DE NAVEGACIÓN Y SESIÓN (INGRESO NEUTRO)
+# CONTROL DE NAVEGACIÓN Y SESIÓN
 # -----------------------------------------------------------------------------
 if "rol_activo" not in st.session_state:
     st.session_state.rol_activo = "Inicio"
+
+if "apto_autenticado" not in st.session_state:
+    st.session_state.apto_autenticado = None
+
+if "admin_autenticado" not in st.session_state:
+    st.session_state.admin_autenticado = False
 
 # -----------------------------------------------------------------------------
 # 2. VISTAS DE LA APLICACIÓN
 # -----------------------------------------------------------------------------
 
 def vista_inicio_neutro():
-    """Pantalla inicial limpia y neutra para elegir rol."""
-    st.markdown("<h1 style='text-align: center;'>🏢 Portal de Administración de Condominio</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: gray; font-size: 18px;'>Bienvenido. Selecciona tu perfil de acceso para continuar.</p>", unsafe_allow_html=True)
+    """Pantalla inicial neutra sin datos predeterminados expuestos."""
+    st.markdown("<h1 style='text-align: center;'>🏢 Portal de Condominio</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray; font-size: 18px;'>Selecciona tu perfil de acceso para ingresar al sistema.</p>", unsafe_allow_html=True)
     st.write("---")
 
     if error_conexion:
-        st.warning("⚠️ **Atención:** La base de datos no está conectada. Verifica las credenciales en Streamlit Cloud Secrets.")
+        st.warning("⚠️ **Atención:** La base de datos no está conectada. Verifica los Secrets en Streamlit Cloud.")
 
     col_space1, col1, col2, col_space2 = st.columns([1, 2, 2, 1])
 
     with col1:
         st.info("### 🔑 Portal de Propietarios")
-        st.write("Accede para reportar tus pagos de condominio y consultar el historial de comprobantes.")
+        st.write("Accede con tu número de apartamento y PIN para reportar y consultar solo tus pagos.")
         if st.button("Ingresar como Propietario", use_container_width=True, type="primary"):
             st.session_state.rol_activo = "Propietario"
             st.rerun()
 
     with col2:
         st.warning("### ⚙️ Panel de Administración")
-        st.write("Gestión de gastos comunes, validación de pagos reportados y estado financiero del edificio.")
+        st.write("Acceso exclusivo para administradores para gestionar gastos y validar comprobantes.")
         if st.button("Ingresar como Administrador", use_container_width=True):
             st.session_state.rol_activo = "Administrador"
             st.rerun()
@@ -122,31 +135,83 @@ def vista_propietario():
         st.title("👤 Portal de Propietarios")
     with col_btn:
         st.write("")
-        if st.button("🚪 Cambiar Rol"):
+        if st.button("🚪 Salir / Cambiar Rol"):
+            st.session_state.apto_autenticado = None
             st.session_state.rol_activo = "Inicio"
             st.rerun()
 
     if not engine:
-        st.error("❌ No es posible procesar o consultar pagos porque no hay conexión activa a Supabase.")
+        st.error("❌ La base de datos no está conectada.")
         return
+
+    # --- PASO 1: LOGIN NEUTRO POR APARTAMENTO ---
+    if not st.session_state.apto_autenticado:
+        st.subheader("🔒 Autenticación de Propietario")
+        st.caption("Ingresa los datos de tu inmueble para acceder a tus registros.")
+        
+        APARTAMENTOS = [f"Apto {i}" for i in range(1, 14)] # Modifica la lista según tus unidades
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            apto_input = st.selectbox("Selecciona tu Apartamento:", ["-- Seleccionar --"] + APARTAMENTOS)
+        with col_b:
+            clave_input = st.text_input("Ingresa tu PIN / Contraseña:", type="password")
+
+        if st.button("Ingresar al Portal", type="primary"):
+            if apto_input == "-- Seleccionar --":
+                st.error("Por favor selecciona un apartamento válido.")
+            elif not clave_input.strip():
+                st.error("Por favor ingresa la clave de tu apartamento.")
+            else:
+                # Verificación de credencial en base de datos (clave por defecto: 1234)
+                try:
+                    with engine.connect() as conn:
+                        res = conn.execute(
+                            text("SELECT clave FROM propietarios WHERE apartamento = :apto"),
+                            {"apto": apto_input}
+                        ).fetchone()
+
+                        # Si el apartamento no se ha registrado en la tabla, lo registramos con la clave por defecto '1234'
+                        if not res:
+                            conn.execute(
+                                text("INSERT INTO propietarios (apartamento, clave) VALUES (:apto, '1234')"),
+                                {"apto": apto_input}
+                            )
+                            conn.commit()
+                            clave_db = "1234"
+                        else:
+                            clave_db = res[0]
+
+                    if clave_input == clave_db:
+                        st.session_state.apto_autenticado = apto_input
+                        st.success(f"Bienvenido {apto_input}")
+                        st.rerun()
+                    else:
+                        st.error("❌ Clave incorrecta. Por favor verifica tu PIN.")
+                except Exception as e:
+                    st.error(f"Error en validación: {e}")
+        return
+
+    # --- PASO 2: PANEL PRIVADO DEL PROPIETARIO ---
+    apto_actual = st.session_state.apto_autenticado
+    st.success(f"Acceso confirmado: **{apto_actual}**")
 
     opcion = st.radio(
         "¿Qué deseas realizar?",
         ["📥 Reportar un Pago", "📋 Ver Mis Pagos Reportados"],
         horizontal=True
     )
-    
-    APARTAMENTOS = [f"Apto {i}" for i in range(1, 14)]
+
     METODOS_PAGO = ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"]
 
     if opcion == "📥 Reportar un Pago":
-        st.subheader("Reportar Comprobante de Pago")
+        st.subheader(f"Reportar Comprobante de Pago - {apto_actual}")
         
         with st.form("form_pago_propietario", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
             with col1:
-                apartamento = st.selectbox("Selecciona tu Apartamento", APARTAMENTOS)
+                st.text_input("Apartamento", value=apto_actual, disabled=True)
                 mes_anio = st.text_input("Mes / Año a Pagar", value=datetime.now().strftime("%Y-%m"))
                 monto = st.number_input("Monto Pagado ($ / Bs)", min_value=0.01, step=0.01, format="%.2f")
 
@@ -171,7 +236,7 @@ def vista_propietario():
                                 (apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus)
                                 VALUES (:apto, :mes, :monto, :metodo, :ref, :fecha, :comp, 'Pendiente')
                             """), {
-                                "apto": apartamento,
+                                "apto": apto_actual,
                                 "mes": mes_anio,
                                 "monto": monto,
                                 "metodo": metodo,
@@ -180,28 +245,27 @@ def vista_propietario():
                                 "comp": nombre_archivo
                             })
                             conn.commit()
-                        st.success(f"✅ ¡Pago registrado con éxito para el {apartamento}!")
+                        st.success(f"✅ ¡Pago registrado con éxito para el {apto_actual}!")
                     except Exception as e:
                         st.error(f"Error guardando el registro: {e}")
 
     elif opcion == "📋 Ver Mis Pagos Reportados":
-        st.subheader("Historial de Pagos Reportados")
-        apto_consulta = st.selectbox("Selecciona tu Apartamento para consultar", APARTAMENTOS)
+        st.subheader(f"Historial Exclusivo del {apto_actual}")
         
         try:
             with engine.connect() as conn:
                 df_mis_pagos = pd.read_sql(
                     text("SELECT mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE apartamento = :apto ORDER BY id DESC"),
                     conn,
-                    params={"apto": apto_consulta}
+                    params={"apto": apto_actual}
                 )
             
             if df_mis_pagos.empty:
-                st.info(f"No se encontraron registros de pago para el {apto_consulta}.")
+                st.info(f"No existen registros de pago previos para el {apto_actual}.")
             else:
                 st.dataframe(df_mis_pagos, use_container_width=True)
         except Exception as e:
-            st.error(f"Error al consultar la base de datos: {e}")
+            st.error(f"Error consultando el historial: {e}")
 
 
 def vista_administrador():
@@ -210,18 +274,16 @@ def vista_administrador():
         st.title("⚙️ Panel de Administración")
     with col_btn:
         st.write("")
-        if st.button("🚪 Cambiar Rol"):
+        if st.button("🚪 Salir / Cambiar Rol"):
+            st.session_state.admin_autenticado = False
             st.session_state.rol_activo = "Inicio"
             st.rerun()
-
-    if "admin_autenticado" not in st.session_state:
-        st.session_state.admin_autenticado = False
 
     if not st.session_state.admin_autenticado:
         st.subheader("🔒 Acceso Restringido")
         clave = st.text_input("Ingresa la clave de administrador:", type="password")
         if st.button("Ingresar"):
-            if clave == "admin123":
+            if clave == "admin123": # Clave del administrador
                 st.session_state.admin_autenticado = True
                 st.rerun()
             else:
@@ -229,7 +291,7 @@ def vista_administrador():
         return
 
     if not engine:
-        st.error("❌ La base de datos no está conectada. No puedes gestionar gastos ni aprobar pagos.")
+        st.error("❌ La base de datos no está conectada.")
         return
 
     tab1, tab2, tab3 = st.tabs(["📊 Gastos del Condominio", "✅ Aprobar Pagos", "📄 Resumen General"])
@@ -313,18 +375,20 @@ def vista_administrador():
 # -----------------------------------------------------------------------------
 st.sidebar.title("🏢 Condominio")
 
-if st.sidebar.button("🏠 Ir al Inicio"):
+if st.sidebar.button("🏠 Ir al Inicio / Salir"):
+    st.session_state.apto_autenticado = None
+    st.session_state.admin_autenticado = False
     st.session_state.rol_activo = "Inicio"
     st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Estado de Base de Datos:")
 if engine:
-    st.sidebar.success("🟢 Conectado a Supabase")
+    st.sidebar.success("🟢 Conectado")
 else:
     st.sidebar.error("🔴 Desconectado")
 
-# Renderizado dinámico según la opción activa
+# Renderizado neutro dinámico
 if st.session_state.rol_activo == "Inicio":
     vista_inicio_neutro()
 elif st.session_state.rol_activo == "Propietario":
