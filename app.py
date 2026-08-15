@@ -3,15 +3,6 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 # ---------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA
-# ---------------------------------------------------------
-st.set_page_config(
-    page_title="Residencias El Roble",
-    page_icon="🏢",
-    layout="wide"
-)
-
-# ---------------------------------------------------------
 # CONEXIÓN A LA BASE DE DATOS (SUPABASE / POSTGRESQL)
 # ---------------------------------------------------------
 DB_URL = "postgresql://postgres.psathqqomnsvzhytvbsu:man09go06yra@aws-0-ca-central-1.pooler.supabase.com:6543/postgres"
@@ -27,7 +18,7 @@ engine = get_db_engine()
 # ---------------------------------------------------------
 def init_db():
     with engine.begin() as conn:
-        # 1. Crear tabla de Propietarios si no existe
+        # 1. Tabla de Propietarios / Apartamentos
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS propietarios (
                 apartamento VARCHAR(10) PRIMARY KEY,
@@ -38,7 +29,7 @@ def init_db():
             );
         """))
         
-        # Migración automática: Agregar columnas si la tabla ya existía sin ellas
+        # Migración automática de columnas para propietarios
         conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS telefono VARCHAR(50) DEFAULT '';"))
         conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS email VARCHAR(100) DEFAULT '';"))
         conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Por asignar';"))
@@ -67,6 +58,25 @@ def init_db():
             );
         """))
 
+        # 4. Tabla de Configuración del Edificio
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS configuracion (
+                id INT PRIMARY KEY DEFAULT 1,
+                nombre_edificio VARCHAR(150) NOT NULL,
+                rif VARCHAR(30) DEFAULT '',
+                direccion TEXT DEFAULT '',
+                logo_url TEXT DEFAULT ''
+            );
+        """))
+
+        # Insertar configuración por defecto si está vacía
+        res_cfg = conn.execute(text("SELECT COUNT(*) FROM configuracion")).fetchone()
+        if res_cfg[0] == 0:
+            conn.execute(text("""
+                INSERT INTO configuracion (id, nombre_edificio, rif, direccion, logo_url)
+                VALUES (1, 'Residencias El Roble', 'J-12345678-0', 'Av. Principal, Caracas', '')
+            """))
+
         # Insertar distribución exacta de los 13 apartamentos si la tabla está vacía
         result = conn.execute(text("SELECT COUNT(*) FROM propietarios")).fetchone()
         if result[0] == 0:
@@ -86,14 +96,51 @@ def init_db():
                     {"apt": apt, "alic": alic}
                 )
 
+try:
+    init_db()
+except Exception as e:
+    st.error(f"Error al inicializar la base de datos: {e}")
+    st.stop()
+
 # ---------------------------------------------------------
-# AUTENTICACIÓN (INGRESO NEUTRO)
+# CARGAR CONFIGURACIÓN DEL EDIFICIO
+# ---------------------------------------------------------
+def get_config():
+    with engine.connect() as conn:
+        res = conn.execute(text("SELECT nombre_edificio, rif, direccion, logo_url FROM configuracion WHERE id = 1")).fetchone()
+        if res:
+            return {
+                "nombre": res[0],
+                "rif": res[1],
+                "direccion": res[2],
+                "logo": res[3]
+            }
+        return {"nombre": "Mi Edificio", "rif": "", "direccion": "", "logo": ""}
+
+config = get_config()
+
+# ---------------------------------------------------------
+# CONFIGURACIÓN DE PÁGINA
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title=config["nombre"],
+    page_icon="🏢",
+    layout="wide"
+)
+
+# ---------------------------------------------------------
+# AUTENTICACIÓN
 # ---------------------------------------------------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🏢 Residencias El Roble")
+    st.title(f"🏢 {config['nombre']}")
+    if config["rif"]:
+        st.caption(f"RIF: {config['rif']}")
+    if config["logo"]:
+        st.image(config["logo"], width=200)
+        
     st.subheader("Acceso al Sistema de Condominio")
     
     with st.form("login_form"):
@@ -117,7 +164,12 @@ if not st.session_state.authenticated:
 # ---------------------------------------------------------
 # MENÚ LATERAL Y NAVEGACIÓN
 # ---------------------------------------------------------
-st.sidebar.title("🏢 Residencias El Roble")
+if config["logo"]:
+    st.sidebar.image(config["logo"], use_column_width=True)
+
+st.sidebar.title(config["nombre"])
+if config["rif"]:
+    st.sidebar.caption(f"RIF: {config['rif']}")
 st.sidebar.caption(f"Usuario activo: {st.session_state.get('user', 'Usuario')}")
 
 if st.sidebar.button("Cerrar Sesión"):
@@ -128,6 +180,7 @@ menu = st.sidebar.radio(
     "Navegación",
     [
         "📋 Información del Edificio",
+        "⚙️ Configuración del Edificio",
         "💵 Gastos Comunes",
         "📊 Estado de Cuenta y Alícuotas",
         "💳 Registro y Verificación de Pagos"
@@ -138,11 +191,19 @@ menu = st.sidebar.radio(
 # 1. INFORMACIÓN DEL EDIFICIO
 # ---------------------------------------------------------
 if menu == "📋 Información del Edificio":
-    st.header("🏢 Información del Edificio y Propietarios")
+    st.header(f"🏢 {config['nombre']}")
+    if config["rif"]:
+        st.subheader(f"RIF: {config['rif']}")
+    if config["direccion"]:
+        st.write(f"📍 **Dirección:** {config['direccion']}")
+    
+    if config["logo"]:
+        st.image(config["logo"], width=250)
+
+    st.markdown("---")
     
     try:
         with engine.connect() as conn:
-            # Usamos CAST en SQL para evitar problemas de tipos de datos con Pandas
             query = text("""
                 SELECT 
                     apartamento, 
@@ -156,9 +217,7 @@ if menu == "📋 Información del Edificio":
             df_props = pd.read_sql(query, conn)
     except Exception as err:
         st.error(f"⚠️ Error al leer la tabla 'propietarios': {err}")
-        st.warning("Intentando re-inicializar la base de datos...")
-        init_db()
-        st.rerun()
+        st.stop()
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Apartamentos", f"{len(df_props)}")
@@ -198,8 +257,42 @@ if menu == "📋 Información del Edificio":
                     )
                 st.success(f"Datos del apartamento {apt_select} actualizados.")
                 st.rerun()
+
 # ---------------------------------------------------------
-# 2. GASTOS COMUNES
+# 2. CONFIGURACIÓN DEL EDIFICIO (NUEVA SECCIÓN)
+# ---------------------------------------------------------
+elif menu == "⚙️ Configuración del Edificio":
+    st.header("⚙️ Editar Datos del Edificio")
+    st.info("Modifica el nombre oficial, RIF, dirección e imagen del edificio. Los cambios se actualizarán inmediatamente en todo el sistema.")
+
+    with st.form("form_config"):
+        nuevo_nombre = st.text_input("Nombre del Edificio / Condominio", value=config["nombre"])
+        nuevo_rif = st.text_input("RIF / Documento Fiscal", value=config["rif"])
+        nueva_direccion = st.text_area("Dirección Física", value=config["direccion"])
+        nuevo_logo = st.text_input("URL de Imagen / Logo (Opcional - enlace público de imagen)", value=config["logo"])
+
+        btn_guardar_config = st.form_submit_button("💾 Guardar Configuración")
+
+        if btn_guardar_config:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("""
+                        UPDATE configuracion 
+                        SET nombre_edificio = :nom, rif = :rif, direccion = :dir, logo_url = :logo
+                        WHERE id = 1
+                    """),
+                    {
+                        "nom": nuevo_nombre,
+                        "rif": nuevo_rif,
+                        "dir": nueva_direccion,
+                        "logo": nuevo_logo
+                    }
+                )
+            st.success("Configuración actualizada correctamente.")
+            st.rerun()
+
+# ---------------------------------------------------------
+# 3. GASTOS COMUNES
 # ---------------------------------------------------------
 elif menu == "💵 Gastos Comunes":
     st.header("💵 Carga de Gastos Comunes")
@@ -238,7 +331,7 @@ elif menu == "💵 Gastos Comunes":
         st.info("No hay gastos registrados para este mes.")
 
 # ---------------------------------------------------------
-# 3. ESTADO DE CUENTA Y ALÍCUOTAS
+# 4. ESTADO DE CUENTA Y ALÍCUOTAS
 # ---------------------------------------------------------
 elif menu == "📊 Estado de Cuenta y Alícuotas":
     st.header("📊 Cálculo de Cuotas por Alícuota")
@@ -262,7 +355,6 @@ elif menu == "📊 Estado de Cuenta y Alícuotas":
     total_gastos = df_gastos['total'].iloc[0] if df_gastos['total'].iloc[0] is not None else 0.0
     st.metric("Total Gastos del Mes a Repartir", f"${total_gastos:,.2f}")
 
-    # Cálculo de la cuota individual
     df_props['Alícuota (%)'] = (df_props['alicuota'] * 100).round(2).astype(str) + "%"
     df_props['Cuota Asignada ($)'] = (df_props['alicuota'] * float(total_gastos)).round(2)
 
@@ -276,7 +368,7 @@ elif menu == "📊 Estado de Cuenta y Alícuotas":
     )
 
 # ---------------------------------------------------------
-# 4. REGISTRO Y VERIFICACIÓN DE PAGOS
+# 5. REGISTRO Y VERIFICACIÓN DE PAGOS
 # ---------------------------------------------------------
 elif menu == "💳 Registro y Verificación de Pagos":
     st.header("💳 Registro y Verificación de Pagos")
