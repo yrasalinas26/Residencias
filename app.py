@@ -15,7 +15,7 @@ st.set_page_config(
 # CONEXIÓN A LA BASE DE DATOS (SUPABASE / POSTGRESQL)
 # ---------------------------------------------------------
 # Conexión directa a Supabase (Transaction Pooler)
-DB_URL = "postgresql://postgres.psathqqomnsvzhytvbsu:Nispero2026@aws-0-ca-central-1.pooler.supabase.com:6543/postgres"
+DB_URL = "postgresql://postgres.psathqqomnsvzhytvbsu:man09go06yra@aws-0-ca-central-1.pooler.supabase.com:6543/postgres"
 
 @st.cache_resource
 def get_db_engine():
