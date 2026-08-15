@@ -15,63 +15,25 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 # 1. CONEXIÓN A BASE DE DATOS Y CREACIÓN DE TABLAS
 # -----------------------------------------------------------------------------
+engine = None
+
 try:
-    # 1. Intentar leer URL directa si existe en secrets
     if "DATABASE_URL" in st.secrets:
         DB_URL = st.secrets["DATABASE_URL"]
-    # 2. Intentar leer en bloque [connections.postgresql]
     elif "connections" in st.secrets and "postgresql" in st.secrets["connections"]:
         pg = st.secrets["connections"]["postgresql"]
         DB_URL = f"{pg.get('dialect', 'postgresql')}://{pg['username']}:{pg['password']}@{pg['host']}:{pg.get('port', 5432)}/{pg['database']}"
-    # 3. Intentar leer variables sueltas
-    else:
+    elif "username" in st.secrets:
         DB_URL = f"postgresql://{st.secrets['username']}:{st.secrets['password']}@{st.secrets['host']}:{st.secrets.get('port', 5432)}/{st.secrets['database']}"
+    else:
+        DB_URL = None
 
-    engine = create_engine(DB_URL)
+    if DB_URL:
+        engine = create_engine(DB_URL)
+    else:
+        st.warning("⚠️ No se han configurado los Secrets de la base de datos en Streamlit Cloud.")
 except Exception as e:
-    st.error("⚠️ Error de configuración en las credenciales de la base de datos (Secrets).")
-    st.caption(f"Detalle: {e}")
-    st.stop()
-
-
-def init_db():
-    """Crea las tablas necesarias si no existen y actualiza columnas pendientes."""
-    try:
-        with engine.connect() as conn:
-            # Tabla de Gastos Comunes
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gastos (
-                    id SERIAL PRIMARY KEY,
-                    mes_anio VARCHAR(7) NOT NULL,
-                    concepto VARCHAR(200) NOT NULL,
-                    monto NUMERIC(12,2) NOT NULL,
-                    estatus VARCHAR(20) DEFAULT 'Aprobado',
-                    fecha DATE DEFAULT CURRENT_DATE
-                );
-            """))
-            conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS mes_anio VARCHAR(7);"))
-            conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
-
-            # Tabla de Pagos Reportados por Propietarios
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS pagos_reportados (
-                    id SERIAL PRIMARY KEY,
-                    apartamento VARCHAR(10) NOT NULL,
-                    mes_anio VARCHAR(7) NOT NULL,
-                    monto NUMERIC(12, 2) NOT NULL,
-                    metodo_pago VARCHAR(50) NOT NULL,
-                    referencia VARCHAR(100) NOT NULL,
-                    fecha_pago DATE NOT NULL,
-                    comprobante_nombre VARCHAR(255),
-                    estatus VARCHAR(20) DEFAULT 'Pendiente',
-                    fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """))
-            conn.commit()
-    except Exception as e:
-        st.error(f"Error al inicializar la base de datos: {e}")
-
-init_db()
+    st.error(f"⚠️ Error al conectar con la base de datos: {e}")
 
 # -----------------------------------------------------------------------------
 # CONTROL DE SESIÓN PARA NAVEGACIÓN NEUTRA
