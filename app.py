@@ -27,7 +27,7 @@ engine = get_db_engine()
 # ---------------------------------------------------------
 def init_db():
     with engine.begin() as conn:
-        # 1. Tabla de Propietarios / Apartamentos
+        # 1. Crear tabla de Propietarios si no existe
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS propietarios (
                 apartamento VARCHAR(10) PRIMARY KEY,
@@ -38,6 +38,11 @@ def init_db():
             );
         """))
         
+        # Migración automática: Agregar columnas si la tabla ya existía sin ellas
+        conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS telefono VARCHAR(50) DEFAULT '';"))
+        conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS email VARCHAR(100) DEFAULT '';"))
+        conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Por asignar';"))
+
         # 2. Tabla de Gastos Comunes
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS gastos (
@@ -80,12 +85,6 @@ def init_db():
                     text("INSERT INTO propietarios (apartamento, alicuota) VALUES (:apt, :alic)"),
                     {"apt": apt, "alic": alic}
                 )
-
-try:
-    init_db()
-except Exception as e:
-    st.error(f"Error al inicializar la base de datos: {e}")
-    st.stop()
 
 # ---------------------------------------------------------
 # AUTENTICACIÓN (INGRESO NEUTRO)
