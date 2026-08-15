@@ -13,55 +13,68 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 1. CONEXIÓN Y CREACIÓN DE TABLAS
+# 1. CONEXIÓN A BASE DE DATOS Y CREACIÓN DE TABLAS
 # -----------------------------------------------------------------------------
-DB_URL = st.secrets["connections"]["postgresql"]["dialect"] + "://" + \
-         st.secrets["connections"]["postgresql"]["username"] + ":" + \
-         st.secrets["connections"]["postgresql"]["password"] + "@" + \
-         st.secrets["connections"]["postgresql"]["host"] + ":" + \
-         str(st.secrets["connections"]["postgresql"]["port"]) + "/" + \
-         st.secrets["connections"]["postgresql"]["database"]
+try:
+    # 1. Intentar leer URL directa si existe en secrets
+    if "DATABASE_URL" in st.secrets:
+        DB_URL = st.secrets["DATABASE_URL"]
+    # 2. Intentar leer en bloque [connections.postgresql]
+    elif "connections" in st.secrets and "postgresql" in st.secrets["connections"]:
+        pg = st.secrets["connections"]["postgresql"]
+        DB_URL = f"{pg.get('dialect', 'postgresql')}://{pg['username']}:{pg['password']}@{pg['host']}:{pg.get('port', 5432)}/{pg['database']}"
+    # 3. Intentar leer variables sueltas
+    else:
+        DB_URL = f"postgresql://{st.secrets['username']}:{st.secrets['password']}@{st.secrets['host']}:{st.secrets.get('port', 5432)}/{st.secrets['database']}"
 
-engine = create_engine(DB_URL)
+    engine = create_engine(DB_URL)
+except Exception as e:
+    st.error("⚠️ Error de configuración en las credenciales de la base de datos (Secrets).")
+    st.caption(f"Detalle: {e}")
+    st.stop()
+
 
 def init_db():
     """Crea las tablas necesarias si no existen y actualiza columnas pendientes."""
-    with engine.connect() as conn:
-        # Tabla de Gastos Comunes
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS gastos (
-                id SERIAL PRIMARY KEY,
-                mes_anio VARCHAR(7) NOT NULL,
-                concepto VARCHAR(200) NOT NULL,
-                monto NUMERIC(12,2) NOT NULL,
-                estatus VARCHAR(20) DEFAULT 'Aprobado',
-                fecha DATE DEFAULT CURRENT_DATE
-            );
-        """))
-        conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS mes_anio VARCHAR(7);"))
-        conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
+    try:
+        with engine.connect() as conn:
+            # Tabla de Gastos Comunes
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS gastos (
+                    id SERIAL PRIMARY KEY,
+                    mes_anio VARCHAR(7) NOT NULL,
+                    concepto VARCHAR(200) NOT NULL,
+                    monto NUMERIC(12,2) NOT NULL,
+                    estatus VARCHAR(20) DEFAULT 'Aprobado',
+                    fecha DATE DEFAULT CURRENT_DATE
+                );
+            """))
+            conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS mes_anio VARCHAR(7);"))
+            conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
 
-        # Tabla de Pagos Reportados por Propietarios
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS pagos_reportados (
-                id SERIAL PRIMARY KEY,
-                apartamento VARCHAR(10) NOT NULL,
-                mes_anio VARCHAR(7) NOT NULL,
-                monto NUMERIC(12, 2) NOT NULL,
-                metodo_pago VARCHAR(50) NOT NULL,
-                referencia VARCHAR(100) NOT NULL,
-                fecha_pago DATE NOT NULL,
-                comprobante_nombre VARCHAR(255),
-                estatus VARCHAR(20) DEFAULT 'Pendiente',
-                fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """))
-        conn.commit()
+            # Tabla de Pagos Reportados por Propietarios
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pagos_reportados (
+                    id SERIAL PRIMARY KEY,
+                    apartamento VARCHAR(10) NOT NULL,
+                    mes_anio VARCHAR(7) NOT NULL,
+                    monto NUMERIC(12, 2) NOT NULL,
+                    metodo_pago VARCHAR(50) NOT NULL,
+                    referencia VARCHAR(100) NOT NULL,
+                    fecha_pago DATE NOT NULL,
+                    comprobante_nombre VARCHAR(255),
+                    estatus VARCHAR(20) DEFAULT 'Pendiente',
+                    fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+            conn.commit()
+    except Exception as e:
+        st.error(f"Error al inicializar la base de datos: {e}")
 
 init_db()
 
 # -----------------------------------------------------------------------------
-# ESTADO DE LA SESIÓN PARA NAVEGACIÓN NEUTRA
+# CONTROL DE SESIÓN PARA NAVEGACIÓN NEUTRA
 # -----------------------------------------------------------------------------
 if "rol_activo" not in st.session_state:
     st.session_state.rol_activo = "Inicio"
@@ -71,7 +84,7 @@ if "rol_activo" not in st.session_state:
 # -----------------------------------------------------------------------------
 
 def vista_inicio_neutro():
-    """Pantalla neutra de bienvenida para selección de perfil."""
+    """Pantalla de inicio neutra para selección de perfil."""
     st.markdown("<h1 style='text-align: center;'>🏢 Portal de Administración de Condominio</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: gray; font-size: 18px;'>Bienvenido. Selecciona tu perfil de acceso para continuar.</p>", unsafe_allow_html=True)
     st.write("---")
@@ -80,14 +93,14 @@ def vista_inicio_neutro():
 
     with col1:
         st.info("### 🔑 Portal de Propietarios")
-        st.write("Accede para reportar pagos de condominio y verificar el historial de tus comprobantes.")
+        st.write("Accede para reportar tus pagos de condominio y consultar el historial de comprobantes.")
         if st.button("Ingresar como Propietario", use_container_width=True, type="primary"):
             st.session_state.rol_activo = "Propietario"
             st.rerun()
 
     with col2:
         st.warning("### ⚙️ Panel de Administración")
-        st.write("Gestión de gastos comunes, aprobación de pagos reportados y avisos de cobro del edificio.")
+        st.write("Gestión de gastos comunes, validación/aprobación de pagos reportados y avisos del edificio.")
         if st.button("Ingresar como Administrador", use_container_width=True):
             st.session_state.rol_activo = "Administrador"
             st.rerun()
@@ -109,7 +122,7 @@ def vista_propietario():
         horizontal=True
     )
     
-    APARTAMENTOS = [f"Apto {i}" for i in range(1, 14)] # Ajusta si usas otra nomenclatura
+    APARTAMENTOS = [f"Apto {i}" for i in range(1, 14)] # Ajusta según tu formato (e.g., 1A, 1B, 101, etc.)
     METODOS_PAGO = ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"]
 
     if opcion == "📥 Reportar un Pago":
@@ -134,7 +147,7 @@ def vista_propietario():
 
             if submit:
                 if not referencia.strip():
-                    st.error("⚠️ Por favor ingrese el número de referencia del pago.")
+                    st.error("⚠️ Por favor ingresa el número de referencia del pago.")
                 else:
                     nombre_archivo = comprobante.name if comprobante else "Sin archivo"
                     with engine.connect() as conn:
@@ -152,10 +165,10 @@ def vista_propietario():
                             "comp": nombre_archivo
                         })
                         conn.commit()
-                    st.success(f"✅ ¡Pago registrado con éxito para el {apartamento}! Quedó registrado bajo revisión ('Pendiente').")
+                    st.success(f"✅ ¡Pago registrado con éxito para el {apartamento}! Quedó pendiente por validación del Administrador.")
 
     elif opcion == "📋 Ver Mis Pagos Reportados":
-        st.subheader("Historial de Pagos")
+        st.subheader("Historial de Pagos Reportados")
         apto_consulta = st.selectbox("Selecciona tu Apartamento para consultar", APARTAMENTOS)
         
         with engine.connect() as conn:
@@ -166,7 +179,7 @@ def vista_propietario():
             )
         
         if df_mis_pagos.empty:
-            st.info(f"No existen registros de pago para el {apto_consulta}.")
+            st.info(f"No se encontraron registros de pago para el {apto_consulta}.")
         else:
             st.dataframe(df_mis_pagos, use_container_width=True)
 
@@ -189,14 +202,14 @@ def vista_administrador():
         st.subheader("🔒 Acceso Restringido")
         clave = st.text_input("Ingresa la clave de administrador:", type="password")
         if st.button("Ingresar"):
-            if clave == "admin123": # Puedes cambiar esta contraseña por la que prefieras
+            if clave == "admin123": # Cambia esta contraseña si lo deseas
                 st.session_state.admin_autenticado = True
                 st.rerun()
             else:
                 st.error("Contraseña incorrecta.")
         return
 
-    # Si la clave es correcta, se muestra el contenido del administrador:
+    # Si está autenticado, muestra las opciones de administración:
     tab1, tab2, tab3 = st.tabs(["📊 Gastos del Condominio", "✅ Aprobar Pagos", "📄 Resumen General"])
     
     # --- TAB 1: REGISTRO DE GASTOS ---
@@ -267,20 +280,20 @@ def vista_administrador():
         st.metric("Total Gastos Comunes del Mes", f"${total_gastos:,.2f}")
         st.dataframe(df_gastos_mes, use_container_width=True)
 
+
 # -----------------------------------------------------------------------------
-# CONTROL DE NAVEGACIÓN PRINCIPAL
+# 3. CONTROL DE NAVEGACIÓN PRINCIPAL
 # -----------------------------------------------------------------------------
 st.sidebar.title("🏢 Condominio")
 
-# Permite regresar al inicio desde la barra lateral si se desea
 if st.sidebar.button("🏠 Ir al Inicio"):
     st.session_state.rol_activo = "Inicio"
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Sistema de Administración de Residencias")
+st.sidebar.caption("Sistema de Administración de Condominios")
 
-# Renderizar la vista activa según el estado de la sesión
+# Renderizado dinámico según la opción activa
 if st.session_state.rol_activo == "Inicio":
     vista_inicio_neutro()
 elif st.session_state.rol_activo == "Propietario":
