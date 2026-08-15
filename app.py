@@ -7,17 +7,16 @@ from datetime import datetime
 # CONFIGURACIÓN DE LA PÁGINA
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Sistema de Control de Condominio",
-    page_icon="🏢",
-    layout="wide"
+    page_title="Acceso al Sistema",
+    page_icon="🔒",
+    layout="centered"
 )
 
 # -----------------------------------------------------------------------------
-# 1. GESTIÓN DE CONEXIÓN A BASE DE DATOS
+# GESTIÓN DE CONEXIÓN A BASE DE DATOS
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def obtener_engine():
-    """Intenta crear el motor de base de datos de manera segura."""
     try:
         if "DATABASE_URL" in st.secrets:
             url = st.secrets["DATABASE_URL"]
@@ -41,9 +40,8 @@ def obtener_engine():
 engine, error_conexion = obtener_engine()
 
 def inicializar_tablas():
-    """Crea las tablas necesarias si el motor de BD está conectado."""
     if not engine:
-        return False
+        return
     try:
         with engine.connect() as conn:
             # Tabla de Gastos
@@ -72,161 +70,129 @@ def inicializar_tablas():
                     fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
-            # Tabla de credenciales por apartamento
+            # Tabla de Usuarios / Credenciales (Propietarios y Admin)
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS propietarios (
-                    apartamento VARCHAR(10) PRIMARY KEY,
-                    clave VARCHAR(100) NOT NULL DEFAULT '1234'
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    usuario VARCHAR(20) PRIMARY KEY,
+                    clave VARCHAR(100) NOT NULL,
+                    rol VARCHAR(20) NOT NULL
                 );
             """))
+            
+            # Crear administrador por defecto si no existe
+            res_admin = conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = 'admin'")).fetchone()
+            if not res_admin:
+                conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES ('admin', 'admin123', 'admin')"))
+            
+            # Crear credenciales por defecto para Aptos 1 a 13 (clave inicial '1234')
+            for i in range(1, 14):
+                apto_name = f"Apto {i}"
+                res_apto = conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = :u"), {"u": apto_name}).fetchone()
+                if not res_apto:
+                    conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES (:u, '1234', 'propietario')"), {"u": apto_name})
+
             conn.commit()
-        return True
     except Exception as e:
-        st.sidebar.error(f"⚠️ Error al inicializar tablas: {e}")
-        return False
+        pass
 
 inicializar_tablas()
 
 # -----------------------------------------------------------------------------
-# CONTROL DE NAVEGACIÓN Y SESIÓN
+# ESTADO DE SESIÓN NEUTRO
 # -----------------------------------------------------------------------------
-if "rol_activo" not in st.session_state:
-    st.session_state.rol_activo = "Inicio"
+if "usuario_logueado" not in st.session_state:
+    st.session_state.usuario_logueado = None
 
-if "apto_autenticado" not in st.session_state:
-    st.session_state.apto_autenticado = None
+if "rol_logueado" not in st.session_state:
+    st.session_state.rol_logueado = None
 
-if "admin_autenticado" not in st.session_state:
-    st.session_state.admin_autenticado = False
+def cerrar_sesion():
+    st.session_state.usuario_logueado = None
+    st.session_state.rol_logueado = None
+    st.rerun()
 
 # -----------------------------------------------------------------------------
-# 2. VISTAS DE LA APLICACIÓN
+# 1. PANTALLA DE ACCESO NEUTRA (LOGIN ÚNICO)
 # -----------------------------------------------------------------------------
-
-def vista_inicio_neutro():
-    """Pantalla inicial neutra sin datos predeterminados expuestos."""
-    st.markdown("<h1 style='text-align: center;'>🏢 Portal de Condominio</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: gray; font-size: 18px;'>Selecciona tu perfil de acceso para ingresar al sistema.</p>", unsafe_allow_html=True)
-    st.write("---")
-
+if not st.session_state.usuario_logueado:
+    st.markdown("<h2 style='text-align: center;'>🔒 Inicio de Sesión</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>Ingresa tus credenciales para acceder al sistema.</p>", unsafe_allow_html=True)
+    
     if error_conexion:
-        st.warning("⚠️ **Atención:** La base de datos no está conectada. Verifica los Secrets en Streamlit Cloud.")
+        st.error("⚠️ La base de datos no está disponible. Verifica los Secrets.")
 
-    col_space1, col1, col2, col_space2 = st.columns([1, 2, 2, 1])
+    with st.form("form_login_neutro"):
+        usuario_input = st.text_input("Usuario (ej. Apto 1 o admin)").strip()
+        clave_input = st.text_input("Contraseña", type="password").strip()
+        bot_login = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
 
-    with col1:
-        st.info("### 🔑 Portal de Propietarios")
-        st.write("Accede con tu número de apartamento y PIN para reportar y consultar solo tus pagos.")
-        if st.button("Ingresar como Propietario", use_container_width=True, type="primary"):
-            st.session_state.rol_activo = "Propietario"
-            st.rerun()
-
-    with col2:
-        st.warning("### ⚙️ Panel de Administración")
-        st.write("Acceso exclusivo para administradores para gestionar gastos y validar comprobantes.")
-        if st.button("Ingresar como Administrador", use_container_width=True):
-            st.session_state.rol_activo = "Administrador"
-            st.rerun()
-
-
-def vista_propietario():
-    col_head, col_btn = st.columns([4, 1])
-    with col_head:
-        st.title("👤 Portal de Propietarios")
-    with col_btn:
-        st.write("")
-        if st.button("🚪 Salir / Cambiar Rol"):
-            st.session_state.apto_autenticado = None
-            st.session_state.rol_activo = "Inicio"
-            st.rerun()
-
-    if not engine:
-        st.error("❌ La base de datos no está conectada.")
-        return
-
-    # --- PASO 1: LOGIN NEUTRO POR APARTAMENTO ---
-    if not st.session_state.apto_autenticado:
-        st.subheader("🔒 Autenticación de Propietario")
-        st.caption("Ingresa los datos de tu inmueble para acceder a tus registros.")
-        
-        APARTAMENTOS = [f"Apto {i}" for i in range(1, 14)] # Modifica la lista según tus unidades
-        
-        col_a, col_b = st.columns(2)
-        with col_a:
-            apto_input = st.selectbox("Selecciona tu Apartamento:", ["-- Seleccionar --"] + APARTAMENTOS)
-        with col_b:
-            clave_input = st.text_input("Ingresa tu PIN / Contraseña:", type="password")
-
-        if st.button("Ingresar al Portal", type="primary"):
-            if apto_input == "-- Seleccionar --":
-                st.error("Por favor selecciona un apartamento válido.")
-            elif not clave_input.strip():
-                st.error("Por favor ingresa la clave de tu apartamento.")
+        if bot_login:
+            if not usuario_input or not clave_input:
+                st.error("Por favor completa ambos campos.")
+            elif not engine:
+                st.error("Sin conexión a la base de datos.")
             else:
-                # Verificación de credencial en base de datos (clave por defecto: 1234)
                 try:
                     with engine.connect() as conn:
-                        res = conn.execute(
-                            text("SELECT clave FROM propietarios WHERE apartamento = :apto"),
-                            {"apto": apto_input}
+                        row = conn.execute(
+                            text("SELECT usuario, clave, rol FROM usuarios WHERE LOWER(usuario) = LOWER(:u)"),
+                            {"u": usuario_input}
                         ).fetchone()
 
-                        # Si el apartamento no se ha registrado en la tabla, lo registramos con la clave por defecto '1234'
-                        if not res:
-                            conn.execute(
-                                text("INSERT INTO propietarios (apartamento, clave) VALUES (:apto, '1234')"),
-                                {"apto": apto_input}
-                            )
-                            conn.commit()
-                            clave_db = "1234"
-                        else:
-                            clave_db = res[0]
-
-                    if clave_input == clave_db:
-                        st.session_state.apto_autenticado = apto_input
-                        st.success(f"Bienvenido {apto_input}")
+                    if row and row[1] == clave_input:
+                        st.session_state.usuario_logueado = row[0]
+                        st.session_state.rol_logueado = row[2]
+                        st.success("Acceso concedido.")
                         st.rerun()
                     else:
-                        st.error("❌ Clave incorrecta. Por favor verifica tu PIN.")
+                        st.error("❌ Usuario o contraseña incorrectos.")
                 except Exception as e:
-                    st.error(f"Error en validación: {e}")
-        return
+                    st.error(f"Error durante el ingreso: {e}")
 
-    # --- PASO 2: PANEL PRIVADO DEL PROPIETARIO ---
-    apto_actual = st.session_state.apto_autenticado
-    st.success(f"Acceso confirmado: **{apto_actual}**")
+# -----------------------------------------------------------------------------
+# 2. PANEL PRIVADO DEL PROPIETARIO
+# -----------------------------------------------------------------------------
+elif st.session_state.rol_logueado == "propietario":
+    user_actual = st.session_state.usuario_logueado
+
+    col_head, col_out = st.columns([3, 1])
+    with col_head:
+        st.title(f"🏢 Bienvenido, {user_actual}")
+    with col_out:
+        st.write("")
+        if st.button("🚪 Cerrar Sesión", use_container_width=True):
+            cerrar_sesion()
+
+    st.write("---")
 
     opcion = st.radio(
-        "¿Qué deseas realizar?",
-        ["📥 Reportar un Pago", "📋 Ver Mis Pagos Reportados"],
+        "Selecciona una opción:",
+        ["📥 Reportar Pago", "📋 Mis Pagos Registrados"],
         horizontal=True
     )
 
     METODOS_PAGO = ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"]
 
-    if opcion == "📥 Reportar un Pago":
-        st.subheader(f"Reportar Comprobante de Pago - {apto_actual}")
-        
-        with st.form("form_pago_propietario", clear_on_submit=True):
+    if opcion == "📥 Reportar Pago":
+        st.subheader("Formulario de Reporte de Pago")
+        with st.form("form_pago_prop", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            
             with col1:
-                st.text_input("Apartamento", value=apto_actual, disabled=True)
-                mes_anio = st.text_input("Mes / Año a Pagar", value=datetime.now().strftime("%Y-%m"))
-                monto = st.number_input("Monto Pagado ($ / Bs)", min_value=0.01, step=0.01, format="%.2f")
+                st.text_input("Unidad", value=user_actual, disabled=True)
+                mes_anio = st.text_input("Mes / Año a pagar", value=datetime.now().strftime("%Y-%m"))
+                monto = st.number_input("Monto Pagado", min_value=0.01, step=0.01, format="%.2f")
 
             with col2:
                 metodo = st.selectbox("Método de Pago", METODOS_PAGO)
                 referencia = st.text_input("Número de Referencia")
-                fecha_pago = st.date_input("Fecha de Transferencia", value=datetime.now().date())
+                fecha_pago = st.date_input("Fecha del Pago", value=datetime.now().date())
 
-            comprobante = st.file_uploader("Adjuntar Comprobante (Imagen/PDF)", type=["png", "jpg", "jpeg", "pdf"])
-            
-            submit = st.form_submit_button("🚀 Registrar Pago")
+            comprobante = st.file_uploader("Adjuntar Comprobante", type=["png", "jpg", "jpeg", "pdf"])
+            btn_guardar = st.form_submit_button("🚀 Registrar Pago", type="primary")
 
-            if submit:
+            if btn_guardar:
                 if not referencia.strip():
-                    st.error("⚠️ Por favor ingresa el número de referencia del pago.")
+                    st.error("Ingresa la referencia del pago.")
                 else:
                     nombre_archivo = comprobante.name if comprobante else "Sin archivo"
                     try:
@@ -236,7 +202,7 @@ def vista_propietario():
                                 (apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus)
                                 VALUES (:apto, :mes, :monto, :metodo, :ref, :fecha, :comp, 'Pendiente')
                             """), {
-                                "apto": apto_actual,
+                                "apto": user_actual,
                                 "mes": mes_anio,
                                 "monto": monto,
                                 "metodo": metodo,
@@ -245,65 +211,50 @@ def vista_propietario():
                                 "comp": nombre_archivo
                             })
                             conn.commit()
-                        st.success(f"✅ ¡Pago registrado con éxito para el {apto_actual}!")
+                        st.success("✅ ¡Pago registrado exitosamente!")
                     except Exception as e:
-                        st.error(f"Error guardando el registro: {e}")
+                        st.error(f"Error al registrar: {e}")
 
-    elif opcion == "📋 Ver Mis Pagos Reportados":
-        st.subheader(f"Historial Exclusivo del {apto_actual}")
-        
+    elif opcion == "📋 Mis Pagos Registrados":
+        st.subheader("Historial de Pagos de la Unidad")
         try:
             with engine.connect() as conn:
-                df_mis_pagos = pd.read_sql(
+                df_pagos = pd.read_sql(
                     text("SELECT mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE apartamento = :apto ORDER BY id DESC"),
                     conn,
-                    params={"apto": apto_actual}
+                    params={"apto": user_actual}
                 )
-            
-            if df_mis_pagos.empty:
-                st.info(f"No existen registros de pago previos para el {apto_actual}.")
+            if df_pagos.empty:
+                st.info("No tienes pagos reportados hasta el momento.")
             else:
-                st.dataframe(df_mis_pagos, use_container_width=True)
+                st.dataframe(df_pagos, use_container_width=True)
         except Exception as e:
-            st.error(f"Error consultando el historial: {e}")
+            st.error(f"Error consultando historial: {e}")
 
-
-def vista_administrador():
-    col_head, col_btn = st.columns([4, 1])
+# -----------------------------------------------------------------------------
+# 3. PANEL EXCLUSIVO DE ADMINISTRACIÓN
+# -----------------------------------------------------------------------------
+elif st.session_state.rol_logueado == "admin":
+    col_head, col_out = st.columns([3, 1])
     with col_head:
-        st.title("⚙️ Panel de Administración")
-    with col_btn:
+        st.title("⚙️ Módulo de Administración")
+    with col_out:
         st.write("")
-        if st.button("🚪 Salir / Cambiar Rol"):
-            st.session_state.admin_autenticado = False
-            st.session_state.rol_activo = "Inicio"
-            st.rerun()
+        if st.button("🚪 Cerrar Sesión", use_container_width=True):
+            cerrar_sesion()
 
-    if not st.session_state.admin_autenticado:
-        st.subheader("🔒 Acceso Restringido")
-        clave = st.text_input("Ingresa la clave de administrador:", type="password")
-        if st.button("Ingresar"):
-            if clave == "admin123": # Clave del administrador
-                st.session_state.admin_autenticado = True
-                st.rerun()
-            else:
-                st.error("Contraseña incorrecta.")
-        return
+    st.write("---")
 
-    if not engine:
-        st.error("❌ La base de datos no está conectada.")
-        return
+    tab1, tab2, tab3 = st.tabs(["📊 Registrar Gasto", "✅ Validar Pagos", "📄 Resumen Gastos"])
 
-    tab1, tab2, tab3 = st.tabs(["📊 Gastos del Condominio", "✅ Aprobar Pagos", "📄 Resumen General"])
-    
     with tab1:
-        st.subheader("Registrar Nuevo Gasto Común")
+        st.subheader("Registrar Gasto Común del Condominio")
         with st.form("form_gastos"):
             mes = st.text_input("Mes / Año", value=datetime.now().strftime("%Y-%m"))
             concepto = st.text_input("Concepto del Gasto")
-            monto_gasto = st.number_input("Monto", min_value=0.0, step=0.01)
-            btn_gasto = st.form_submit_button("Guardar Gasto")
-            
+            monto_gasto = st.number_input("Monto Total ($)", min_value=0.0, step=0.01)
+            btn_gasto = st.form_submit_button("Guardar Gasto", type="primary")
+
             if btn_gasto and concepto:
                 try:
                     with engine.connect() as conn:
@@ -312,50 +263,46 @@ def vista_administrador():
                             VALUES (:mes, :concepto, :monto, 'Aprobado')
                         """), {"mes": mes, "concepto": concepto, "monto": monto_gasto})
                         conn.commit()
-                    st.success("Gasto registrado correctamente.")
+                    st.success("Gasto registrado exitosamente.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al registrar gasto: {e}")
 
     with tab2:
-        st.subheader("Pagos Pendientes por Validar")
+        st.subheader("Pagos Pendientes por Revisar")
         try:
             with engine.connect() as conn:
                 df_pendientes = pd.read_sql(
                     text("SELECT id, apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus FROM pagos_reportados WHERE estatus = 'Pendiente' ORDER BY id ASC"),
                     conn
                 )
-            
+
             if df_pendientes.empty:
                 st.info("🎉 No hay pagos pendientes por revisar.")
             else:
                 st.dataframe(df_pendientes, use_container_width=True)
-                
-                pago_id = st.selectbox("Selecciona ID del Pago a Gestionar:", df_pendientes["id"].tolist())
+                pago_id = st.selectbox("Seleccionar ID de Pago a Gestionar:", df_pendientes["id"].tolist())
                 col_a, col_r = st.columns(2)
-                
                 with col_a:
-                    if st.button("✅ Aprobar Pago"):
+                    if st.button("✅ Aprobar Pago", use_container_width=True):
                         with engine.connect() as conn:
                             conn.execute(text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :id"), {"id": pago_id})
                             conn.commit()
                         st.success(f"Pago #{pago_id} Aprobado.")
                         st.rerun()
-                        
                 with col_r:
-                    if st.button("❌ Rechazar Pago"):
+                    if st.button("❌ Rechazar Pago", use_container_width=True):
                         with engine.connect() as conn:
                             conn.execute(text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"), {"id": pago_id})
                             conn.commit()
                         st.warning(f"Pago #{pago_id} Rechazado.")
                         st.rerun()
         except Exception as e:
-            st.error(f"Error consultando pagos pendientes: {e}")
+            st.error(f"Error al cargar reportes: {e}")
 
     with tab3:
-        st.subheader("Total Gastos por Mes")
-        mes_filtro = st.text_input("Filtrar por Mes (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="filtro_admin")
-        
+        st.subheader("Resumen de Gastos Comunes")
+        mes_filtro = st.text_input("Filtrar por Mes (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
         try:
             with engine.connect() as conn:
                 df_gastos_mes = pd.read_sql(
@@ -363,35 +310,8 @@ def vista_administrador():
                     conn,
                     params={"mes": mes_filtro}
                 )
-            
             total_gastos = df_gastos_mes["monto"].sum() if not df_gastos_mes.empty else 0.0
-            st.metric("Total Gastos Comunes del Mes", f"${total_gastos:,.2f}")
+            st.metric("Total Gastos del Mes", f"${total_gastos:,.2f}")
             st.dataframe(df_gastos_mes, use_container_width=True)
         except Exception as e:
-            st.error(f"Error consultando el resumen: {e}")
-
-# -----------------------------------------------------------------------------
-# 3. CONTROL DE NAVEGACIÓN Y BARRA LATERAL
-# -----------------------------------------------------------------------------
-st.sidebar.title("🏢 Condominio")
-
-if st.sidebar.button("🏠 Ir al Inicio / Salir"):
-    st.session_state.apto_autenticado = None
-    st.session_state.admin_autenticado = False
-    st.session_state.rol_activo = "Inicio"
-    st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Estado de Base de Datos:")
-if engine:
-    st.sidebar.success("🟢 Conectado")
-else:
-    st.sidebar.error("🔴 Desconectado")
-
-# Renderizado neutro dinámico
-if st.session_state.rol_activo == "Inicio":
-    vista_inicio_neutro()
-elif st.session_state.rol_activo == "Propietario":
-    vista_propietario()
-elif st.session_state.rol_activo == "Administrador":
-    vista_administrador()
+            st.error(f"Error consultando resumen: {e}")
