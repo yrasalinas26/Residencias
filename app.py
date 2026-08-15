@@ -26,7 +26,8 @@ engine = get_db_engine()
 # INICIALIZACIÓN DE TABLAS Y DATOS DEL EDIFICIO
 # ---------------------------------------------------------
 def init_db():
-    with engine.connect() as conn:
+    # engine.begin() garantiza que las tablas y registros se guarden inmediatamente
+    with engine.begin() as conn:
         # 1. Tabla de Propietarios / Apartamentos
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS propietarios (
@@ -61,7 +62,6 @@ def init_db():
                 fecha_registro DATE DEFAULT CURRENT_DATE
             );
         """))
-        conn.commit()
 
         # Insertar distribución exacta de los 13 apartamentos si la tabla está vacía
         result = conn.execute(text("SELECT COUNT(*) FROM propietarios")).fetchone()
@@ -81,12 +81,12 @@ def init_db():
                     text("INSERT INTO propietarios (apartamento, alicuota) VALUES (:apt, :alic)"),
                     {"apt": apt, "alic": alic}
                 )
-            conn.commit()
 
 try:
     init_db()
 except Exception as e:
     st.error(f"Error al inicializar la base de datos: {e}")
+    st.stop()  # Detiene la ejecución para mostrar el detalle real si falla la conexión
 
 # ---------------------------------------------------------
 # AUTENTICACIÓN (INGRESO NEUTRO)
