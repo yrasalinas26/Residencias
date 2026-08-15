@@ -29,7 +29,6 @@ def init_db():
             );
         """))
         
-        # Migración automática de columnas para propietarios
         conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS telefono VARCHAR(50) DEFAULT '';"))
         conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS email VARCHAR(100) DEFAULT '';"))
         conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Por asignar';"))
@@ -69,7 +68,16 @@ def init_db():
             );
         """))
 
-        # Insertar configuración por defecto si está vacía
+        # 5. Tabla de Cuotas Extras
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS cuotas_extras (
+                id SERIAL PRIMARY KEY,
+                concepto VARCHAR(200) NOT NULL,
+                monto_total NUMERIC(12,2) NOT NULL,
+                fecha_registro DATE DEFAULT CURRENT_DATE
+            );
+        """))
+
         res_cfg = conn.execute(text("SELECT COUNT(*) FROM configuracion")).fetchone()
         if res_cfg[0] == 0:
             conn.execute(text("""
@@ -77,7 +85,6 @@ def init_db():
                 VALUES (1, 'Residencias El Roble', 'J-12345678-0', 'Av. Principal, Caracas', '')
             """))
 
-        # Insertar distribución exacta de los 13 apartamentos si la tabla está vacía
         result = conn.execute(text("SELECT COUNT(*) FROM propietarios")).fetchone()
         if result[0] == 0:
             apts_data = [
@@ -182,6 +189,7 @@ menu = st.sidebar.radio(
         "📋 Información del Edificio",
         "⚙️ Configuración del Edificio",
         "💵 Gastos Comunes",
+        "📌 Cuotas Extras",
         "📊 Estado de Cuenta y Alícuotas",
         "💳 Registro y Verificación de Pagos"
     ]
@@ -259,7 +267,7 @@ if menu == "📋 Información del Edificio":
                 st.rerun()
 
 # ---------------------------------------------------------
-# 2. CONFIGURACIÓN DEL EDIFICIO (NUEVA SECCIÓN)
+# 2. CONFIGURACIÓN DEL EDIFICIO
 # ---------------------------------------------------------
 elif menu == "⚙️ Configuración del Edificio":
     st.header("⚙️ Editar Datos del Edificio")
@@ -292,7 +300,7 @@ elif menu == "⚙️ Configuración del Edificio":
             st.rerun()
 
 # ---------------------------------------------------------
-# 3. GASTOS COMUNES
+# 3. GASTOS COMUNES (CORREGIDO DE RAÍZ)
 # ---------------------------------------------------------
 elif menu == "💵 Gastos Comunes":
     st.header("💵 Carga de Gastos Comunes")
@@ -319,11 +327,12 @@ elif menu == "💵 Gastos Comunes":
 
     st.subheader(f"Gastos Registrados para {mes_anio}")
     with engine.connect() as conn:
-        df_gastos = pd.read_sql(
+        res_gastos = conn.execute(
             text("SELECT id, concepto, monto, fecha FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
-            conn,
-            params={"m": mes_anio}
+            {"m": mes_anio}
         )
+        df_gastos = pd.DataFrame(res_gastos.fetchall(), columns=res_gastos.keys())
+
     if not df_gastos.empty:
         st.dataframe(df_gastos, use_container_width=True)
         st.metric("Total Gastos del Mes", f"${df_gastos['monto'].sum():,.2f}")
@@ -331,7 +340,64 @@ elif menu == "💵 Gastos Comunes":
         st.info("No hay gastos registrados para este mes.")
 
 # ---------------------------------------------------------
-# 4. ESTADO DE CUENTA Y ALÍCUOTAS
+# 4. CUOTAS EXTRAS
+# ---------------------------------------------------------
+elif menu == "📌 Cuotas Extras":
+    st.header("📌 Registro y Reparto de Cuotas Extras")
+    st.info("Registra un gasto especial o extraordinario (Ej: Fondo de reserva, Reparación de Fachada). El sistema calculará el monto exacto a pagar por cada apartamento según su alícuota.")
+
+    with st.form("form_cuota_extra"):
+        concepto_extra = st.text_input("Concepto de la Cuota Extra")
+        monto_extra = st.number_input("Monto Total de la Cuota Extra ($)", min_value=0.0, step=50.0, format="%.2f")
+        btn_cuota_extra = st.form_submit_button("Calcular y Registrar Cuota Extra")
+
+        if btn_cuota_extra:
+            if concepto_extra and monto_extra > 0:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("INSERT INTO cuotas_extras (concepto, monto_total) VALUES (:c, :m)"),
+                        {"c": concepto_extra, "m": monto_extra}
+                    )
+                st.success("Cuota extra registrada con éxito.")
+                st.rerun()
+
+    st.markdown("---")
+    
+    with engine.connect() as conn:
+        df_extras = pd.read_sql(
+            text("SELECT id, concepto, monto_total, fecha_registro FROM cuotas_extras ORDER BY id DESC"),
+            conn
+        )
+        df_props = pd.read_sql(
+            text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"),
+            conn
+        )
+
+    if not df_extras.empty:
+        st.subheader("Cuotas Extras Registradas")
+        st.dataframe(df_extras, use_container_width=True)
+
+        st.subheader("📋 Reparto por Apartamento para una Cuota Extra")
+        extra_selected_id = st.selectbox("Seleccionar Cuota Extra a Consultar", df_extras['id'].tolist(), format_func=lambda x: f"ID {x} - {df_extras[df_extras['id']==x]['concepto'].values[0]}")
+        
+        monto_sel = df_extras[df_extras['id'] == extra_selected_id]['monto_total'].values[0]
+        
+        df_reparto_extra = df_props.copy()
+        df_reparto_extra['Alícuota (%)'] = (df_reparto_extra['alicuota'] * 100).round(2).astype(str) + "%"
+        df_reparto_extra['Monto a Pagar ($)'] = (df_reparto_extra['alicuota'] * float(monto_sel)).round(2)
+
+        st.dataframe(
+            df_reparto_extra[['apartamento', 'propietario', 'Alícuota (%)', 'Monto a Pagar ($)']].rename(columns={
+                "apartamento": "Apto",
+                "propietario": "Propietario"
+            }),
+            use_container_width=True
+        )
+    else:
+        st.info("No hay cuotas extras registradas.")
+
+# ---------------------------------------------------------
+# 5. ESTADO DE CUENTA Y ALÍCUOTAS (CORREGIDO DE RAÍZ)
 # ---------------------------------------------------------
 elif menu == "📊 Estado de Cuenta y Alícuotas":
     st.header("📊 Cálculo de Cuotas por Alícuota")
@@ -342,17 +408,17 @@ elif menu == "📊 Estado de Cuenta y Alícuotas":
     mes_anio = f"{anio}-{mes}"
 
     with engine.connect() as conn:
-        df_gastos = pd.read_sql(
+        res_total = conn.execute(
             text("SELECT SUM(monto) as total FROM gastos WHERE mes_anio = :m"),
-            conn,
-            params={"m": mes_anio}
-        )
+            {"m": mes_anio}
+        ).fetchone()
+        
         df_props = pd.read_sql(
             text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"), 
             conn
         )
     
-    total_gastos = df_gastos['total'].iloc[0] if df_gastos['total'].iloc[0] is not None else 0.0
+    total_gastos = res_total[0] if res_total and res_total[0] is not None else 0.0
     st.metric("Total Gastos del Mes a Repartir", f"${total_gastos:,.2f}")
 
     df_props['Alícuota (%)'] = (df_props['alicuota'] * 100).round(2).astype(str) + "%"
@@ -368,7 +434,7 @@ elif menu == "📊 Estado de Cuenta y Alícuotas":
     )
 
 # ---------------------------------------------------------
-# 5. REGISTRO Y VERIFICACIÓN DE PAGOS
+# 6. REGISTRO Y VERIFICACIÓN DE PAGOS
 # ---------------------------------------------------------
 elif menu == "💳 Registro y Verificación de Pagos":
     st.header("💳 Registro y Verificación de Pagos")
