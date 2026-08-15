@@ -26,7 +26,6 @@ engine = get_db_engine()
 # INICIALIZACIÓN DE TABLAS Y DATOS DEL EDIFICIO
 # ---------------------------------------------------------
 def init_db():
-    # engine.begin() garantiza que las tablas y registros se guarden inmediatamente
     with engine.begin() as conn:
         # 1. Tabla de Propietarios / Apartamentos
         conn.execute(text("""
@@ -86,7 +85,7 @@ try:
     init_db()
 except Exception as e:
     st.error(f"Error al inicializar la base de datos: {e}")
-    st.stop()  # Detiene la ejecución para mostrar el detalle real si falla la conexión
+    st.stop()
 
 # ---------------------------------------------------------
 # AUTENTICACIÓN (INGRESO NEUTRO)
@@ -142,11 +141,11 @@ menu = st.sidebar.radio(
 if menu == "📋 Información del Edificio":
     st.header("🏢 Información del Edificio y Propietarios")
     
-    # CORREGIDO: Se envuelve la consulta en text()
-    df_props = pd.read_sql(
-        text("SELECT apartamento, propietario, telefono, email, (alicuota * 100) as alicuota_porcentaje FROM propietarios ORDER BY apartamento"), 
-        engine
-    )
+    with engine.connect() as conn:
+        df_props = pd.read_sql(
+            text("SELECT apartamento, propietario, telefono, email, (alicuota * 100) as alicuota_porcentaje FROM propietarios ORDER BY apartamento"), 
+            conn
+        )
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Apartamentos", "13")
@@ -174,7 +173,7 @@ if menu == "📋 Información del Edificio":
             btn_actualizar = st.form_submit_button("Guardar Cambios")
 
             if btn_actualizar:
-                with engine.connect() as conn:
+                with engine.begin() as conn:
                     conn.execute(
                         text("""
                             UPDATE propietarios 
@@ -183,7 +182,6 @@ if menu == "📋 Información del Edificio":
                         """),
                         {"nombre": nombre, "telefono": telefono, "email": email, "apt": apt_select}
                     )
-                    conn.commit()
                 st.success(f"Datos del apartamento {apt_select} actualizados.")
                 st.rerun()
 
@@ -205,21 +203,21 @@ elif menu == "💵 Gastos Comunes":
 
         if btn_gasto:
             if concepto and monto > 0:
-                with engine.connect() as conn:
+                with engine.begin() as conn:
                     conn.execute(
                         text("INSERT INTO gastos (mes_anio, concepto, monto) VALUES (:m, :c, :mo)"),
                         {"m": mes_anio, "c": concepto, "mo": monto}
                     )
-                    conn.commit()
                 st.success("Gasto registrado correctamente.")
                 st.rerun()
 
     st.subheader(f"Gastos Registrados para {mes_anio}")
-    df_gastos = pd.read_sql(
-        text("SELECT id, concepto, monto, fecha FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
-        engine,
-        params={"m": mes_anio}
-    )
+    with engine.connect() as conn:
+        df_gastos = pd.read_sql(
+            text("SELECT id, concepto, monto, fecha FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
+            conn,
+            params={"m": mes_anio}
+        )
     if not df_gastos.empty:
         st.dataframe(df_gastos, use_container_width=True)
         st.metric("Total Gastos del Mes", f"${df_gastos['monto'].sum():,.2f}")
@@ -237,21 +235,20 @@ elif menu == "📊 Estado de Cuenta y Alícuotas":
     anio = col2.text_input("Año a Consultar", value="2026")
     mes_anio = f"{anio}-{mes}"
 
-    df_gastos = pd.read_sql(
-        text("SELECT SUM(monto) as total FROM gastos WHERE mes_anio = :m"),
-        engine,
-        params={"m": mes_anio}
-    )
+    with engine.connect() as conn:
+        df_gastos = pd.read_sql(
+            text("SELECT SUM(monto) as total FROM gastos WHERE mes_anio = :m"),
+            conn,
+            params={"m": mes_anio}
+        )
+        df_props = pd.read_sql(
+            text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"), 
+            conn
+        )
     
     total_gastos = df_gastos['total'].iloc[0] if df_gastos['total'].iloc[0] is not None else 0.0
     st.metric("Total Gastos del Mes a Repartir", f"${total_gastos:,.2f}")
 
-    # CORREGIDO: Se envuelve la consulta en text()
-    df_props = pd.read_sql(
-        text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"), 
-        engine
-    )
-    
     # Cálculo de la cuota individual
     df_props['Alícuota (%)'] = (df_props['alicuota'] * 100).round(2).astype(str) + "%"
     df_props['Cuota Asignada ($)'] = (df_props['alicuota'] * float(total_gastos)).round(2)
@@ -276,11 +273,11 @@ elif menu == "💳 Registro y Verificación de Pagos":
     with tab1:
         st.subheader("Reportar Pago de Condominio")
         
-        # CORREGIDO: Se envuelve la consulta en text()
-        df_props = pd.read_sql(
-            text("SELECT apartamento FROM propietarios ORDER BY apartamento"), 
-            engine
-        )
+        with engine.connect() as conn:
+            df_props = pd.read_sql(
+                text("SELECT apartamento FROM propietarios ORDER BY apartamento"), 
+                conn
+            )
         
         with st.form("form_pago"):
             apt = st.selectbox("Apartamento", df_props['apartamento'].tolist())
@@ -295,7 +292,7 @@ elif menu == "💳 Registro y Verificación de Pagos":
 
             if btn_pago:
                 if monto_pago > 0:
-                    with engine.connect() as conn:
+                    with engine.begin() as conn:
                         conn.execute(
                             text("""
                                 INSERT INTO pagos (apartamento, mes_anio, monto, referencia, estatus)
@@ -303,18 +300,17 @@ elif menu == "💳 Registro y Verificación de Pagos":
                             """),
                             {"apt": apt, "m": mes_anio_pago, "mo": monto_pago, "ref": referencia}
                         )
-                        conn.commit()
                     st.success("Pago registrado correctamente (Estatus: Pendiente).")
                     st.rerun()
 
     with tab2:
         st.subheader("Lista de Pagos Registrados")
         
-        # CORREGIDO: Se envuelve la consulta en text()
-        df_pagos = pd.read_sql(
-            text("SELECT id, apartamento, mes_anio, monto, referencia, estatus, fecha_registro FROM pagos ORDER BY id DESC"), 
-            engine
-        )
+        with engine.connect() as conn:
+            df_pagos = pd.read_sql(
+                text("SELECT id, apartamento, mes_anio, monto, referencia, estatus, fecha_registro FROM pagos ORDER BY id DESC"), 
+                conn
+            )
         
         if not df_pagos.empty:
             st.dataframe(df_pagos, use_container_width=True)
@@ -323,12 +319,11 @@ elif menu == "💳 Registro y Verificación de Pagos":
                 pago_id = st.number_input("ID del Pago", min_value=1, step=1)
                 nuevo_estatus = st.selectbox("Nuevo Estatus", ["Aprobado", "Pendiente", "Rechazado"])
                 if st.button("Cambiar Estatus"):
-                    with engine.connect() as conn:
+                    with engine.begin() as conn:
                         conn.execute(
                             text("UPDATE pagos SET estatus = :est WHERE id = :id"),
                             {"est": nuevo_estatus, "id": pago_id}
                         )
-                        conn.commit()
                     st.success(f"Pago ID {pago_id} cambiado a '{nuevo_estatus}'.")
                     st.rerun()
         else:
