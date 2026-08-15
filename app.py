@@ -2,31 +2,36 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime
+import io
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE LA PÁGINA
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Acceso al Sistema",
-    page_icon="🔒",
-    layout="centered"
+    page_title="Sistema de Administración de Condominio",
+    page_icon="🏢",
+    layout="wide"
 )
 
+# Alícuotas por apartamento (porcentaje de participación)
+ALICUOTAS = {
+    f"Apto {i}": round(100.0 / 13, 2) for i in range(1, 14)
+}
+
 # -----------------------------------------------------------------------------
-# GESTIÓN DE CONEXIÓN A BASE DE DATOS
+# CONEXIÓN A BASE DE DATOS Y SECRETS
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def obtener_engine():
     try:
         if "DATABASE_URL" in st.secrets:
             url = st.secrets["DATABASE_URL"]
-        elif "connections" in st.secrets and "postgresql" in st.secrets["connections"]:
-            pg = st.secrets["connections"]["postgresql"]
-            url = f"{pg.get('dialect', 'postgresql')}://{pg['username']}:{pg['password']}@{pg['host']}:{pg.get('port', 5432)}/{pg['database']}"
-        elif "username" in st.secrets:
-            url = f"postgresql://{st.secrets['username']}:{st.secrets['password']}@{st.secrets['host']}:{st.secrets.get('port', 5432)}/{st.secrets['database']}"
         else:
-            return None, "No se encontraron credenciales de base de datos en Secrets."
+            return None, "No se encontró DATABASE_URL en Secrets."
 
         engine = create_engine(
             url,
@@ -70,7 +75,7 @@ def inicializar_tablas():
                     fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
-            # Tabla de Usuarios / Credenciales (Propietarios y Admin)
+            # Tabla de Usuarios / Credenciales
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS usuarios (
                     usuario VARCHAR(20) PRIMARY KEY,
@@ -78,13 +83,14 @@ def inicializar_tablas():
                     rol VARCHAR(20) NOT NULL
                 );
             """))
-            
-            # Crear administrador por defecto si no existe
+
+            # Crear administrador desde Secrets o por defecto
+            admin_pwd = st.secrets.get("ADMIN_PASSWORD", "admin123")
             res_admin = conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = 'admin'")).fetchone()
             if not res_admin:
-                conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES ('admin', 'admin123', 'admin')"))
-            
-            # Crear credenciales por defecto para Aptos 1 a 13 (clave inicial '1234')
+                conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES ('admin', :p, 'admin')"), {"p": admin_pwd})
+
+            # Crear credenciales para Aptos (1 al 13)
             for i in range(1, 14):
                 apto_name = f"Apto {i}"
                 res_apto = conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = :u"), {"u": apto_name}).fetchone()
@@ -98,7 +104,48 @@ def inicializar_tablas():
 inicializar_tablas()
 
 # -----------------------------------------------------------------------------
-# ESTADO DE SESIÓN NEUTRO
+# FUNCIONALIDAD DE RECIBOS EN PDF
+# -----------------------------------------------------------------------------
+def generar_pdf_recibo(apartamento, mes_anio, cuota_base, pagos, saldo_deber):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    styles = getSampleStyleSheet()
+    story = []
+
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        alignment=1,
+        spaceAfter=15
+    )
+    story.append(Paragraph(f"RECIBO DE CONDOMINIO - {mes_anio}", title_style))
+    story.append(Paragraph(f"<b>Unidad / Inmueble:</b> {apartamento}", styles['Normal']))
+    story.append(Paragraph(f"<b>Fecha de Emisión:</b> {datetime.now().strftime('%Y-%m-%d')}", styles['Normal']))
+    story.append(Spacer(1, 15))
+
+    data_resumen = [
+        ["Concepto", "Monto ($)"],
+        [f"Cuota de Condominio ({ALICUOTAS.get(apartamento, 7.69)}%)", f"${cuota_base:,.2f}"],
+        ["Total Abonado / Validado", f"${pagos:,.2f}"],
+        ["Saldo Pendiente a la Fecha", f"${saldo_deber:,.2f}"]
+    ]
+    t = Table(data_resumen, colWidths=[300, 200])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+    ]))
+    story.append(t)
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+# -----------------------------------------------------------------------------
+# CONTROL DE SESIÓN NEUTRO
 # -----------------------------------------------------------------------------
 if "usuario_logueado" not in st.session_state:
     st.session_state.usuario_logueado = None
@@ -112,25 +159,25 @@ def cerrar_sesion():
     st.rerun()
 
 # -----------------------------------------------------------------------------
-# 1. PANTALLA DE ACCESO NEUTRA (LOGIN ÚNICO)
+# 1. ACCESO NEUTRO (UNIFICADO)
 # -----------------------------------------------------------------------------
 if not st.session_state.usuario_logueado:
-    st.markdown("<h2 style='text-align: center;'>🔒 Inicio de Sesión</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: gray;'>Ingresa tus credenciales para acceder al sistema.</p>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>Ingresa tus datos para acceder a tu panel.</p>", unsafe_allow_html=True)
     
     if error_conexion:
-        st.error("⚠️ La base de datos no está disponible. Verifica los Secrets.")
+        st.error(f"⚠️ Error de conexión: {error_conexion}")
 
-    with st.form("form_login_neutro"):
+    with st.form("form_login"):
         usuario_input = st.text_input("Usuario (ej. Apto 1 o admin)").strip()
         clave_input = st.text_input("Contraseña", type="password").strip()
         bot_login = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
 
         if bot_login:
             if not usuario_input or not clave_input:
-                st.error("Por favor completa ambos campos.")
+                st.error("Por favor completa los campos.")
             elif not engine:
-                st.error("Sin conexión a la base de datos.")
+                st.error("Base de datos no disponible.")
             else:
                 try:
                     with engine.connect() as conn:
@@ -142,22 +189,21 @@ if not st.session_state.usuario_logueado:
                     if row and row[1] == clave_input:
                         st.session_state.usuario_logueado = row[0]
                         st.session_state.rol_logueado = row[2]
-                        st.success("Acceso concedido.")
                         st.rerun()
                     else:
-                        st.error("❌ Usuario o contraseña incorrectos.")
+                        st.error("❌ Credenciales incorrectas.")
                 except Exception as e:
-                    st.error(f"Error durante el ingreso: {e}")
+                    st.error(f"Error al ingresar: {e}")
 
 # -----------------------------------------------------------------------------
-# 2. PANEL PRIVADO DEL PROPIETARIO
+# 2. VISTA DE PROPIETARIOS (RESTAURADA)
 # -----------------------------------------------------------------------------
 elif st.session_state.rol_logueado == "propietario":
     user_actual = st.session_state.usuario_logueado
 
     col_head, col_out = st.columns([3, 1])
     with col_head:
-        st.title(f"🏢 Bienvenido, {user_actual}")
+        st.title(f"🏢 Panel de Control - {user_actual}")
     with col_out:
         st.write("")
         if st.button("🚪 Cerrar Sesión", use_container_width=True):
@@ -165,74 +211,100 @@ elif st.session_state.rol_logueado == "propietario":
 
     st.write("---")
 
-    opcion = st.radio(
-        "Selecciona una opción:",
-        ["📥 Reportar Pago", "📋 Mis Pagos Registrados"],
-        horizontal=True
-    )
+    tab1, tab2, tab3 = st.tabs(["📊 Mi Estado de Cuenta", "📥 Reportar Pago", "📋 Mis Pagos"])
 
-    METODOS_PAGO = ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"]
+    # --- TAB 1: ESTADO DE CUENTA Y ALÍCUOTA ---
+    with tab1:
+        mes_filtro = st.text_input("Mes a consultar (AAAA-MM):", value=datetime.now().strftime("%Y-%m"))
+        try:
+            with engine.connect() as conn:
+                # Total Gastos
+                res_gastos = conn.execute(
+                    text("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    {"m": mes_filtro}
+                ).scalar()
 
-    if opcion == "📥 Reportar Pago":
-        st.subheader("Formulario de Reporte de Pago")
-        with st.form("form_pago_prop", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.text_input("Unidad", value=user_actual, disabled=True)
-                mes_anio = st.text_input("Mes / Año a pagar", value=datetime.now().strftime("%Y-%m"))
-                monto = st.number_input("Monto Pagado", min_value=0.01, step=0.01, format="%.2f")
+                # Pagos aprobados del inmueble
+                res_pagos = conn.execute(
+                    text("SELECT COALESCE(SUM(monto), 0) FROM pagos_reportados WHERE apartamento = :ap AND mes_anio = :m AND estatus = 'Aprobado'"),
+                    {"ap": user_actual, "m": mes_filtro}
+                ).scalar()
 
-            with col2:
-                metodo = st.selectbox("Método de Pago", METODOS_PAGO)
+            alicuota_pct = ALICUOTAS.get(user_actual, 7.69)
+            cuota_monto = round(float(res_gastos) * (alicuota_pct / 100.0), 2)
+            saldo = round(cuota_monto - float(res_pagos), 2)
+
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric("Gastos Comunes Totales", f"${res_gastos:,.2f}")
+            col_m2.metric(f"Mi Cuota ({alicuota_pct}%)", f"${cuota_monto:,.2f}")
+            col_m3.metric("Saldo Pendiente", f"${saldo:,.2f}", delta=-saldo if saldo > 0 else 0)
+
+            st.write("---")
+            # Descargar Recibo
+            pdf_bytes = generar_pdf_recibo(user_actual, mes_filtro, cuota_monto, float(res_pagos), saldo)
+            st.download_button(
+                label="📄 Descargar Recibo Digital (PDF)",
+                data=pdf_bytes,
+                file_name=f"Recibo_{user_actual}_{mes_filtro}.pdf",
+                mime="application/pdf"
+            )
+
+        except Exception as e:
+            st.error(f"Error consultando saldo: {e}")
+
+    # --- TAB 2: FORMULARIO DE PAGO ---
+    with tab2:
+        st.subheader("Reportar Comprobante de Pago")
+        with st.form("form_pago", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("Apartamento", value=user_actual, disabled=True)
+                mes_pago = st.text_input("Mes / Año", value=datetime.now().strftime("%Y-%m"))
+                monto = st.number_input("Monto Pagado ($)", min_value=0.01, step=0.01)
+            with c2:
+                metodo = st.selectbox("Método", ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"])
                 referencia = st.text_input("Número de Referencia")
-                fecha_pago = st.date_input("Fecha del Pago", value=datetime.now().date())
+                fecha_pago = st.date_input("Fecha de Operación", value=datetime.now().date())
 
             comprobante = st.file_uploader("Adjuntar Comprobante", type=["png", "jpg", "jpeg", "pdf"])
-            btn_guardar = st.form_submit_button("🚀 Registrar Pago", type="primary")
+            btn_subir = st.form_submit_button("🚀 Registrar Pago", type="primary")
 
-            if btn_guardar:
+            if btn_subir:
                 if not referencia.strip():
-                    st.error("Ingresa la referencia del pago.")
+                    st.error("Debes ingresar el número de referencia.")
                 else:
-                    nombre_archivo = comprobante.name if comprobante else "Sin archivo"
+                    nombre = comprobante.name if comprobante else "Sin comprobante"
                     try:
                         with engine.connect() as conn:
                             conn.execute(text("""
-                                INSERT INTO pagos_reportados 
-                                (apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus)
+                                INSERT INTO pagos_reportados (apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus)
                                 VALUES (:apto, :mes, :monto, :metodo, :ref, :fecha, :comp, 'Pendiente')
                             """), {
-                                "apto": user_actual,
-                                "mes": mes_anio,
-                                "monto": monto,
-                                "metodo": metodo,
-                                "ref": referencia,
-                                "fecha": fecha_pago,
-                                "comp": nombre_archivo
+                                "apto": user_actual, "mes": mes_pago, "monto": monto,
+                                "metodo": metodo, "ref": referencia, "fecha": fecha_pago, "comp": nombre
                             })
                             conn.commit()
-                        st.success("✅ ¡Pago registrado exitosamente!")
+                        st.success("✅ Pago registrado correctamente.")
                     except Exception as e:
-                        st.error(f"Error al registrar: {e}")
+                        st.error(f"Error registrando el pago: {e}")
 
-    elif opcion == "📋 Mis Pagos Registrados":
-        st.subheader("Historial de Pagos de la Unidad")
+    # --- TAB 3: CONSULTAR PAGOS ---
+    with tab3:
         try:
             with engine.connect() as conn:
-                df_pagos = pd.read_sql(
-                    text("SELECT mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE apartamento = :apto ORDER BY id DESC"),
-                    conn,
-                    params={"apto": user_actual}
+                df = pd.read_sql(
+                    text("SELECT mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE apartamento = :a ORDER BY id DESC"),
+                    conn, params={"a": user_actual}
                 )
-            if df_pagos.empty:
-                st.info("No tienes pagos reportados hasta el momento.")
+            if df.empty:
+                st.info("No se registran pagos previos.")
             else:
-                st.dataframe(df_pagos, use_container_width=True)
+                st.dataframe(df, use_container_width=True)
         except Exception as e:
-            st.error(f"Error consultando historial: {e}")
+            st.error(f"Error al cargar historial: {e}")
 
 # -----------------------------------------------------------------------------
-# 3. PANEL EXCLUSIVO DE ADMINISTRACIÓN
+# 3. VISTA DE ADMINISTRACIÓN (RESTAURADA)
 # -----------------------------------------------------------------------------
 elif st.session_state.rol_logueado == "admin":
     col_head, col_out = st.columns([3, 1])
@@ -245,73 +317,77 @@ elif st.session_state.rol_logueado == "admin":
 
     st.write("---")
 
-    tab1, tab2, tab3 = st.tabs(["📊 Registrar Gasto", "✅ Validar Pagos", "📄 Resumen Gastos"])
+    t1, t2, t3 = st.tabs(["📊 Registrar Gastos", "✅ Validar Pagos", "📋 Distribución por Alícuota"])
 
-    with tab1:
-        st.subheader("Registrar Gasto Común del Condominio")
-        with st.form("form_gastos"):
-            mes = st.text_input("Mes / Año", value=datetime.now().strftime("%Y-%m"))
-            concepto = st.text_input("Concepto del Gasto")
-            monto_gasto = st.number_input("Monto Total ($)", min_value=0.0, step=0.01)
-            btn_gasto = st.form_submit_button("Guardar Gasto", type="primary")
+    with t1:
+        st.subheader("Cargar Nuevo Gasto Común")
+        with st.form("form_gasto_admin"):
+            mes = st.text_input("Mes / Año (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
+            concepto = st.text_input("Descripción del Gasto")
+            monto = st.number_input("Monto Total ($)", min_value=0.01, step=0.01)
+            btn = st.form_submit_button("Guardar Gasto", type="primary")
 
-            if btn_gasto and concepto:
+            if btn and concepto:
                 try:
                     with engine.connect() as conn:
-                        conn.execute(text("""
-                            INSERT INTO gastos (mes_anio, concepto, monto, estatus)
-                            VALUES (:mes, :concepto, :monto, 'Aprobado')
-                        """), {"mes": mes, "concepto": concepto, "monto": monto_gasto})
+                        conn.execute(
+                            text("INSERT INTO gastos (mes_anio, concepto, monto, estatus) VALUES (:m, :c, :mo, 'Aprobado')"),
+                            {"m": mes, "c": concepto, "mo": monto}
+                        )
                         conn.commit()
-                    st.success("Gasto registrado exitosamente.")
+                    st.success("Gasto guardado correctamente.")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error al registrar gasto: {e}")
+                    st.error(f"Error registrando gasto: {e}")
 
-    with tab2:
-        st.subheader("Pagos Pendientes por Revisar")
+    with t2:
+        st.subheader("Pagos Pendientes por Validar")
         try:
             with engine.connect() as conn:
-                df_pendientes = pd.read_sql(
-                    text("SELECT id, apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, comprobante_nombre, estatus FROM pagos_reportados WHERE estatus = 'Pendiente' ORDER BY id ASC"),
+                df_p = pd.read_sql(
+                    text("SELECT id, apartamento, mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE estatus = 'Pendiente' ORDER BY id ASC"),
                     conn
                 )
-
-            if df_pendientes.empty:
-                st.info("🎉 No hay pagos pendientes por revisar.")
+            if df_p.empty:
+                st.info("No hay pagos pendientes.")
             else:
-                st.dataframe(df_pendientes, use_container_width=True)
-                pago_id = st.selectbox("Seleccionar ID de Pago a Gestionar:", df_pendientes["id"].tolist())
-                col_a, col_r = st.columns(2)
-                with col_a:
+                st.dataframe(df_p, use_container_width=True)
+                pid = st.selectbox("Selecciona ID de pago:", df_p["id"].tolist())
+                ca, cr = st.columns(2)
+                with ca:
                     if st.button("✅ Aprobar Pago", use_container_width=True):
                         with engine.connect() as conn:
-                            conn.execute(text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :id"), {"id": pago_id})
+                            conn.execute(text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :i"), {"i": pid})
                             conn.commit()
-                        st.success(f"Pago #{pago_id} Aprobado.")
+                        st.success(f"Pago #{pid} Aprobado.")
                         st.rerun()
-                with col_r:
+                with cr:
                     if st.button("❌ Rechazar Pago", use_container_width=True):
                         with engine.connect() as conn:
-                            conn.execute(text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"), {"id": pago_id})
+                            conn.execute(text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :i"), {"i": pid})
                             conn.commit()
-                        st.warning(f"Pago #{pago_id} Rechazado.")
+                        st.warning(f"Pago #{pid} Rechazado.")
                         st.rerun()
         except Exception as e:
-            st.error(f"Error al cargar reportes: {e}")
+            st.error(f"Error procesando pagos: {e}")
 
-    with tab3:
-        st.subheader("Resumen de Gastos Comunes")
-        mes_filtro = st.text_input("Filtrar por Mes (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
+    with t3:
+        st.subheader("Distribución de Gastos por Inmueble")
+        mes_calculo = st.text_input("Mes a calcular (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="calc")
         try:
             with engine.connect() as conn:
-                df_gastos_mes = pd.read_sql(
-                    text("SELECT concepto, monto FROM gastos WHERE mes_anio = :mes AND estatus = 'Aprobado'"),
-                    conn,
-                    params={"mes": mes_filtro}
-                )
-            total_gastos = df_gastos_mes["monto"].sum() if not df_gastos_mes.empty else 0.0
-            st.metric("Total Gastos del Mes", f"${total_gastos:,.2f}")
-            st.dataframe(df_gastos_mes, use_container_width=True)
+                total_g = conn.execute(
+                    text("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    {"m": mes_calculo}
+                ).scalar()
+
+            st.metric(f"Total Gastos {mes_calculo}", f"${total_g:,.2f}")
+            
+            filas = []
+            for apto, pct in ALICUOTAS.items():
+                cuota = round(float(total_g) * (pct / 100.0), 2)
+                filas.append({"Inmueble": apto, "Alícuota (%)": f"{pct}%", "Cuota Correspondiente ($)": f"${cuota:,.2f}"})
+
+            st.dataframe(pd.DataFrame(filas), use_container_width=True)
         except Exception as e:
-            st.error(f"Error consultando resumen: {e}")
+            st.error(f"Error generando distribución: {e}")
