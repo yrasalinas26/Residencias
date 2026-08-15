@@ -141,15 +141,29 @@ menu = st.sidebar.radio(
 if menu == "📋 Información del Edificio":
     st.header("🏢 Información del Edificio y Propietarios")
     
-    with engine.connect() as conn:
-        df_props = pd.read_sql(
-            text("SELECT apartamento, propietario, telefono, email, (alicuota * 100) as alicuota_porcentaje FROM propietarios ORDER BY apartamento"), 
-            conn
-        )
+    try:
+        with engine.connect() as conn:
+            # Usamos CAST en SQL para evitar problemas de tipos de datos con Pandas
+            query = text("""
+                SELECT 
+                    apartamento, 
+                    propietario, 
+                    telefono, 
+                    email, 
+                    CAST(alicuota * 100 AS FLOAT) as alicuota_porcentaje 
+                FROM propietarios 
+                ORDER BY apartamento
+            """)
+            df_props = pd.read_sql(query, conn)
+    except Exception as err:
+        st.error(f"⚠️ Error al leer la tabla 'propietarios': {err}")
+        st.warning("Intentando re-inicializar la base de datos...")
+        init_db()
+        st.rerun()
     
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Apartamentos", "13")
-    col2.metric("Suma Total Alícuotas", f"{df_props['alicuota_porcentaje'].sum():.2f}%")
+    col1.metric("Total Apartamentos", f"{len(df_props)}")
+    col2.metric("Suma Total Alícuotas", f"{df_props['alicuota_porcentaje'].sum():.2f}%" if not df_props.empty else "0.00%")
     col3.metric("Alícuota Penthouse", "16.00%")
 
     st.subheader("Listado de Apartamentos")
@@ -166,13 +180,14 @@ if menu == "📋 Información del Edificio":
 
     with st.expander("✏️ Actualizar Datos de Propietario"):
         with st.form("update_owner"):
-            apt_select = st.selectbox("Seleccionar Apartamento", df_props['apartamento'].tolist())
+            apt_list = df_props['apartamento'].tolist() if not df_props.empty else []
+            apt_select = st.selectbox("Seleccionar Apartamento", apt_list)
             nombre = st.text_input("Nombre del Propietario")
             telefono = st.text_input("Teléfono")
             email = st.text_input("Correo Electrónico")
             btn_actualizar = st.form_submit_button("Guardar Cambios")
 
-            if btn_actualizar:
+            if btn_actualizar and apt_select:
                 with engine.begin() as conn:
                     conn.execute(
                         text("""
@@ -184,7 +199,6 @@ if menu == "📋 Información del Edificio":
                     )
                 st.success(f"Datos del apartamento {apt_select} actualizados.")
                 st.rerun()
-
 # ---------------------------------------------------------
 # 2. GASTOS COMUNES
 # ---------------------------------------------------------
