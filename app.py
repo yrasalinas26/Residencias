@@ -5,11 +5,16 @@ from sqlalchemy import create_engine, text
 # ---------------------------------------------------------
 # CONEXIÓN A LA BASE DE DATOS (SUPABASE / POSTGRESQL)
 # ---------------------------------------------------------
-DB_URL = "postgresql://postgres.psathqqomnsvzhytvbsu:man09go06yra@aws-0-ca-central-1.pooler.supabase.com:6543/postgres"
+# Usamos el puerto 5432 directo y deshabilitamos prepared statements
+DB_URL = "postgresql://postgres.psathqqomnsvzhytvbsu:man09go06yra@aws-0-ca-central-1.pooler.supabase.com:5432/postgres"
 
 @st.cache_resource
 def get_db_engine():
-    return create_engine(DB_URL, pool_pre_ping=True)
+    return create_engine(
+        DB_URL, 
+        pool_pre_ping=True,
+        connect_args={"prepare_threshold": None}
+    )
 
 engine = get_db_engine()
 
@@ -28,10 +33,6 @@ def init_db():
                 alicuota NUMERIC(5,4) NOT NULL
             );
         """))
-        
-        conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS telefono VARCHAR(50) DEFAULT '';"))
-        conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS email VARCHAR(100) DEFAULT '';"))
-        conn.execute(text("ALTER TABLE propietarios ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Por asignar';"))
 
         # 2. Tabla de Gastos Comunes
         conn.execute(text("""
@@ -40,9 +41,11 @@ def init_db():
                 mes_anio VARCHAR(7) NOT NULL,
                 concepto VARCHAR(200) NOT NULL,
                 monto NUMERIC(12,2) NOT NULL,
+                estatus VARCHAR(20) DEFAULT 'Aprobado',
                 fecha DATE DEFAULT CURRENT_DATE
             );
         """))
+        conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
 
         # 3. Tabla de Pagos
         conn.execute(text("""
@@ -74,10 +77,13 @@ def init_db():
                 id SERIAL PRIMARY KEY,
                 concepto VARCHAR(200) NOT NULL,
                 monto_total NUMERIC(12,2) NOT NULL,
+                estatus VARCHAR(20) DEFAULT 'Aprobado',
                 fecha_registro DATE DEFAULT CURRENT_DATE
             );
         """))
+        conn.execute(text("ALTER TABLE cuotas_extras ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
 
+        # Insertar configuración básica si no existe
         res_cfg = conn.execute(text("SELECT COUNT(*) FROM configuracion")).fetchone()
         if res_cfg[0] == 0:
             conn.execute(text("""
@@ -85,6 +91,7 @@ def init_db():
                 VALUES (1, 'Residencias El Roble', 'J-12345678-0', 'Av. Principal, Caracas', '')
             """))
 
+        # Insertar apartamentos base si la tabla está vacía
         result = conn.execute(text("SELECT COUNT(*) FROM propietarios")).fetchone()
         if result[0] == 0:
             apts_data = [
@@ -212,17 +219,10 @@ if menu == "📋 Información del Edificio":
     
     try:
         with engine.connect() as conn:
-            query = text("""
-                SELECT 
-                    apartamento, 
-                    propietario, 
-                    telefono, 
-                    email, 
-                    CAST(alicuota * 100 AS FLOAT) as alicuota_porcentaje 
-                FROM propietarios 
-                ORDER BY apartamento
-            """)
-            df_props = pd.read_sql(query, conn)
+            df_props = pd.read_sql(
+                text("SELECT apartamento, propietario, telefono, email, CAST(alicuota * 100 AS FLOAT) as alicuota_porcentaje FROM propietarios ORDER BY apartamento"),
+                conn
+            )
     except Exception as err:
         st.error(f"⚠️ Error al leer la tabla 'propietarios': {err}")
         st.stop()
@@ -271,13 +271,13 @@ if menu == "📋 Información del Edificio":
 # ---------------------------------------------------------
 elif menu == "⚙️ Configuración del Edificio":
     st.header("⚙️ Editar Datos del Edificio")
-    st.info("Modifica el nombre oficial, RIF, dirección e imagen del edificio. Los cambios se actualizarán inmediatamente en todo el sistema.")
+    st.info("Modifica el nombre oficial, RIF, dirección e imagen del edificio.")
 
     with st.form("form_config"):
         nuevo_nombre = st.text_input("Nombre del Edificio / Condominio", value=config["nombre"])
         nuevo_rif = st.text_input("RIF / Documento Fiscal", value=config["rif"])
         nueva_direccion = st.text_area("Dirección Física", value=config["direccion"])
-        nuevo_logo = st.text_input("URL de Imagen / Logo (Opcional - enlace público de imagen)", value=config["logo"])
+        nuevo_logo = st.text_input("URL de Imagen / Logo", value=config["logo"])
 
         btn_guardar_config = st.form_submit_button("💾 Guardar Configuración")
 
@@ -289,21 +289,16 @@ elif menu == "⚙️ Configuración del Edificio":
                         SET nombre_edificio = :nom, rif = :rif, direccion = :dir, logo_url = :logo
                         WHERE id = 1
                     """),
-                    {
-                        "nom": nuevo_nombre,
-                        "rif": nuevo_rif,
-                        "dir": nueva_direccion,
-                        "logo": nuevo_logo
-                    }
+                    {"nom": nuevo_nombre, "rif": nuevo_rif, "dir": nueva_direccion, "logo": nuevo_logo}
                 )
             st.success("Configuración actualizada correctamente.")
             st.rerun()
 
 # ---------------------------------------------------------
-# 3. GASTOS COMUNES (CORREGIDO DE RAÍZ)
+# 3. GASTOS COMUNES (CON PREVISUALIZACIÓN Y APROBACIÓN)
 # ---------------------------------------------------------
 elif menu == "💵 Gastos Comunes":
-    st.header("💵 Carga de Gastos Comunes")
+    st.header("💵 Carga y Verificación de Gastos Comunes")
     
     col1, col2 = st.columns(2)
     mes = col1.selectbox("Mes", ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"])
@@ -313,50 +308,77 @@ elif menu == "💵 Gastos Comunes":
     with st.form("form_gastos"):
         concepto = st.text_input("Concepto del Gasto (Ej: Mantenimiento Ascensor, Vigilancia)")
         monto = st.number_input("Monto ($)", min_value=0.0, step=10.0, format="%.2f")
+        estatus_inicial = st.selectbox("Estatus del Gasto", ["Pendiente", "Aprobado"])
         btn_gasto = st.form_submit_button("Registrar Gasto")
 
         if btn_gasto:
             if concepto and monto > 0:
                 with engine.begin() as conn:
                     conn.execute(
-                        text("INSERT INTO gastos (mes_anio, concepto, monto) VALUES (:m, :c, :mo)"),
-                        {"m": mes_anio, "c": concepto, "mo": monto}
+                        text("INSERT INTO gastos (mes_anio, concepto, monto, estatus) VALUES (:m, :c, :mo, :e)"),
+                        {"m": mes_anio, "c": concepto, "mo": monto, "e": estatus_inicial}
                     )
                 st.success("Gasto registrado correctamente.")
                 st.rerun()
 
+    st.markdown("---")
     st.subheader(f"Gastos Registrados para {mes_anio}")
+
     with engine.connect() as conn:
-        res_gastos = conn.execute(
-            text("SELECT id, concepto, monto, fecha FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
-            {"m": mes_anio}
+        df_gastos = pd.read_sql(
+            text("SELECT id, concepto, monto, estatus, fecha FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
+            conn,
+            params={"m": mes_anio}
         )
-        df_gastos = pd.DataFrame(res_gastos.fetchall(), columns=res_gastos.keys())
 
     if not df_gastos.empty:
         st.dataframe(df_gastos, use_container_width=True)
-        st.metric("Total Gastos del Mes", f"${df_gastos['monto'].sum():,.2f}")
+        monto_aprobado = df_gastos[df_gastos['estatus'] == 'Aprobado']['monto'].sum()
+        st.metric("Total Gastos Aprobados (Mes)", f"${monto_aprobado:,.2f}")
+
+        st.markdown("### 🔍 Previsualizar, Aprobar o Eliminar Gasto")
+        gasto_id = st.number_input("Seleccione ID del Gasto", min_value=int(df_gastos['id'].min()), max_value=int(df_gastos['id'].max()), step=1)
+        
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+        if col_btn1.button("✅ Aprobar Gasto"):
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE gastos SET estatus = 'Aprobado' WHERE id = :id"), {"id": gasto_id})
+            st.success(f"Gasto ID {gasto_id} Aprobado")
+            st.rerun()
+            
+        if col_btn2.button("⏳ Marcar Pendiente"):
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE gastos SET estatus = 'Pendiente' WHERE id = :id"), {"id": gasto_id})
+            st.warning(f"Gasto ID {gasto_id} marcado como Pendiente")
+            st.rerun()
+
+        if col_btn3.button("🗑️ Eliminar Gasto"):
+            with engine.begin() as conn:
+                conn.execute(text("DELETE FROM gastos WHERE id = :id"), {"id": gasto_id})
+            st.error(f"Gasto ID {gasto_id} Eliminado")
+            st.rerun()
     else:
         st.info("No hay gastos registrados para este mes.")
 
 # ---------------------------------------------------------
-# 4. CUOTAS EXTRAS
+# 4. CUOTAS EXTRAS (CON PREVISUALIZACIÓN Y APROBACIÓN)
 # ---------------------------------------------------------
 elif menu == "📌 Cuotas Extras":
-    st.header("📌 Registro y Reparto de Cuotas Extras")
-    st.info("Registra un gasto especial o extraordinario (Ej: Fondo de reserva, Reparación de Fachada). El sistema calculará el monto exacto a pagar por cada apartamento según su alícuota.")
+    st.header("📌 Registro, Aprobación y Reparto de Cuotas Extras")
+    st.info("Registra un gasto especial o extraordinario. Puedes cambiar su estado a Pendiente o Aprobado.")
 
     with st.form("form_cuota_extra"):
         concepto_extra = st.text_input("Concepto de la Cuota Extra")
         monto_extra = st.number_input("Monto Total de la Cuota Extra ($)", min_value=0.0, step=50.0, format="%.2f")
+        estatus_extra_init = st.selectbox("Estatus de la Cuota Extra", ["Aprobado", "Pendiente"])
         btn_cuota_extra = st.form_submit_button("Calcular y Registrar Cuota Extra")
 
         if btn_cuota_extra:
             if concepto_extra and monto_extra > 0:
                 with engine.begin() as conn:
                     conn.execute(
-                        text("INSERT INTO cuotas_extras (concepto, monto_total) VALUES (:c, :m)"),
-                        {"c": concepto_extra, "m": monto_extra}
+                        text("INSERT INTO cuotas_extras (concepto, monto_total, estatus) VALUES (:c, :m, :e)"),
+                        {"c": concepto_extra, "m": monto_extra, "e": estatus_extra_init}
                     )
                 st.success("Cuota extra registrada con éxito.")
                 st.rerun()
@@ -365,7 +387,7 @@ elif menu == "📌 Cuotas Extras":
     
     with engine.connect() as conn:
         df_extras = pd.read_sql(
-            text("SELECT id, concepto, monto_total, fecha_registro FROM cuotas_extras ORDER BY id DESC"),
+            text("SELECT id, concepto, monto_total, estatus, fecha_registro FROM cuotas_extras ORDER BY id DESC"),
             conn
         )
         df_props = pd.read_sql(
@@ -377,7 +399,30 @@ elif menu == "📌 Cuotas Extras":
         st.subheader("Cuotas Extras Registradas")
         st.dataframe(df_extras, use_container_width=True)
 
-        st.subheader("📋 Reparto por Apartamento para una Cuota Extra")
+        st.markdown("### 🔍 Cambiar Estatus o Eliminar Cuota Extra")
+        extra_id_action = st.number_input("Seleccione ID de la Cuota Extra", min_value=int(df_extras['id'].min()), max_value=int(df_extras['id'].max()), step=1, key="extra_act")
+        
+        c_ex1, c_ex2, c_ex3 = st.columns(3)
+        if c_ex1.button("✅ Aprobar Cuota Extra"):
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE cuotas_extras SET estatus = 'Aprobado' WHERE id = :id"), {"id": extra_id_action})
+            st.success(f"Cuota Extra ID {extra_id_action} Aprobada")
+            st.rerun()
+
+        if c_ex2.button("⏳ Marcar Pendiente "):
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE cuotas_extras SET estatus = 'Pendiente' WHERE id = :id"), {"id": extra_id_action})
+            st.warning(f"Cuota Extra ID {extra_id_action} Pendiente")
+            st.rerun()
+
+        if c_ex3.button("🗑️ Eliminar Cuota Extra"):
+            with engine.begin() as conn:
+                conn.execute(text("DELETE FROM cuotas_extras WHERE id = :id"), {"id": extra_id_action})
+            st.error(f"Cuota Extra ID {extra_id_action} Eliminada")
+            st.rerun()
+
+        st.markdown("---")
+        st.subheader("📋 Previsualizar Reparto por Apartamento")
         extra_selected_id = st.selectbox("Seleccionar Cuota Extra a Consultar", df_extras['id'].tolist(), format_func=lambda x: f"ID {x} - {df_extras[df_extras['id']==x]['concepto'].values[0]}")
         
         monto_sel = df_extras[df_extras['id'] == extra_selected_id]['monto_total'].values[0]
@@ -397,41 +442,45 @@ elif menu == "📌 Cuotas Extras":
         st.info("No hay cuotas extras registradas.")
 
 # ---------------------------------------------------------
-# 5. ESTADO DE CUENTA Y ALÍCUOTAS (CORREGIDO DE RAÍZ)
+# 5. ESTADO DE CUENTA Y ALÍCUOTAS
 # ---------------------------------------------------------
 elif menu == "📊 Estado de Cuenta y Alícuotas":
-    st.header("📊 Cálculo de Cuotas por Alícuota")
+    st.header("📊 Cálculo de Cuotas por Alícuota (Solo Gastos Aprobados)")
 
     col1, col2 = st.columns(2)
     mes = col1.selectbox("Mes a Consultar", ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"])
     anio = col2.text_input("Año a Consultar", value="2026")
     mes_anio = f"{anio}-{mes}"
 
-    with engine.connect() as conn:
-        res_total = conn.execute(
-            text("SELECT SUM(monto) as total FROM gastos WHERE mes_anio = :m"),
-            {"m": mes_anio}
-        ).fetchone()
-        
-        df_props = pd.read_sql(
-            text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"), 
-            conn
-        )
+    try:
+        with engine.connect() as conn:
+            total_gastos = conn.execute(
+                text("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                {"m": mes_anio}
+            ).scalar() or 0.0
+            
+            df_props = pd.read_sql(
+                text("SELECT apartamento, propietario, alicuota FROM propietarios ORDER BY apartamento"), 
+                conn
+            )
+    except Exception as e:
+        st.error(f"Error al consultar la base de datos: {e}")
+        st.stop()
     
-    total_gastos = res_total[0] if res_total and res_total[0] is not None else 0.0
-    st.metric("Total Gastos del Mes a Repartir", f"${total_gastos:,.2f}")
+    st.metric("Total Gastos Aprobados a Repartir", f"${float(total_gastos):,.2f}")
 
-    df_props['Alícuota (%)'] = (df_props['alicuota'] * 100).round(2).astype(str) + "%"
-    df_props['Cuota Asignada ($)'] = (df_props['alicuota'] * float(total_gastos)).round(2)
+    if not df_props.empty:
+        df_props['Alícuota (%)'] = (df_props['alicuota'] * 100).round(2).astype(str) + "%"
+        df_props['Cuota Asignada ($)'] = (df_props['alicuota'] * float(total_gastos)).round(2)
 
-    st.subheader(f"Cuotas Correspondientes al Período {mes_anio}")
-    st.dataframe(
-        df_props[['apartamento', 'propietario', 'Alícuota (%)', 'Cuota Asignada ($)']].rename(columns={
-            "apartamento": "Apartamento",
-            "propietario": "Propietario"
-        }),
-        use_container_width=True
-    )
+        st.subheader(f"Cuotas Correspondientes al Período {mes_anio}")
+        st.dataframe(
+            df_props[['apartamento', 'propietario', 'Alícuota (%)', 'Cuota Asignada ($)']].rename(columns={
+                "apartamento": "Apartamento",
+                "propietario": "Propietario"
+            }),
+            use_container_width=True
+        )
 
 # ---------------------------------------------------------
 # 6. REGISTRO Y VERIFICACIÓN DE PAGOS
