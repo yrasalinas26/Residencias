@@ -45,6 +45,8 @@ def init_db():
                 fecha DATE DEFAULT CURRENT_DATE
             );
         """))
+        # --- AGREGAR ESTAS DOS LÍNEAS DE ABAJO ---
+        conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS mes_anio VARCHAR(7);"))
         conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estatus VARCHAR(20) DEFAULT 'Aprobado';"))
 
         # 3. Tabla de Pagos
