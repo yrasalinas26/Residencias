@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 import urllib.parse
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -56,7 +56,7 @@ def inicializar_tablas():
         return
     try:
         with engine.connect() as conn:
-            # Tabla Datos del Edificio
+            # 1. Tabla Datos del Edificio
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS configuracion_edificio (
                     id INT PRIMARY KEY DEFAULT 1,
@@ -73,7 +73,7 @@ def inicializar_tablas():
                     VALUES (1, 'Residencias El Condominio', 'J-12345678-0', 'Calle Principal, Edificio Central')
                 """))
 
-            # Tabla de Unidades / Propietarios / Alícuotas
+            # 2. Tabla de Unidades / Propietarios / Alícuotas
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS unidades (
                     unidad VARCHAR(10) PRIMARY KEY,
@@ -83,10 +83,10 @@ def inicializar_tablas():
                 );
             """))
 
-            # Garantizar columnas si existía la tabla previa
+            # Migración/Actualización de columnas en unidades
             try:
-                conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Sin Asignar'"))
-                conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS telefono VARCHAR(30) DEFAULT ''"))
+                conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Sin Asignar';"))
+                conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS telefono VARCHAR(30) DEFAULT '';"))
             except Exception:
                 pass
 
@@ -95,7 +95,7 @@ def inicializar_tablas():
                 for u, a in UNIDADES_DEFECTO:
                     conn.execute(text("INSERT INTO unidades (unidad, alicuota, propietario, telefono) VALUES (:u, :a, 'Propietario', '')"), {"u": u, "a": a})
 
-            # Tabla Usuarios
+            # 3. Tabla Usuarios
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS usuarios (
                     usuario VARCHAR(20) PRIMARY KEY,
@@ -112,7 +112,7 @@ def inicializar_tablas():
                 if not conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = :u"), {"u": u}).fetchone():
                     conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES (:u, '1234', 'propietario')"), {"u": u})
 
-            # Tabla Gastos Comunes
+            # 4. Tabla Gastos Comunes
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS gastos (
                     id SERIAL PRIMARY KEY,
@@ -124,7 +124,7 @@ def inicializar_tablas():
                 );
             """))
 
-            # Tabla Cuotas Extraordinarias
+            # 5. Tabla Cuotas Extraordinarias
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS cuotas_extraordinarias (
                     id SERIAL PRIMARY KEY,
@@ -135,7 +135,7 @@ def inicializar_tablas():
                 );
             """))
 
-            # Tabla Pagos
+            # 6. Tabla Pagos
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS pagos_reportados (
                     id SERIAL PRIMARY KEY,
@@ -153,8 +153,15 @@ def inicializar_tablas():
                 );
             """))
 
+            # MIGRACIÓN AUTOMÁTICA DE LA TABLA PAGOS_REPORTADOS
+            try:
+                conn.execute(text("ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS tipo_pago VARCHAR(30) DEFAULT 'Mensualidad';"))
+                conn.execute(text("ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS id_cuota_extra INT;"))
+            except Exception:
+                pass
+
             conn.commit()
-    except Exception:
+    except Exception as e:
         pass
 
 inicializar_tablas()
@@ -176,12 +183,12 @@ def obtener_datos_edificio():
 
 def obtener_unidades_df():
     if not engine:
-        return pd.DataFrame(UNIDADES_DEFECTO, columns=["unidad", "alicuota"])
+        return pd.DataFrame(UNIDADES_DEFECTO, columns=["unidad", "alicuota", "propietario", "telefono"])
     try:
         with engine.connect() as conn:
             return pd.read_sql(text("SELECT unidad, alicuota, propietario, telefono FROM unidades ORDER BY unidad ASC"), conn)
     except Exception:
-        return pd.DataFrame(UNIDADES_DEFECTO, columns=["unidad", "alicuota"])
+        return pd.DataFrame(UNIDADES_DEFECTO, columns=["unidad", "alicuota", "propietario", "telefono"])
 
 def calcular_estado_cuenta(apartamento, mes_hasta):
     df_u = obtener_unidades_df()
@@ -198,7 +205,7 @@ def calcular_estado_cuenta(apartamento, mes_hasta):
                 conn, params={"m": mes_hasta}
             )
             df_pagos = pd.read_sql(
-                text("SELECT mes_anio, COALESCE(SUM(monto), 0) as total_pago FROM pagos_reportados WHERE apartamento = :ap AND tipo_pago = 'Mensualidad' AND estatus = 'Aprobado' AND mes_anio <= :m GROUP BY mes_anio"),
+                text("SELECT mes_anio, COALESCE(SUM(monto), 0) as total_pago FROM pagos_reportados WHERE apartamento = :ap AND (tipo_pago = 'Mensualidad' OR tipo_pago IS NULL) AND estatus = 'Aprobado' AND mes_anio <= :m GROUP BY mes_anio"),
                 conn, params={"ap": apartamento, "m": mes_hasta}
             )
 
@@ -585,7 +592,7 @@ elif st.session_state.rol_logueado == "admin":
         try:
             with engine.connect() as conn:
                 df_p = pd.read_sql(
-                    text("SELECT id, apartamento, tipo_pago, mes_anio, monto, metodo_pago, referencia, fecha_pago FROM pagos_reportados WHERE estatus = 'Pendiente' ORDER BY id ASC"),
+                    text("SELECT id, apartamento, COALESCE(tipo_pago, 'Mensualidad') as tipo_pago, mes_anio, monto, metodo_pago, referencia, fecha_pago FROM pagos_reportados WHERE estatus = 'Pendiente' ORDER BY id ASC"),
                     conn
                 )
             if df_p.empty:
