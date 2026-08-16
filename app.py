@@ -4,17 +4,23 @@ from sqlalchemy import create_engine, text
 from datetime import datetime
 import io
 import urllib.parse
+from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA
+# CONFIGURACIÓN DE PÁGINA E ICONO PERSONALIZADO
 # -----------------------------------------------------------------------------
+try:
+    logo_img = Image.open("logo.jpg")
+except Exception:
+    logo_img = "🏢"
+
 st.set_page_config(
-    page_title="Sistema de Administración de Condominio",
-    page_icon="🏢",
+    page_title="Sistema de Gestión de Condominios YS",
+    page_icon=logo_img,
     layout="wide"
 )
 
@@ -119,6 +125,18 @@ def inicializar_tablas():
                 );
             """))
 
+            # NUEVA TABLA: CARGOS INDIVIDUALES / GASTOS NO COMUNES
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS cargos_individuales (
+                    id SERIAL PRIMARY KEY,
+                    apartamento VARCHAR(10) NOT NULL,
+                    mes_anio VARCHAR(7) NOT NULL,
+                    concepto VARCHAR(200) NOT NULL,
+                    monto NUMERIC(12,2) NOT NULL,
+                    fecha DATE DEFAULT CURRENT_DATE
+                );
+            """))
+
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS cuotas_extraordinarias (
                     id SERIAL PRIMARY KEY,
@@ -182,7 +200,7 @@ def calcular_estado_cuenta(apartamento, mes_hasta):
     pct = float(row_u['alicuota'].values[0]) / 100.0 if not row_u.empty else 0.06
 
     if not engine:
-        return {"mes_actual": 0.0, "deuda_anterior": 0.0, "pagos_mes": 0.0, "total_deber": 0.0, "gastos_totales": 0.0}
+        return {"mes_actual": 0.0, "cargos_ind": 0.0, "deuda_anterior": 0.0, "pagos_mes": 0.0, "total_deber": 0.0, "gastos_totales": 0.0}
 
     try:
         with engine.connect() as conn:
@@ -190,38 +208,50 @@ def calcular_estado_cuenta(apartamento, mes_hasta):
                 text("SELECT mes_anio, COALESCE(SUM(monto), 0) as total_gasto FROM gastos WHERE estatus = 'Aprobado' AND mes_anio <= :m GROUP BY mes_anio ORDER BY mes_anio ASC"),
                 conn, params={"m": mes_hasta}
             )
+            df_cargos_ind = pd.read_sql(
+                text("SELECT mes_anio, COALESCE(SUM(monto), 0) as total_ind FROM cargos_individuales WHERE apartamento = :ap AND mes_anio <= :m GROUP BY mes_anio"),
+                conn, params={"ap": apartamento, "m": mes_hasta}
+            )
             df_pagos = pd.read_sql(
                 text("SELECT mes_anio, COALESCE(SUM(monto), 0) as total_pago FROM pagos_reportados WHERE apartamento = :ap AND tipo_pago = 'Mensualidad' AND estatus = 'Aprobado' AND mes_anio <= :m GROUP BY mes_anio"),
                 conn, params={"ap": apartamento, "m": mes_hasta}
             )
 
         pagos_dict = dict(zip(df_pagos['mes_anio'], df_pagos['total_pago'])) if not df_pagos.empty else {}
-        deuda_anterior, cuota_mes_actual, pagos_mes_actual, gastos_mes_totales = 0.0, 0.0, 0.0, 0.0
+        cargos_ind_dict = dict(zip(df_cargos_ind['mes_anio'], df_cargos_ind['total_ind'])) if not df_cargos_ind.empty else {}
 
-        if not df_gastos.empty:
-            for _, row in df_gastos.iterrows():
-                m = row['mes_anio']
-                g_monto = float(row['total_gasto'])
-                cuota = round(g_monto * pct, 2)
+        deuda_anterior, cuota_mes_actual, cargos_ind_actual, pagos_mes_actual, gastos_mes_totales = 0.0, 0.0, 0.0, 0.0, 0.0
+
+        # Obtener todos los meses involucrados
+        meses_unicos = sorted(list(set(df_gastos['mes_anio'].tolist() + list(cargos_ind_dict.keys()) + list(pagos_dict.keys()))))
+
+        for m in meses_unicos:
+            if m <= mes_hasta:
+                g_monto = float(df_gastos[df_gastos['mes_anio'] == m]['total_gasto'].sum()) if not df_gastos.empty else 0.0
+                cuota_comun = round(g_monto * pct, 2)
+                cargo_ind = float(cargos_ind_dict.get(m, 0.0))
                 pago = float(pagos_dict.get(m, 0.0))
+                total_mes = cuota_comun + cargo_ind
 
                 if m == mes_hasta:
-                    cuota_mes_actual = cuota
+                    cuota_mes_actual = cuota_comun
+                    cargos_ind_actual = cargo_ind
                     pagos_mes_actual = pago
                     gastos_mes_totales = g_monto
                 else:
-                    deuda_anterior += (cuota - pago)
+                    deuda_anterior += (total_mes - pago)
 
-        total_adeudado = round(deuda_anterior + cuota_mes_actual - pagos_mes_actual, 2)
+        total_adeudado = round(deuda_anterior + cuota_mes_actual + cargos_ind_actual - pagos_mes_actual, 2)
         return {
             "mes_actual": cuota_mes_actual,
+            "cargos_ind": cargos_ind_actual,
             "deuda_anterior": round(deuda_anterior, 2),
             "pagos_mes": pagos_mes_actual,
             "total_deber": total_adeudado,
             "gastos_totales": gastos_mes_totales
         }
     except Exception:
-        return {"mes_actual": 0.0, "deuda_anterior": 0.0, "pagos_mes": 0.0, "total_deber": 0.0, "gastos_totales": 0.0}
+        return {"mes_actual": 0.0, "cargos_ind": 0.0, "deuda_anterior": 0.0, "pagos_mes": 0.0, "total_deber": 0.0, "gastos_totales": 0.0}
 
 def generar_pdf_recibo(apartamento, mes_anio, datos_cuenta):
     datos_ed = obtener_datos_edificio()
@@ -248,9 +278,10 @@ def generar_pdf_recibo(apartamento, mes_anio, datos_cuenta):
 
     data_resumen = [
         ["Concepto", "Monto ($)"],
-        ["Gastos Totales del Condominio", f"${datos_cuenta['gastos_totales']:,.2f}"],
+        ["Gastos Comunes Totales del Condominio", f"${datos_cuenta['gastos_totales']:,.2f}"],
         ["Deuda Acumulada (Meses Anteriores)", f"${datos_cuenta['deuda_anterior']:,.2f}"],
-        [f"Cuota Mes Actual ({mes_anio})", f"${datos_cuenta['mes_actual']:,.2f}"],
+        [f"Cuota Común del Mes ({mes_anio})", f"${datos_cuenta['mes_actual']:,.2f}"],
+        ["Gastos No Comunes / Cargos Individuales", f"${datos_cuenta['cargos_ind']:,.2f}"],
         ["Pagos Aprobados / Abonados", f"-${datos_cuenta['pagos_mes']:,.2f}"],
         ["TOTAL A CANCELAR", f"${datos_cuenta['total_deber']:,.2f}"]
     ]
@@ -356,11 +387,25 @@ elif st.session_state.rol_logueado == "propietario":
         mes_filtro = st.text_input("Consulta de mes (AAAA-MM):", value=datetime.now().strftime("%Y-%m"))
         datos = calcular_estado_cuenta(user_actual, mes_filtro)
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Morosidad Anterior", f"${datos['deuda_anterior']:,.2f}")
-        c2.metric("Cuota Mes Actual", f"${datos['mes_actual']:,.2f}")
-        c3.metric("Pagos Validados", f"${datos['pagos_mes']:,.2f}")
-        c4.metric("TOTAL A PAGAR", f"${datos['total_deber']:,.2f}", delta=-datos['total_deber'] if datos['total_deber'] > 0 else 0)
+        c2.metric("Cuota Común Mes", f"${datos['mes_actual']:,.2f}")
+        c3.metric("Gastos No Comunes", f"${datos['cargos_ind']:,.2f}")
+        c4.metric("Pagos Validados", f"${datos['pagos_mes']:,.2f}")
+        c5.metric("TOTAL A PAGAR", f"${datos['total_deber']:,.2f}", delta=-datos['total_deber'] if datos['total_deber'] > 0 else 0)
+
+        # Mostrar desglose de gastos no comunes si existen
+        if datos['cargos_ind'] > 0:
+            st.info("📌 **Desglose de Gastos No Comunes / Cargos Individuales del Mes:**")
+            try:
+                with engine.connect() as conn:
+                    df_ind_det = pd.read_sql(
+                        text("SELECT concepto, monto, fecha FROM cargos_individuales WHERE apartamento = :ap AND mes_anio = :m"),
+                        conn, params={"ap": user_actual, "m": mes_filtro}
+                    )
+                st.dataframe(df_ind_det, use_container_width=True)
+            except Exception:
+                pass
 
         st.write("---")
         c_pdf, c_wa = st.columns(2)
@@ -374,7 +419,7 @@ elif st.session_state.rol_logueado == "propietario":
                 use_container_width=True
             )
         with c_wa:
-            msg_p = f"🏢 *{datos_ed['nombre']}*\nRIF: {datos_ed['rif']}\n\nEstimado(a) {prop_nombre} ({user_actual}):\nResumen Estado de Cuenta ({mes_filtro}):\n- Cuota del Mes: ${datos['mes_actual']:,.2f}\n- Deuda Anterior: ${datos['deuda_anterior']:,.2f}\n- Abonado: ${datos['pagos_mes']:,.2f}\n*TOTAL PENDIENTE: ${datos['total_deber']:,.2f}*"
+            msg_p = f"🏢 *{datos_ed['nombre']}*\nRIF: {datos_ed['rif']}\n\nEstimado(a) {prop_nombre} ({user_actual}):\nResumen Estado de Cuenta ({mes_filtro}):\n- Cuota Común del Mes: ${datos['mes_actual']:,.2f}\n- Gastos No Comunes: ${datos['cargos_ind']:,.2f}\n- Deuda Anterior: ${datos['deuda_anterior']:,.2f}\n- Abonado: ${datos['pagos_mes']:,.2f}\n*TOTAL PENDIENTE: ${datos['total_deber']:,.2f}*"
             link_w = generar_link_whatsapp("", msg_p)
             st.link_button("📱 Compartir Recibo por WhatsApp", link_w, use_container_width=True)
 
@@ -485,16 +530,16 @@ elif st.session_state.rol_logueado == "admin":
 
     st.write("---")
 
-    t1, t2, t3, t4, t5, t6 = st.tabs(["📊 Gastos y WhatsApp Grupo", "⭐ Cuotas Extras", "✅ Validar Pagos", "🏢 Alícuotas y Propietarios", "🚨 Morosidad y Recibos", "⚙️ Datos Edificio"])
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs(["📊 Gastos Comunes", "🛠️ Gastos No Comunes", "⭐ Cuotas Extras", "✅ Validar Pagos", "🏢 Alícuotas y Unidades", "🚨 Morosidad y Recibos", "⚙️ Datos Edificio"])
 
-    # GASTOS Y WHATSAPP GRUPAL
+    # GASTOS COMUNES Y WHATSAPP
     with t1:
-        st.subheader("Cargar Gasto Común")
+        st.subheader("Cargar Gasto Común (Se distribuye por alícuota a todos)")
         with st.form("form_gasto"):
             mes = st.text_input("Mes / Año (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
-            concepto = st.text_input("Descripción del Gasto")
+            concepto = st.text_input("Descripción del Gasto Común")
             monto = st.number_input("Monto Total ($)", min_value=0.01, step=0.01)
-            btn = st.form_submit_button("Guardar Gasto", type="primary")
+            btn = st.form_submit_button("Guardar Gasto Común", type="primary")
 
             if btn and concepto:
                 try:
@@ -504,14 +549,14 @@ elif st.session_state.rol_logueado == "admin":
                             {"m": mes, "c": concepto, "mo": monto}
                         )
                         conn.commit()
-                    st.success("Gasto registrado.")
+                    st.success("Gasto común registrado.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error registrando gasto: {e}")
 
         st.write("---")
-        st.subheader("🗑️ Historial de Gastos (Eliminar / Corregir)")
-        mes_eliminar = st.text_input("Filtrar gastos por mes para revisar (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="filtro_elim")
+        st.subheader("🗑️ Historial de Gastos Comunes")
+        mes_eliminar = st.text_input("Filtrar gastos por mes (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="filtro_elim")
         
         try:
             with engine.connect() as conn:
@@ -521,7 +566,7 @@ elif st.session_state.rol_logueado == "admin":
                 )
 
             if df_gastos_lista.empty:
-                st.info(f"No hay gastos registrados en el periodo {mes_eliminar}.")
+                st.info(f"No hay gastos comunes registrados en {mes_eliminar}.")
             else:
                 for _, g in df_gastos_lista.iterrows():
                     col_info, col_btn = st.columns([4, 1])
@@ -536,10 +581,10 @@ elif st.session_state.rol_logueado == "admin":
                             st.rerun()
                     st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
         except Exception as e:
-            st.error(f"Error consultando o eliminando gastos: {e}")
+            st.error(f"Error consultando gastos: {e}")
 
         st.write("---")
-        st.subheader("📢 Reporte General de Gastos para Grupo de WhatsApp")
+        st.subheader("📢 Reporte General de Gastos para WhatsApp")
         mes_rep = st.text_input("Mes del Reporte (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="rep_g")
 
         try:
@@ -552,7 +597,7 @@ elif st.session_state.rol_logueado == "admin":
             txt_wa = f"🏢 *{datos_ed['nombre'].upper()}*\nRIF: {datos_ed['rif']}\n📍 {datos_ed['direccion']}\n\n"
             txt_wa += f"📊 *REPORTE GENERAL DE GASTOS - PERIODO {mes_rep}*\n"
             txt_wa += f"-----------------------------------\n"
-            txt_wa += f"💰 *Monto Total de Gastos:* ${total_g:,.2f}\n\n"
+            txt_wa += f"💰 *Monto Total Gastos Comunes:* ${total_g:,.2f}\n\n"
             txt_wa += f"*DISTRIBUCIÓN POR ALÍCUOTA:*\n"
 
             for _, r in df_u.iterrows():
@@ -566,8 +611,66 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
             st.error(f"Error generando reporte: {e}")
 
-    # CUOTAS EXTRAS: DISTRIBUCIÓN Y ENVÍO A WHATSAPP
+    # GASTOS NO COMUNES / CARGOS INDIVIDUALES
     with t2:
+        st.subheader("🛠️ Cargar Gasto No Común (Exclusivo a un Solo Apartamento)")
+        df_u = obtener_unidades_df()
+        
+        with st.form("form_gasto_individual"):
+            col1, col2 = st.columns(2)
+            with col1:
+                apto_ind = st.selectbox("Seleccionar Apartamento:", df_u["unidad"].tolist())
+                mes_ind = st.text_input("Mes / Año (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="mes_ind_input")
+            with col2:
+                concepto_ind = st.text_input("Descripción (ej. Reparación de tubería privada, Llave de acceso)")
+                monto_ind = st.number_input("Monto del Cargo ($)", min_value=0.01, step=0.01, key="monto_ind_input")
+            
+            btn_ind = st.form_submit_button("Cargar Gasto a Apartamento", type="primary")
+
+            if btn_ind and concepto_ind:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("INSERT INTO cargos_individuales (apartamento, mes_anio, concepto, monto) VALUES (:ap, :m, :c, :mo)"),
+                            {"ap": apto_ind, "m": mes_ind, "c": concepto_ind, "mo": monto_ind}
+                        )
+                        conn.commit()
+                    st.success(f"Cargo de ${monto_ind:,.2f} aplicado exitosamente al departamento {apto_ind}.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error registrando cargo individual: {e}")
+
+        st.write("---")
+        st.subheader("📋 Consultar y Eliminar Gastos No Comunes Registrados")
+        mes_filtro_ind = st.text_input("Filtrar por mes (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="filtro_ind_mes")
+
+        try:
+            with engine.connect() as conn:
+                df_cargos_registrados = pd.read_sql(
+                    text("SELECT id, apartamento, mes_anio, concepto, monto, fecha FROM cargos_individuales WHERE mes_anio = :m ORDER BY id DESC"),
+                    conn, params={"m": mes_filtro_ind}
+                )
+
+            if df_cargos_registrados.empty:
+                st.info(f"No hay cargos individuales o gastos no comunes en el periodo {mes_filtro_ind}.")
+            else:
+                for _, ci in df_cargos_registrados.iterrows():
+                    col_info, col_del = st.columns([4, 1])
+                    with col_info:
+                        st.markdown(f"**Apto {ci['apartamento']}** | **Concepto:** {ci['concepto']} | **Monto:** ${float(ci['monto']):,.2f} | **Fecha:** {ci['fecha']}")
+                    with col_del:
+                        if st.button("❌ Eliminar", key=f"del_ind_{ci['id']}", type="secondary"):
+                            with engine.connect() as conn:
+                                conn.execute(text("DELETE FROM cargos_individuales WHERE id = :id"), {"id": ci['id']})
+                                conn.commit()
+                            st.success(f"Cargo #{ci['id']} eliminado.")
+                            st.rerun()
+                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Error consultando cargos individuales: {e}")
+
+    # CUOTAS EXTRAS
+    with t3:
         st.subheader("1️⃣ Crear Nueva Cuota Extraordinaria")
         with st.form("form_ce"):
             concepto_ce = st.text_input("Concepto (ej. Reparación de Ascensor)")
@@ -595,10 +698,10 @@ elif st.session_state.rol_logueado == "admin":
                 df_cuotas = pd.read_sql(text("SELECT id, concepto, monto_total FROM cuotas_extraordinarias WHERE estatus = 'Activa' ORDER BY id DESC"), conn)
 
             if df_cuotas.empty:
-                st.info("No hay cuotas extraordinarias creadas para distribuir.")
+                st.info("No hay cuotas extraordinarias creadas.")
             else:
                 opciones_ce = df_cuotas.apply(lambda x: f"#{x['id']} - {x['concepto']} (${x['monto_total']:,.2f})", axis=1).tolist()
-                ce_seleccionada = st.selectbox("Selecciona la Cuota Extraordinaria a Distribuir:", opciones_ce)
+                ce_seleccionada = st.selectbox("Selecciona la Cuota Extraordinaria:", opciones_ce)
                 
                 id_ce_actual = int(ce_seleccionada.split(" - ")[0].replace("#", ""))
                 row_ce = df_cuotas[df_cuotas['id'] == id_ce_actual].iloc[0]
@@ -608,7 +711,6 @@ elif st.session_state.rol_logueado == "admin":
 
                 df_u = obtener_unidades_df()
 
-                # Generar distribución por unidad
                 filas_distribucion = []
                 txt_ce_grupo = f"🏢 *{datos_ed['nombre'].upper()}*\nRIF: {datos_ed['rif']}\n\n"
                 txt_ce_grupo += f"⭐ *COBRO DE CUOTA EXTRAORDINARIA*\n"
@@ -683,7 +785,7 @@ elif st.session_state.rol_logueado == "admin":
             st.error(f"Error al eliminar cuota extraordinaria: {e}")
 
     # VALIDAR PAGOS
-    with t3:
+    with t4:
         st.subheader("Pagos Pendientes por Validar")
         try:
             with engine.connect() as conn:
@@ -715,7 +817,7 @@ elif st.session_state.rol_logueado == "admin":
             st.error(f"Error al consultar pagos: {e}")
 
     # ALÍCUOTAS Y PROPIETARIOS
-    with t4:
+    with t5:
         st.subheader("Gestión de Unidades y Propietarios")
         df_unid = obtener_unidades_df()
         st.dataframe(df_unid, use_container_width=True)
@@ -740,7 +842,7 @@ elif st.session_state.rol_logueado == "admin":
                     st.error(f"Error actualizando unidad: {e}")
 
     # MOROSIDAD Y RECIBOS
-    with t5:
+    with t6:
         st.subheader("Estado de Cuenta de las Unidades")
         mes_mor = st.text_input("Mes de Consulta (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="mes_mor")
         df_u = obtener_unidades_df()
@@ -752,7 +854,8 @@ elif st.session_state.rol_logueado == "admin":
                 "Unidad": r['unidad'],
                 "Propietario": r['propietario'],
                 "Alícuota": f"{r['alicuota']}%",
-                "Mes Actual ($)": f"${st_cta['mes_actual']:,.2f}",
+                "Cuota Común ($)": f"${st_cta['mes_actual']:,.2f}",
+                "Gasto No Común ($)": f"${st_cta['cargos_ind']:,.2f}",
                 "Deuda Anterior ($)": f"${st_cta['deuda_anterior']:,.2f}",
                 "Pagos Mes ($)": f"${st_cta['pagos_mes']:,.2f}",
                 "Total Pendiente ($)": f"${st_cta['total_deber']:,.2f}"
@@ -760,7 +863,7 @@ elif st.session_state.rol_logueado == "admin":
         st.dataframe(pd.DataFrame(datos_mor), use_container_width=True)
 
     # DATOS EDIFICIO
-    with t6:
+    with t7:
         st.subheader("Configuración de la Edificación")
         ed = obtener_datos_edificio()
 
