@@ -9,7 +9,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE LA PÁGINA
+# CONFIGURACIÓN DE PÁGINA Y ALÍCUOTAS
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Sistema de Administración de Condominio",
@@ -17,13 +17,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# Alícuotas por apartamento (porcentaje de participación)
 ALICUOTAS = {
     f"Apto {i}": round(100.0 / 13, 2) for i in range(1, 14)
 }
 
 # -----------------------------------------------------------------------------
-# CONEXIÓN A BASE DE DATOS Y SECRETS
+# CONEXIÓN Y SECRETS
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def obtener_engine():
@@ -49,7 +48,6 @@ def inicializar_tablas():
         return
     try:
         with engine.connect() as conn:
-            # Tabla de Gastos
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS gastos (
                     id SERIAL PRIMARY KEY,
@@ -60,7 +58,6 @@ def inicializar_tablas():
                     fecha DATE DEFAULT CURRENT_DATE
                 );
             """))
-            # Tabla de Pagos Reportados
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS pagos_reportados (
                     id SERIAL PRIMARY KEY,
@@ -75,7 +72,6 @@ def inicializar_tablas():
                     fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
-            # Tabla de Usuarios / Credenciales
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS usuarios (
                     usuario VARCHAR(20) PRIMARY KEY,
@@ -84,13 +80,11 @@ def inicializar_tablas():
                 );
             """))
 
-            # Crear administrador desde Secrets o por defecto
             admin_pwd = st.secrets.get("ADMIN_PASSWORD", "admin123")
             res_admin = conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = 'admin'")).fetchone()
             if not res_admin:
                 conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES ('admin', :p, 'admin')"), {"p": admin_pwd})
 
-            # Crear credenciales para Aptos (1 al 13)
             for i in range(1, 14):
                 apto_name = f"Apto {i}"
                 res_apto = conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = :u"), {"u": apto_name}).fetchone()
@@ -98,37 +92,89 @@ def inicializar_tablas():
                     conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES (:u, '1234', 'propietario')"), {"u": apto_name})
 
             conn.commit()
-    except Exception as e:
+    except Exception:
         pass
 
 inicializar_tablas()
 
 # -----------------------------------------------------------------------------
-# FUNCIONALIDAD DE RECIBOS EN PDF
+# MOTOR DE CÁLCULO DE MOROSIDAD
 # -----------------------------------------------------------------------------
-def generar_pdf_recibo(apartamento, mes_anio, cuota_base, pagos, saldo_deber):
+def calcular_estado_cuenta_acumulado(apartamento, mes_hasta):
+    """Calcula el estado financiero histórico de un inmueble hasta un mes dado."""
+    if not engine:
+        return {"mes_actual": 0.0, "deuda_anterior": 0.0, "pagos_mes": 0.0, "total_deber": 0.0}
+    
+    try:
+        with engine.connect() as conn:
+            # Obtener todos los meses registrados con gastos
+            df_gastos = pd.read_sql(
+                text("SELECT mes_anio, COALESCE(SUM(monto), 0) as total_gasto FROM gastos WHERE estatus = 'Aprobado' AND mes_anio <= :m GROUP BY mes_anio ORDER BY mes_anio ASC"),
+                conn, params={"m": mes_hasta}
+            )
+            
+            # Obtener todos los pagos aprobados
+            df_pagos = pd.read_sql(
+                text("SELECT mes_anio, COALESCE(SUM(monto), 0) as total_pago FROM pagos_reportados WHERE apartamento = :ap AND estatus = 'Aprobado' AND mes_anio <= :m GROUP BY mes_anio"),
+                conn, params={"ap": apartamento, "m": mes_hasta}
+            )
+
+        pct = ALICUOTAS.get(apartamento, 7.69) / 100.0
+        
+        pagos_dict = dict(zip(df_pagos['mes_anio'], df_pagos['total_pago'])) if not df_pagos.empty else {}
+        
+        deuda_anterior = 0.0
+        cuota_mes_actual = 0.0
+        pagos_mes_actual = 0.0
+
+        if not df_gastos.empty:
+            for _, row in df_gastos.iterrows():
+                m = row['mes_anio']
+                gasto = float(row['total_gasto'])
+                cuota = round(gasto * pct, 2)
+                pago = float(pagos_dict.get(m, 0.0))
+
+                if m == mes_hasta:
+                    cuota_mes_actual = cuota
+                    pagos_mes_actual = pago
+                else:
+                    deuda_anterior += (cuota - pago)
+
+        # Si el usuario realizó pagos en el mes actual que cubren deuda anterior
+        total_adeudado = round(deuda_anterior + cuota_mes_actual - pagos_mes_actual, 2)
+
+        return {
+            "mes_actual": cuota_mes_actual,
+            "deuda_anterior": round(deuda_anterior, 2),
+            "pagos_mes": pagos_mes_actual,
+            "total_deber": total_adeudado
+        }
+    except Exception as e:
+        return {"error": str(e), "mes_actual": 0.0, "deuda_anterior": 0.0, "pagos_mes": 0.0, "total_deber": 0.0}
+
+# -----------------------------------------------------------------------------
+# RECIBOS PDF
+# -----------------------------------------------------------------------------
+def generar_pdf_recibo(apartamento, mes_anio, datos_cuenta):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     styles = getSampleStyleSheet()
     story = []
 
     title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontSize=18,
-        alignment=1,
-        spaceAfter=15
+        'DocTitle', parent=styles['Heading1'], fontSize=18, alignment=1, spaceAfter=15
     )
-    story.append(Paragraph(f"RECIBO DE CONDOMINIO - {mes_anio}", title_style))
-    story.append(Paragraph(f"<b>Unidad / Inmueble:</b> {apartamento}", styles['Normal']))
+    story.append(Paragraph(f"ESTADO DE CUENTA - {mes_anio}", title_style))
+    story.append(Paragraph(f"<b>Inmueble:</b> {apartamento}", styles['Normal']))
     story.append(Paragraph(f"<b>Fecha de Emisión:</b> {datetime.now().strftime('%Y-%m-%d')}", styles['Normal']))
     story.append(Spacer(1, 15))
 
     data_resumen = [
         ["Concepto", "Monto ($)"],
-        [f"Cuota de Condominio ({ALICUOTAS.get(apartamento, 7.69)}%)", f"${cuota_base:,.2f}"],
-        ["Total Abonado / Validado", f"${pagos:,.2f}"],
-        ["Saldo Pendiente a la Fecha", f"${saldo_deber:,.2f}"]
+        ["Deuda Acumulada Meses Anteriores", f"${datos_cuenta['deuda_anterior']:,.2f}"],
+        [f"Cuota Mes Actual ({mes_anio})", f"${datos_cuenta['mes_actual']:,.2f}"],
+        ["Pagos Validados en el Mes", f"-${datos_cuenta['pagos_mes']:,.2f}"],
+        ["TOTAL PENDIENTE A LA FECHA", f"${datos_cuenta['total_deber']:,.2f}"]
     ]
     t = Table(data_resumen, colWidths=[300, 200])
     t.setStyle(TableStyle([
@@ -136,7 +182,10 @@ def generar_pdf_recibo(apartamento, mes_anio, cuota_base, pagos, saldo_deber):
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#FEE2E2')),
+        ('TEXTCOLOR', (0, -1), (-1, -1), colors.HexColor('#991B1B')),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
     ]))
     story.append(t)
     
@@ -145,11 +194,10 @@ def generar_pdf_recibo(apartamento, mes_anio, cuota_base, pagos, saldo_deber):
     return buffer
 
 # -----------------------------------------------------------------------------
-# CONTROL DE SESIÓN NEUTRO
+# CONTROL DE SESIÓN
 # -----------------------------------------------------------------------------
 if "usuario_logueado" not in st.session_state:
     st.session_state.usuario_logueado = None
-
 if "rol_logueado" not in st.session_state:
     st.session_state.rol_logueado = None
 
@@ -159,11 +207,11 @@ def cerrar_sesion():
     st.rerun()
 
 # -----------------------------------------------------------------------------
-# 1. ACCESO NEUTRO (UNIFICADO)
+# 1. PORTAL DE ACCESO
 # -----------------------------------------------------------------------------
 if not st.session_state.usuario_logueado:
     st.markdown("<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: gray;'>Ingresa tus datos para acceder a tu panel.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>Ingresa tus credenciales para continuar.</p>", unsafe_allow_html=True)
     
     if error_conexion:
         st.error(f"⚠️ Error de conexión: {error_conexion}")
@@ -196,7 +244,7 @@ if not st.session_state.usuario_logueado:
                     st.error(f"Error al ingresar: {e}")
 
 # -----------------------------------------------------------------------------
-# 2. VISTA DE PROPIETARIOS (RESTAURADA)
+# 2. VISTA PROPIETARIOS
 # -----------------------------------------------------------------------------
 elif st.session_state.rol_logueado == "propietario":
     user_actual = st.session_state.usuario_logueado
@@ -211,67 +259,47 @@ elif st.session_state.rol_logueado == "propietario":
 
     st.write("---")
 
-    tab1, tab2, tab3 = st.tabs(["📊 Mi Estado de Cuenta", "📥 Reportar Pago", "📋 Mis Pagos"])
+    tab1, tab2, tab3 = st.tabs(["📊 Estado de Cuenta y Morosidad", "📥 Reportar Pago", "📋 Historial de Pagos"])
 
-    # --- TAB 1: ESTADO DE CUENTA Y ALÍCUOTA ---
     with tab1:
-        mes_filtro = st.text_input("Mes a consultar (AAAA-MM):", value=datetime.now().strftime("%Y-%m"))
-        try:
-            with engine.connect() as conn:
-                # Total Gastos
-                res_gastos = conn.execute(
-                    text("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
-                    {"m": mes_filtro}
-                ).scalar()
+        mes_filtro = st.text_input("Consulta de mes (AAAA-MM):", value=datetime.now().strftime("%Y-%m"))
+        
+        datos = calcular_estado_cuenta_acumulado(user_actual, mes_filtro)
 
-                # Pagos aprobados del inmueble
-                res_pagos = conn.execute(
-                    text("SELECT COALESCE(SUM(monto), 0) FROM pagos_reportados WHERE apartamento = :ap AND mes_anio = :m AND estatus = 'Aprobado'"),
-                    {"ap": user_actual, "m": mes_filtro}
-                ).scalar()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Morosidad Anterior", f"${datos['deuda_anterior']:,.2f}")
+        c2.metric("Cuota Mes Actual", f"${datos['mes_actual']:,.2f}")
+        c3.metric("Pagos Aprobados", f"${datos['pagos_mes']:,.2f}")
+        c4.metric("TOTAL A PAGAR", f"${datos['total_deber']:,.2f}", delta=-datos['total_deber'] if datos['total_deber'] > 0 else 0)
 
-            alicuota_pct = ALICUOTAS.get(user_actual, 7.69)
-            cuota_monto = round(float(res_gastos) * (alicuota_pct / 100.0), 2)
-            saldo = round(cuota_monto - float(res_pagos), 2)
+        st.write("---")
+        pdf_bytes = generar_pdf_recibo(user_actual, mes_filtro, datos)
+        st.download_button(
+            label="📄 Descargar Estado de Cuenta en PDF",
+            data=pdf_bytes,
+            file_name=f"Estado_Cuenta_{user_actual}_{mes_filtro}.pdf",
+            mime="application/pdf"
+        )
 
-            col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric("Gastos Comunes Totales", f"${res_gastos:,.2f}")
-            col_m2.metric(f"Mi Cuota ({alicuota_pct}%)", f"${cuota_monto:,.2f}")
-            col_m3.metric("Saldo Pendiente", f"${saldo:,.2f}", delta=-saldo if saldo > 0 else 0)
-
-            st.write("---")
-            # Descargar Recibo
-            pdf_bytes = generar_pdf_recibo(user_actual, mes_filtro, cuota_monto, float(res_pagos), saldo)
-            st.download_button(
-                label="📄 Descargar Recibo Digital (PDF)",
-                data=pdf_bytes,
-                file_name=f"Recibo_{user_actual}_{mes_filtro}.pdf",
-                mime="application/pdf"
-            )
-
-        except Exception as e:
-            st.error(f"Error consultando saldo: {e}")
-
-    # --- TAB 2: FORMULARIO DE PAGO ---
     with tab2:
         st.subheader("Reportar Comprobante de Pago")
         with st.form("form_pago", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
                 st.text_input("Apartamento", value=user_actual, disabled=True)
-                mes_pago = st.text_input("Mes / Año", value=datetime.now().strftime("%Y-%m"))
+                mes_pago = st.text_input("Mes a Abonar (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
                 monto = st.number_input("Monto Pagado ($)", min_value=0.01, step=0.01)
             with c2:
-                metodo = st.selectbox("Método", ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"])
+                metodo = st.selectbox("Método de Pago", ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo $"])
                 referencia = st.text_input("Número de Referencia")
-                fecha_pago = st.date_input("Fecha de Operación", value=datetime.now().date())
+                fecha_pago = st.date_input("Fecha de Pago", value=datetime.now().date())
 
             comprobante = st.file_uploader("Adjuntar Comprobante", type=["png", "jpg", "jpeg", "pdf"])
             btn_subir = st.form_submit_button("🚀 Registrar Pago", type="primary")
 
             if btn_subir:
                 if not referencia.strip():
-                    st.error("Debes ingresar el número de referencia.")
+                    st.error("Ingresa la referencia de pago.")
                 else:
                     nombre = comprobante.name if comprobante else "Sin comprobante"
                     try:
@@ -284,11 +312,10 @@ elif st.session_state.rol_logueado == "propietario":
                                 "metodo": metodo, "ref": referencia, "fecha": fecha_pago, "comp": nombre
                             })
                             conn.commit()
-                        st.success("✅ Pago registrado correctamente.")
+                        st.success("✅ Pago registrado para validación.")
                     except Exception as e:
-                        st.error(f"Error registrando el pago: {e}")
+                        st.error(f"Error registrando pago: {e}")
 
-    # --- TAB 3: CONSULTAR PAGOS ---
     with tab3:
         try:
             with engine.connect() as conn:
@@ -297,14 +324,14 @@ elif st.session_state.rol_logueado == "propietario":
                     conn, params={"a": user_actual}
                 )
             if df.empty:
-                st.info("No se registran pagos previos.")
+                st.info("Sin registros de pago.")
             else:
                 st.dataframe(df, use_container_width=True)
         except Exception as e:
-            st.error(f"Error al cargar historial: {e}")
+            st.error(f"Error cargando pagos: {e}")
 
 # -----------------------------------------------------------------------------
-# 3. VISTA DE ADMINISTRACIÓN (RESTAURADA)
+# 3. VISTA ADMINISTRACIÓN
 # -----------------------------------------------------------------------------
 elif st.session_state.rol_logueado == "admin":
     col_head, col_out = st.columns([3, 1])
@@ -317,7 +344,7 @@ elif st.session_state.rol_logueado == "admin":
 
     st.write("---")
 
-    t1, t2, t3 = st.tabs(["📊 Registrar Gastos", "✅ Validar Pagos", "📋 Distribución por Alícuota"])
+    t1, t2, t3, t4 = st.tabs(["📊 Registrar Gastos", "✅ Validar Pagos", "🚨 Reporte de Morosidad", "📋 Gastos del Mes"])
 
     with t1:
         st.subheader("Cargar Nuevo Gasto Común")
@@ -349,10 +376,10 @@ elif st.session_state.rol_logueado == "admin":
                     conn
                 )
             if df_p.empty:
-                st.info("No hay pagos pendientes.")
+                st.info("No hay pagos pendientes por revisar.")
             else:
                 st.dataframe(df_p, use_container_width=True)
-                pid = st.selectbox("Selecciona ID de pago:", df_p["id"].tolist())
+                pid = st.selectbox("Seleccionar ID de Pago:", df_p["id"].tolist())
                 ca, cr = st.columns(2)
                 with ca:
                     if st.button("✅ Aprobar Pago", use_container_width=True):
@@ -369,25 +396,47 @@ elif st.session_state.rol_logueado == "admin":
                         st.warning(f"Pago #{pid} Rechazado.")
                         st.rerun()
         except Exception as e:
-            st.error(f"Error procesando pagos: {e}")
+            st.error(f"Error en validación: {e}")
 
     with t3:
-        st.subheader("Distribución de Gastos por Inmueble")
-        mes_calculo = st.text_input("Mes a calcular (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="calc")
+        st.subheader("Tabla General de Morosidad")
+        mes_eval = st.text_input("Evaluar morosidad hasta (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="admin_moroso")
+        
+        filas_m = []
+        total_deuda_edificio = 0.0
+
+        for apto in ALICUOTAS.keys():
+            res = calcular_estado_cuenta_acumulado(apto, mes_eval)
+            deuda = res["total_deber"]
+            total_deuda_edificio += deuda
+            
+            estatus = "🟢 Al día" if deuda <= 0 else ("🟡 Cuota Pendiente" if deuda <= res["mes_actual"] else "🔴 Moroso")
+
+            filas_m.append({
+                "Inmueble": apto,
+                "Deuda Anterior ($)": f"${res['deuda_anterior']:,.2f}",
+                "Mes Actual ($)": f"${res['mes_actual']:,.2f}",
+                "Abonado ($)": f"${res['pagos_mes']:,.2f}",
+                "Deuda Total ($)": f"${deuda:,.2f}",
+                "Estatus": estatus
+            })
+
+        st.metric("Deuda Total Acumulada del Condominio", f"${total_deuda_edificio:,.2f}")
+        st.dataframe(pd.DataFrame(filas_m), use_container_width=True)
+
+    with t4:
+        st.subheader("Consulta de Gastos por Mes")
+        mes_g_search = st.text_input("Mes (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="g_search")
         try:
             with engine.connect() as conn:
-                total_g = conn.execute(
-                    text("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
-                    {"m": mes_calculo}
-                ).scalar()
-
-            st.metric(f"Total Gastos {mes_calculo}", f"${total_g:,.2f}")
-            
-            filas = []
-            for apto, pct in ALICUOTAS.items():
-                cuota = round(float(total_g) * (pct / 100.0), 2)
-                filas.append({"Inmueble": apto, "Alícuota (%)": f"{pct}%", "Cuota Correspondiente ($)": f"${cuota:,.2f}"})
-
-            st.dataframe(pd.DataFrame(filas), use_container_width=True)
+                df_g = pd.read_sql(
+                    text("SELECT id, concepto, monto, fecha FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    conn, params={"m": mes_g_search}
+                )
+            if df_g.empty:
+                st.info("Sin gastos registrados para este periodo.")
+            else:
+                st.dataframe(df_g, use_container_width=True)
+                st.metric("Total Gastos del Mes", f"${df_g['monto'].sum():,.2f}")
         except Exception as e:
-            st.error(f"Error generando distribución: {e}")
+            st.error(f"Error cargando gastos: {e}")
