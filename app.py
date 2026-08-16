@@ -669,33 +669,36 @@ elif st.session_state.rol_logueado == "admin":
 
         st.write("---")
         st.subheader("📲 Enviar Recibo Individual por WhatsApp")
-        u_wa_sel = st.selectbox("Seleccionar Inmueble para enviar recibo:", df_mor_table["Inmueble"].tolist())
-        row_wa_selected = [f for f in filas_m if f["Inmueble"] == u_wa_sel][0]
+        u_wa_sel = st.selectbox("Seleccionar Inmueble para Enviar Recibo:", df_mor_table["Inmueble"].tolist())
+        row_wa = df_mor_table[df_mor_table["Inmueble"] == u_wa_sel].iloc[0]
 
         st.link_button(
-            f"📲 Abrir WhatsApp para enviar recibo a {row_wa_selected['Propietario']} ({row_wa_selected['Inmueble']})",
-            row_wa_selected["WhatsApp"],
+            f"📱 Enviar Recibo a {row_wa['Propietario']} ({u_wa_sel})",
+            row_wa["WhatsApp"],
+            use_container_width=True,
             type="primary"
         )
 
-    # DATOS EDIFICIO
+    # CONFIGURACIÓN DATOS EDIFICIO
     with t6:
-        st.subheader("Configuración de los Datos del Edificio")
-        with st.form("form_edificio"):
-            n_nombre = st.text_input("Nombre del Edificio / Condominio:", value=datos_ed["nombre"])
-            n_rif = st.text_input("RIF del Condominio:", value=datos_ed["rif"])
-            n_dir = st.text_area("Dirección Fiscal:", value=datos_ed["direccion"])
-            btn_ed = st.form_submit_button("Guardar Datos del Edificio", type="primary")
+        st.subheader("Configuración de Datos del Edificio")
+        datos_actuales = obtener_datos_edificio()
 
-            if btn_ed:
+        with st.form("form_edificio"):
+            nuevo_nombre = st.text_input("Nombre del Edificio / Condominio:", value=datos_actuales["nombre"])
+            nuevo_rif = st.text_input("RIF / Identificación Fiscal:", value=datos_actuales["rif"])
+            nueva_direccion = st.text_area("Dirección Física:", value=datos_actuales["direccion"])
+            btn_save_ed = st.form_submit_button("Guardar Configuración", type="primary")
+
+            if btn_save_ed:
                 try:
                     with engine.connect() as conn:
                         conn.execute(
                             text("UPDATE configuracion_edificio SET nombre = :n, rif = :r, direccion = :d WHERE id = 1"),
-                            {"n": n_nombre, "r": n_rif, "d": n_dir}
+                            {"n": nuevo_nombre, "r": nuevo_rif, "d": nueva_direccion}
                         )
                         conn.commit()
-                    st.success("Datos del edificio actualizados.")
+                    st.success("Datos del edificio actualizados con éxito.")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error guardando datos: {e}")
+                    st.error(f"Error actualizando datos del edificio: {e}")
