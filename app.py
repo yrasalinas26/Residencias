@@ -489,7 +489,7 @@ elif st.session_state.rol_logueado == "admin":
 
     # GASTOS Y WHATSAPP GRUPAL
     with t1:
-        st.subheader("Cargar Gasto Común y Enviar Reporte al Grupo")
+        st.subheader("Cargar Gasto Común")
         with st.form("form_gasto"):
             mes = st.text_input("Mes / Año (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
             concepto = st.text_input("Descripción del Gasto")
@@ -508,6 +508,35 @@ elif st.session_state.rol_logueado == "admin":
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error registrando gasto: {e}")
+
+        st.write("---")
+        st.subheader("🗑️ Historial de Gastos (Eliminar / Corregir)")
+        mes_eliminar = st.text_input("Filtrar gastos por mes para revisar (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="filtro_elim")
+        
+        try:
+            with engine.connect() as conn:
+                df_gastos_lista = pd.read_sql(
+                    text("SELECT id, mes_anio, concepto, monto, fecha FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado' ORDER BY id DESC"),
+                    conn, params={"m": mes_eliminar}
+                )
+
+            if df_gastos_lista.empty:
+                st.info(f"No hay gastos registrados en el periodo {mes_eliminar}.")
+            else:
+                for _, g in df_gastos_lista.iterrows():
+                    col_info, col_btn = st.columns([4, 1])
+                    with col_info:
+                        st.markdown(f"**ID:** {g['id']} | **Concepto:** {g['concepto']} | **Monto:** ${float(g['monto']):,.2f}")
+                    with col_btn:
+                        if st.button("❌ Eliminar", key=f"del_gasto_{g['id']}", type="secondary"):
+                            with engine.connect() as conn:
+                                conn.execute(text("DELETE FROM gastos WHERE id = :id"), {"id": g['id']})
+                                conn.commit()
+                            st.success(f"Gasto #{g['id']} eliminado.")
+                            st.rerun()
+                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Error consultando o eliminando gastos: {e}")
 
         st.write("---")
         st.subheader("📢 Reporte General de Gastos para Grupo de WhatsApp")
@@ -629,6 +658,30 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
             st.error(f"Error distribuyendo cuota extraordinaria: {e}")
 
+        st.write("---")
+        st.subheader("3️⃣ Gestionar / Eliminar Cuotas Extraordinarias")
+        try:
+            with engine.connect() as conn:
+                df_todas_ce = pd.read_sql(text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"), conn)
+
+            if df_todas_ce.empty:
+                st.info("No hay cuotas registradas.")
+            else:
+                for _, rce in df_todas_ce.iterrows():
+                    col_info, col_del = st.columns([4, 1])
+                    with col_info:
+                        st.markdown(f"**ID:** #{rce['id']} | **Concepto:** {rce['concepto']} | **Monto Total:** ${float(rce['monto_total']):,.2f} | **Estatus:** {rce['estatus']}")
+                    with col_del:
+                        if st.button("❌ Eliminar", key=f"del_ce_{rce['id']}", type="secondary"):
+                            with engine.connect() as conn:
+                                conn.execute(text("DELETE FROM cuotas_extraordinarias WHERE id = :id"), {"id": rce['id']})
+                                conn.commit()
+                            st.success(f"Cuota extraordinario #{rce['id']} eliminada.")
+                            st.rerun()
+                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Error al eliminar cuota extraordinaria: {e}")
+
     # VALIDAR PAGOS
     with t3:
         st.subheader("Pagos Pendientes por Validar")
@@ -642,116 +695,90 @@ elif st.session_state.rol_logueado == "admin":
                 st.info("No hay pagos pendientes.")
             else:
                 st.dataframe(df_p, use_container_width=True)
-                pid = st.selectbox("ID de Pago a Procesar:", df_p["id"].tolist())
-                ca, cr = st.columns(2)
-                with ca:
-                    if st.button("✅ Aprobar Pago", use_container_width=True):
-                        with engine.connect() as conn:
-                            conn.execute(text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :i"), {"i": pid})
-                            conn.commit()
-                        st.success(f"Pago #{pid} Aprobado.")
-                        st.rerun()
-                with cr:
-                    if st.button("❌ Rechazar Pago", use_container_width=True):
-                        with engine.connect() as conn:
-                            conn.execute(text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :i"), {"i": pid})
-                            conn.commit()
-                        st.warning(f"Pago #{pid} Rechazado.")
-                        st.rerun()
+                for _, r in df_p.iterrows():
+                    c1, c2, c3 = st.columns([3, 1, 1])
+                    with c1:
+                        st.write(f"**Pago #{r['id']}** | {r['apartamento']} | {r['tipo_pago']} ({r['mes_anio']}) | ${r['monto']} | Ref: {r['referencia']}")
+                    with c2:
+                        if st.button("✅ Aprobar", key=f"ap_{r['id']}"):
+                            with engine.connect() as conn:
+                                conn.execute(text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :id"), {"id": r['id']})
+                                conn.commit()
+                            st.rerun()
+                    with c3:
+                        if st.button("❌ Rechazar", key=f"rec_{r['id']}"):
+                            with engine.connect() as conn:
+                                conn.execute(text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"), {"id": r['id']})
+                                conn.commit()
+                            st.rerun()
         except Exception as e:
-            st.error(f"Error procesando pagos: {e}")
+            st.error(f"Error al consultar pagos: {e}")
 
     # ALÍCUOTAS Y PROPIETARIOS
     with t4:
-        st.subheader("Directorio de Propietarios y Alícuotas")
-        df_u = obtener_unidades_df()
-        st.dataframe(df_u, use_container_width=True)
+        st.subheader("Gestión de Unidades y Propietarios")
+        df_unid = obtener_unidades_df()
+        st.dataframe(df_unid, use_container_width=True)
 
-        st.write("---")
-        st.subheader("Editar Propietario / Teléfono / Alícuota")
-        u_sel = st.selectbox("Selecciona Unidad:", df_u["unidad"].tolist())
-        row_curr = df_u[df_u["unidad"] == u_sel].iloc[0]
+        with st.form("form_editar_unidad"):
+            u_sel = st.selectbox("Unidad a editar:", df_unid["unidad"].tolist())
+            p_nom = st.text_input("Nombre del Propietario")
+            p_tel = st.text_input("Teléfono (formato internacional ej: 584121234567)")
+            btn_u = st.form_submit_button("Guardar Cambios", type="primary")
 
-        with st.form("form_edit_u"):
-            e_prop = st.text_input("Nombre del Propietario:", value=row_curr["propietario"])
-            e_tel = st.text_input("Teléfono WhatsApp (ej. 584121234567):", value=row_curr["telefono"])
-            e_alic = st.number_input("Alícuota (%)", min_value=0.01, max_value=100.0, value=float(row_curr["alicuota"]), step=0.01)
-            btn_save_u = st.form_submit_button("Guardar Cambios", type="primary")
-
-            if btn_save_u:
+            if btn_u:
                 try:
                     with engine.connect() as conn:
                         conn.execute(
-                            text("UPDATE unidades SET propietario = :p, telefono = :t, alicuota = :a WHERE unidad = :u"),
-                            {"p": e_prop, "t": e_tel, "a": e_alic, "u": u_sel}
+                            text("UPDATE unidades SET propietario = :p, telefono = :t WHERE unidad = :u"),
+                            {"p": p_nom, "t": p_tel, "u": u_sel}
                         )
                         conn.commit()
-                    st.success(f"Datos de {u_sel} actualizados correctamente.")
+                    st.success("Unidad actualizada.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error actualizando unidad: {e}")
 
-    # MOROSIDAD Y ENVIAR RECIBOS POR WHATSAPP
+    # MOROSIDAD Y RECIBOS
     with t5:
-        st.subheader("Morosidad General y Envío Individual de Recibos")
-        mes_m = st.text_input("Evaluar Morosidad (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="m_eval")
+        st.subheader("Estado de Cuenta de las Unidades")
+        mes_mor = st.text_input("Mes de Consulta (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="mes_mor")
         df_u = obtener_unidades_df()
-
-        filas_m = []
+        
+        datos_mor = []
         for _, r in df_u.iterrows():
-            apt = r['unidad']
-            res = calcular_estado_cuenta(apt, mes_m)
-            msg_ind = f"🏢 *{datos_ed['nombre']}*\nRIF: {datos_ed['rif']}\n\nEstimado(a) {r['propietario']} ({apt}):\nEstado de Cuenta Periodo {mes_m}:\n- Cuota Mes: ${res['mes_actual']:,.2f}\n- Deuda Anterior: ${res['deuda_anterior']:,.2f}\n- Abonado: ${res['pagos_mes']:,.2f}\n*TOTAL PENDIENTE: ${res['total_deber']:,.2f}*"
-            link_wa_ind = generar_link_whatsapp(r['telefono'], msg_ind)
-
-            filas_m.append({
-                "Inmueble": apt,
+            st_cta = calcular_estado_cuenta(r['unidad'], mes_mor)
+            datos_mor.append({
+                "Unidad": r['unidad'],
                 "Propietario": r['propietario'],
-                "Teléfono": r['telefono'],
-                "Morosidad Anterior": f"${res['deuda_anterior']:,.2f}",
-                "Cuota Mes": f"${res['mes_actual']:,.2f}",
-                "Total Pendiente": f"${res['total_deber']:,.2f}",
-                "Mensaje WA": msg_ind,
-                "WhatsApp Link": link_wa_ind
+                "Alícuota": f"{r['alicuota']}%",
+                "Mes Actual ($)": f"${st_cta['mes_actual']:,.2f}",
+                "Deuda Anterior ($)": f"${st_cta['deuda_anterior']:,.2f}",
+                "Pagos Mes ($)": f"${st_cta['pagos_mes']:,.2f}",
+                "Total Pendiente ($)": f"${st_cta['total_deber']:,.2f}"
             })
+        st.dataframe(pd.DataFrame(datos_mor), use_container_width=True)
 
-        df_mor_table = pd.DataFrame(filas_m)
-        st.dataframe(df_mor_table.drop(columns=["Mensaje WA", "WhatsApp Link"]), use_container_width=True)
-
-        st.write("---")
-        st.subheader("👁️ Previsualizar y Enviar Recibo Individual")
-        u_wa_sel = st.selectbox("Seleccionar Inmueble para Enviar Recibo:", df_mor_table["Inmueble"].tolist())
-        row_wa = df_mor_table[df_mor_table["Inmueble"] == u_wa_sel].iloc[0]
-
-        st.text_area("Previsualización del Recibo por WhatsApp:", value=row_wa["Mensaje WA"], height=160)
-
-        st.link_button(
-            f"📱 Enviar Recibo a {row_wa['Propietario']} ({u_wa_sel})",
-            row_wa["WhatsApp Link"],
-            use_container_width=True,
-            type="primary"
-        )
-
-    # CONFIGURACIÓN DATOS EDIFICIO
+    # DATOS EDIFICIO
     with t6:
-        st.subheader("Configuración de Datos del Edificio")
-        datos_actuales = obtener_datos_edificio()
+        st.subheader("Configuración de la Edificación")
+        ed = obtener_datos_edificio()
 
         with st.form("form_edificio"):
-            nuevo_nombre = st.text_input("Nombre del Edificio / Condominio:", value=datos_actuales["nombre"])
-            nuevo_rif = st.text_input("RIF / Identificación Fiscal:", value=datos_actuales["rif"])
-            nueva_direccion = st.text_area("Dirección Física:", value=datos_actuales["direccion"])
-            btn_save_ed = st.form_submit_button("Guardar Configuración", type="primary")
+            n_nombre = st.text_input("Nombre de la Residencia / Condominio", value=ed['nombre'])
+            n_rif = st.text_input("RIF", value=ed['rif'])
+            n_dir = st.text_area("Dirección Física", value=ed['direccion'])
+            btn_ed = st.form_submit_button("Guardar Configuración", type="primary")
 
-            if btn_save_ed:
+            if btn_ed:
                 try:
                     with engine.connect() as conn:
                         conn.execute(
                             text("UPDATE configuracion_edificio SET nombre = :n, rif = :r, direccion = :d WHERE id = 1"),
-                            {"n": nuevo_nombre, "r": nuevo_rif, "d": nueva_direccion}
+                            {"n": n_nombre, "r": n_rif, "d": n_dir}
                         )
                         conn.commit()
-                    st.success("Datos del edificio actualizados con éxito.")
+                    st.success("Datos del edificio actualizados.")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error actualizando datos del edificio: {e}")
+                    st.error(f"Error actualizando configuración: {e}")
