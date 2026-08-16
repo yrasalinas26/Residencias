@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 import urllib.parse
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -56,7 +56,6 @@ def inicializar_tablas():
         return
     try:
         with engine.connect() as conn:
-            # Tabla Datos del Edificio
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS configuracion_edificio (
                     id INT PRIMARY KEY DEFAULT 1,
@@ -73,7 +72,6 @@ def inicializar_tablas():
                     VALUES (1, 'Residencias El Condominio', 'J-12345678-0', 'Calle Principal, Edificio Central')
                 """))
 
-            # Tabla de Unidades / Propietarios / Alícuotas
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS unidades (
                     unidad VARCHAR(10) PRIMARY KEY,
@@ -83,7 +81,6 @@ def inicializar_tablas():
                 );
             """))
 
-            # Garantizar columnas si existía la tabla previa
             try:
                 conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Sin Asignar'"))
                 conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS telefono VARCHAR(30) DEFAULT ''"))
@@ -95,7 +92,6 @@ def inicializar_tablas():
                 for u, a in UNIDADES_DEFECTO:
                     conn.execute(text("INSERT INTO unidades (unidad, alicuota, propietario, telefono) VALUES (:u, :a, 'Propietario', '')"), {"u": u, "a": a})
 
-            # Tabla Usuarios
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS usuarios (
                     usuario VARCHAR(20) PRIMARY KEY,
@@ -112,7 +108,6 @@ def inicializar_tablas():
                 if not conn.execute(text("SELECT usuario FROM usuarios WHERE usuario = :u"), {"u": u}).fetchone():
                     conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES (:u, '1234', 'propietario')"), {"u": u})
 
-            # Tabla Gastos Comunes
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS gastos (
                     id SERIAL PRIMARY KEY,
@@ -124,7 +119,6 @@ def inicializar_tablas():
                 );
             """))
 
-            # Tabla Cuotas Extraordinarias
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS cuotas_extraordinarias (
                     id SERIAL PRIMARY KEY,
@@ -135,7 +129,6 @@ def inicializar_tablas():
                 );
             """))
 
-            # Tabla Pagos
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS pagos_reportados (
                     id SERIAL PRIMARY KEY,
@@ -160,7 +153,7 @@ def inicializar_tablas():
 inicializar_tablas()
 
 # -----------------------------------------------------------------------------
-# FUNCIONES AUXILIARES DE DATOS
+# FUNCIONES AUXILIARES
 # -----------------------------------------------------------------------------
 def obtener_datos_edificio():
     if not engine:
@@ -230,9 +223,6 @@ def calcular_estado_cuenta(apartamento, mes_hasta):
     except Exception:
         return {"mes_actual": 0.0, "deuda_anterior": 0.0, "pagos_mes": 0.0, "total_deber": 0.0, "gastos_totales": 0.0}
 
-# -----------------------------------------------------------------------------
-# GENERACIÓN DE RECIBOS EN PDF CON MEMBRETE DEL EDIFICIO
-# -----------------------------------------------------------------------------
 def generar_pdf_recibo(apartamento, mes_anio, datos_cuenta):
     datos_ed = obtener_datos_edificio()
     df_u = obtener_unidades_df()
@@ -245,7 +235,6 @@ def generar_pdf_recibo(apartamento, mes_anio, datos_cuenta):
     styles = getSampleStyleSheet()
     story = []
 
-    # Membrete Edificio
     story.append(Paragraph(f"<b>{datos_ed['nombre'].upper()}</b>", styles['Heading1']))
     story.append(Paragraph(f"<b>RIF:</b> {datos_ed['rif']} | <b>Dirección:</b> {datos_ed['direccion']}", styles['Normal']))
     story.append(Spacer(1, 15))
@@ -282,9 +271,6 @@ def generar_pdf_recibo(apartamento, mes_anio, datos_cuenta):
     buffer.seek(0)
     return buffer
 
-# -----------------------------------------------------------------------------
-# GENERADORES DE TEXTO PARA WHATSAPP
-# -----------------------------------------------------------------------------
 def generar_link_whatsapp(telefono, mensaje):
     msg_enc = urllib.parse.quote(mensaje)
     tel_limpio = "".join(filter(str.isdigit, str(telefono)))
@@ -546,18 +532,18 @@ elif st.session_state.rol_logueado == "admin":
 
             txt_wa += f"\nPor favor realizar sus pagos y reportarlos a través del portal del condominio."
 
-            st.text_area("Texto del Reporte Generado:", value=txt_wa, height=220)
+            st.text_area("Previsualización del Mensaje para el Grupo:", value=txt_wa, height=220)
             st.link_button("📲 Compartir Reporte General al Grupo de WhatsApp", generar_link_whatsapp("", txt_wa), type="primary")
         except Exception as e:
             st.error(f"Error generando reporte: {e}")
 
-    # CUOTAS EXTRAS
+    # CUOTAS EXTRAS: DISTRIBUCIÓN Y ENVÍO A WHATSAPP
     with t2:
-        st.subheader("Crear Cuota Extraordinaria")
+        st.subheader("1️⃣ Crear Nueva Cuota Extraordinaria")
         with st.form("form_ce"):
             concepto_ce = st.text_input("Concepto (ej. Reparación de Ascensor)")
             monto_ce = st.number_input("Monto Total del Fondo ($)", min_value=0.01, step=0.01)
-            btn_ce = st.form_submit_button("Crear Cuota Extraordinaria", type="primary")
+            btn_ce = st.form_submit_button("Guardar Cuota Extraordinaria", type="primary")
 
             if btn_ce and concepto_ce:
                 try:
@@ -567,17 +553,81 @@ elif st.session_state.rol_logueado == "admin":
                             {"c": concepto_ce, "m": monto_ce}
                         )
                         conn.commit()
-                    st.success("Cuota extraordinaria registrada.")
+                    st.success("Cuota extraordinaria creada exitosamente.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error creando cuota: {e}")
 
         st.write("---")
+        st.subheader("2️⃣ Previsualizar Distribución y Notificar por WhatsApp")
+
         try:
             with engine.connect() as conn:
-                st.dataframe(pd.read_sql(text("SELECT * FROM cuotas_extraordinarias ORDER BY id DESC"), conn), use_container_width=True)
+                df_cuotas = pd.read_sql(text("SELECT id, concepto, monto_total FROM cuotas_extraordinarias WHERE estatus = 'Activa' ORDER BY id DESC"), conn)
+
+            if df_cuotas.empty:
+                st.info("No hay cuotas extraordinarias creadas para distribuir.")
+            else:
+                opciones_ce = df_cuotas.apply(lambda x: f"#{x['id']} - {x['concepto']} (${x['monto_total']:,.2f})", axis=1).tolist()
+                ce_seleccionada = st.selectbox("Selecciona la Cuota Extraordinaria a Distribuir:", opciones_ce)
+                
+                id_ce_actual = int(ce_seleccionada.split(" - ")[0].replace("#", ""))
+                row_ce = df_cuotas[df_cuotas['id'] == id_ce_actual].iloc[0]
+                
+                monto_ce_total = float(row_ce['monto_total'])
+                concepto_ce_txt = row_ce['concepto']
+
+                df_u = obtener_unidades_df()
+
+                # Generar distribución por unidad
+                filas_distribucion = []
+                txt_ce_grupo = f"🏢 *{datos_ed['nombre'].upper()}*\nRIF: {datos_ed['rif']}\n\n"
+                txt_ce_grupo += f"⭐ *COBRO DE CUOTA EXTRAORDINARIA*\n"
+                txt_ce_grupo += f"📌 *Concepto:* {concepto_ce_txt}\n"
+                txt_ce_grupo += f"💰 *Monto Total del Fondo:* ${monto_ce_total:,.2f}\n"
+                txt_ce_grupo += f"-----------------------------------\n"
+                txt_ce_grupo += f"*DISTRIBUCIÓN POR ALÍCUOTA:*\n"
+
+                for _, r in df_u.iterrows():
+                    monto_corresponde = round(monto_ce_total * (float(r['alicuota']) / 100.0), 2)
+                    txt_ce_grupo += f"• *{r['unidad']}* ({r['alicuota']}%): ${monto_corresponde:,.2f}\n"
+                    
+                    msg_ce_ind = f"🏢 *{datos_ed['nombre']}*\nRIF: {datos_ed['rif']}\n\nEstimado(a) {r['propietario']} ({r['unidad']}):\nSe ha emitido la siguiente *Cuota Extraordinaria*:\n📌 *Concepto:* {concepto_ce_txt}\n💰 *Monto Total del Fondo:* ${monto_ce_total:,.2f}\n📊 *Su Alícuota ({r['alicuota']}%):* ${monto_corresponde:,.2f}\n\nPor favor reportar su pago a través del sistema."
+                    
+                    filas_distribucion.append({
+                        "Unidad": r['unidad'],
+                        "Propietario": r['propietario'],
+                        "Alícuota": f"{r['alicuota']}%",
+                        "Monto a Pagar ($)": f"${monto_corresponde:,.2f}",
+                        "WhatsApp Link": generar_link_whatsapp(r['telefono'], msg_ce_ind)
+                    })
+
+                txt_ce_grupo += f"\nPor favor reportar sus pagos mediante el portal de la residencia."
+
+                df_dist = pd.DataFrame(filas_distribucion)
+                st.dataframe(df_dist.drop(columns=["WhatsApp Link"]), use_container_width=True)
+
+                st.write("---")
+                c_grp, c_ind = st.columns(2)
+
+                with c_grp:
+                    st.markdown("#### 📢 Notificar al Grupo General")
+                    st.text_area("Previsualización Mensaje de Grupo:", value=txt_ce_grupo, height=200)
+                    st.link_button("📲 Enviar Cuota Extra al Grupo de WhatsApp", generar_link_whatsapp("", txt_ce_grupo), type="primary", use_container_width=True)
+
+                with c_ind:
+                    st.markdown("#### 📱 Notificar a Propietario Individual")
+                    u_ce_ind = st.selectbox("Seleccionar Propietario para Enviar:", df_dist["Unidad"].tolist())
+                    row_ce_ind = df_dist[df_dist["Unidad"] == u_ce_ind].iloc[0]
+                    
+                    m_ind_val = round(monto_ce_total * (float(df_u[df_u['unidad'] == u_ce_ind]['alicuota'].values[0]) / 100.0), 2)
+                    msg_prev_ind = f"🏢 *{datos_ed['nombre']}*\nRIF: {datos_ed['rif']}\n\nEstimado(a) {row_ce_ind['Propietario']} ({u_ce_ind}):\nSe ha emitido la siguiente *Cuota Extraordinaria*:\n📌 *Concepto:* {concepto_ce_txt}\n💰 *Monto Total del Fondo:* ${monto_ce_total:,.2f}\n📊 *Su Alícuota:* ${m_ind_val:,.2f}\n\nPor favor reportar su pago a través del sistema."
+                    
+                    st.text_area("Previsualización Mensaje Individual:", value=msg_prev_ind, height=140)
+                    st.link_button(f"📱 Enviar a {row_ce_ind['Propietario']} ({u_ce_ind})", row_ce_ind["WhatsApp Link"], type="primary", use_container_width=True)
+
         except Exception as e:
-            st.error(f"Error consultando cuotas: {e}")
+            st.error(f"Error distribuyendo cuota extraordinaria: {e}")
 
     # VALIDAR PAGOS
     with t3:
@@ -661,20 +711,23 @@ elif st.session_state.rol_logueado == "admin":
                 "Morosidad Anterior": f"${res['deuda_anterior']:,.2f}",
                 "Cuota Mes": f"${res['mes_actual']:,.2f}",
                 "Total Pendiente": f"${res['total_deber']:,.2f}",
-                "WhatsApp": link_wa_ind
+                "Mensaje WA": msg_ind,
+                "WhatsApp Link": link_wa_ind
             })
 
         df_mor_table = pd.DataFrame(filas_m)
-        st.dataframe(df_mor_table.drop(columns=["WhatsApp"]), use_container_width=True)
+        st.dataframe(df_mor_table.drop(columns=["Mensaje WA", "WhatsApp Link"]), use_container_width=True)
 
         st.write("---")
-        st.subheader("📲 Enviar Recibo Individual por WhatsApp")
+        st.subheader("👁️ Previsualizar y Enviar Recibo Individual")
         u_wa_sel = st.selectbox("Seleccionar Inmueble para Enviar Recibo:", df_mor_table["Inmueble"].tolist())
         row_wa = df_mor_table[df_mor_table["Inmueble"] == u_wa_sel].iloc[0]
 
+        st.text_area("Previsualización del Recibo por WhatsApp:", value=row_wa["Mensaje WA"], height=160)
+
         st.link_button(
             f"📱 Enviar Recibo a {row_wa['Propietario']} ({u_wa_sel})",
-            row_wa["WhatsApp"],
+            row_wa["WhatsApp Link"],
             use_container_width=True,
             type="primary"
         )
