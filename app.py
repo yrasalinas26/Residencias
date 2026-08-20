@@ -2,7 +2,13 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime
+import io
+import urllib.parse
 from PIL import Image
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA E ICONO PERSONALIZADO
@@ -174,7 +180,7 @@ def inicializar_tablas():
 inicializar_tablas()
 
 # -----------------------------------------------------------------------------
-# FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES Y DE PDF
 # -----------------------------------------------------------------------------
 def obtener_datos_edificio():
     if not engine:
@@ -196,6 +202,57 @@ def obtener_unidades_df():
             return pd.read_sql(text("SELECT unidad, alicuota, propietario, telefono FROM unidades ORDER BY unidad ASC"), conn)
     except Exception:
         return pd.DataFrame(UNIDADES_DEFECTO, columns=["unidad", "alicuota"])
+
+def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
+    datos_ed = obtener_datos_edificio()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+
+    story = []
+    
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        leading=20,
+        alignment=1,
+        textColor=colors.HexColor("#1E3A8A")
+    )
+    
+    story.append(Paragraph(f"<b>{datos_ed['nombre']}</b>", title_style))
+    story.append(Paragraph(f"RIF: {datos_ed['rif']} | {datos_ed['direccion']}", styles['Normal']))
+    story.append(Spacer(1, 15))
+    
+    story.append(Paragraph(f"<b>AVISO DE COBRO - PERIODO: {periodo}</b>", styles['Heading2']))
+    story.append(Paragraph(f"<b>Unidad:</b> {apt} | <b>Alícuota Aplicada:</b> {alicuota}%", styles['Normal']))
+    story.append(Spacer(1, 15))
+
+    tabla_datos = [["Concepto / Descripción", "Monto Base ($)", "Cuota Parte ($)"]]
+    for item in detalles_gastos:
+        tabla_datos.append([item['concepto'], f"${item['base']:,.2f}", f"${item['monto']:,.2f}"])
+    
+    tabla_datos.append(["TOTAL A PAGAR", "", f"${total_cuota:,.2f}"])
+
+    t = Table(tabla_datos, colWidths=[280, 110, 110])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1E3A8A")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 8),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor("#E2E8F0")),
+        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey)
+    ]))
+    
+    story.append(t)
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("Por favor realice su pago y repórtelo en la plataforma.", styles['Italic']))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 # -----------------------------------------------------------------------------
 # CONTROL DE SESIÓN
@@ -260,7 +317,7 @@ elif st.session_state.rol_logueado == "propietario":
 
     col_head, col_out = st.columns([3, 1])
     with col_head:
-        st.title(f"🏢 {datos_ed['nombre']} - {user_actual}")
+        st.title(f"🏢 {datos_ed['nombre']} - Unidad {user_actual}")
         st.caption(f"Propietario: {prop_nombre} | Alícuota: {pct_user}%")
     with col_out:
         st.write("")
@@ -268,7 +325,98 @@ elif st.session_state.rol_logueado == "propietario":
             cerrar_sesion()
 
     st.write("---")
-    st.info("Portal Propietario Activo.")
+
+    t_p1, t_p2, t_p3 = st.tabs(["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"])
+
+    with t_p1:
+        st.subheader("📊 Mis Deudas y Recibos")
+        mes_actual = datetime.now().strftime("%Y-%m")
+        
+        try:
+            with engine.connect() as conn:
+                gastos_aprob = conn.execute(
+                    text("SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    {"m": mes_actual}
+                ).scalar() or 0
+                
+                cargos_ind = conn.execute(
+                    text("SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :u AND mes_anio = :m"),
+                    {"u": user_actual, "m": mes_actual}
+                ).scalar() or 0
+
+            cuota_comun = float(gastos_aprob) * (pct_user / 100.0)
+            total_mes = cuota_comun + float(cargos_ind)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Cuota Común Estimada", f"${cuota_comun:,.2f}")
+            c2.metric("Cargos No Comunes", f"${float(cargos_ind):,.2f}")
+            c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
+
+            st.write("---")
+            st.subheader("📥 Descargar Recibo del Mes")
+            
+            detalles = [
+                {"concepto": "Gastos Comunes del Edificio", "base": float(gastos_aprob), "monto": cuota_comun},
+                {"concepto": "Cargos Indiv. No Comunes", "base": float(cargos_ind), "monto": float(cargos_ind)}
+            ]
+            pdf_bytes = generar_pdf_recibo(user_actual, mes_actual, total_mes, detalles, pct_user)
+
+            st.download_button(
+                f"📄 Descargar Recibo PDF ({mes_actual})",
+                data=pdf_bytes,
+                file_name=f"recibo_{user_actual}_{mes_actual}.pdf",
+                mime="application/pdf"
+            )
+
+        except Exception as e:
+            st.error(f"Error consultando estado de cuenta: {e}")
+
+    with t_p2:
+        st.subheader("📝 Formulario de Reporte de Pago")
+        with st.form("form_reportar_pago"):
+            tipo_p = st.selectbox("Tipo de Pago", ["Mensualidad", "Cuota Extraordinaria"])
+            mes_p = st.text_input("Periodo / Mes-Año", value=datetime.now().strftime("%Y-%m"))
+            monto_p = st.number_input("Monto Pagado ($)", min_value=0.01, step=0.01)
+            metodo = st.selectbox("Método de Pago", ["Pago Móvil", "Transferencia", "Efectivo USD", "Zelle"])
+            ref = st.text_input("Número de Referencia")
+            fecha_p = st.date_input("Fecha de Realización del Pago", datetime.now())
+
+            btn_pago = st.form_submit_button("Enviar Reporte de Pago", type="primary")
+
+            if btn_pago:
+                if not ref:
+                    st.error("Debes ingresar el número de referencia.")
+                else:
+                    try:
+                        with engine.connect() as conn:
+                            conn.execute(
+                                text("""
+                                    INSERT INTO pagos_reportados (apartamento, tipo_pago, mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus)
+                                    VALUES (:u, :tp, :m, :mo, :met, :ref, :f, 'Pendiente')
+                                """),
+                                {"u": user_actual, "tp": tipo_p, "m": mes_p, "mo": monto_p, "met": metodo, "ref": ref, "f": fecha_p}
+                            )
+                            conn.commit()
+                        st.success("✅ Pago reportado con éxito. Queda en espera de verificación por administración.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al registrar pago: {e}")
+
+    with t_p3:
+        st.subheader("📋 Historial de Mis Reportes")
+        try:
+            with engine.connect() as conn:
+                df_mis_pagos = pd.read_sql(
+                    text("SELECT fecha_pago, tipo_pago, mes_anio, monto, metodo_pago, referencia, estatus FROM pagos_reportados WHERE apartamento = :u ORDER BY id DESC"),
+                    conn, params={"u": user_actual}
+                )
+
+            if df_mis_pagos.empty:
+                st.info("No has registrado ningún pago hasta el momento.")
+            else:
+                st.dataframe(df_mis_pagos, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error cargando el historial: {e}")
 
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRACIÓN
@@ -321,58 +469,4 @@ elif st.session_state.rol_logueado == "admin":
                             """),
                             {"m": mes, "c": concepto, "mo": monto, "p": proveedor if proveedor.strip() else "N/A"}
                         )
-                        conn.commit()
-                    st.success("Gasto guardado en estado pendiente de aprobación.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error registrando gasto: {e}")
-
-        st.write("---")
-        st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
-        
-        mes_filtro = st.text_input("Filtrar gastos por periodo (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="filtro_gastos_admin")
-        
-        try:
-            with engine.connect() as conn:
-                df_gastos_pendientes = pd.read_sql(
-                    text("SELECT id, concepto, monto, estatus, mes_anio FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
-                    conn, params={"m": mes_filtro}
-                )
-
-            if df_gastos_pendientes.empty:
-                st.info(f"No hay gastos registrados para el periodo {mes_filtro}.")
-            else:
-                for _, r_gasto in df_gastos_pendientes.iterrows():
-                    c_detalles, c_acciones = st.columns([3, 2])
-                    with c_detalles:
-                        badge_estatus = "🟡 Pendiente" if r_gasto['estatus'] == 'Pendiente' else "🟢 Aprobado"
-                        st.markdown(f"**Concepto:** {r_gasto['concepto']} | **Monto:** ${float(r_gasto['monto']):,.2f} | **Estatus:** {badge_estatus}")
-                    
-                    with c_acciones:
-                        btn_col1, btn_col2 = st.columns(2)
-                        with btn_col1:
-                            if r_gasto['estatus'] == 'Pendiente':
-                                if st.button("✅ Aprobar", key=f"app_gasto_{r_gasto['id']}", type="primary"):
-                                    with engine.connect() as conn:
-                                        conn.execute(
-                                            text("UPDATE gastos SET estatus = 'Aprobado' WHERE id = :id"),
-                                            {"id": r_gasto['id']}
-                                        )
-                                        conn.commit()
-                                    st.success("Gasto aprobado.")
-                                    st.rerun()
-                        with btn_col2:
-                            if st.button("❌ Eliminar", key=f"del_gasto_{r_gasto['id']}", type="secondary"):
-                                with engine.connect() as conn:
-                                    conn.execute(
-                                        text("DELETE FROM gastos WHERE id = :id"),
-                                        {"id": r_gasto['id']}
-                                    )
-                                    conn.commit()
-                                st.success("Gasto eliminado.")
-                                st.rerun()
-                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
-
-        except Exception as e:
-            st.error(f"Error consultando gastos: {e}")
-
+                  
