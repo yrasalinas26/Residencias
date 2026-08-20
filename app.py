@@ -469,3 +469,287 @@ elif st.session_state.rol_logueado == "admin":
                             {"m": mes, "c": concepto, "mo": monto, "p": proveedor if proveedor.strip() else "N/A"}
                         )
                         conn.commit()
+                    st.success("Gasto guardado en estado pendiente de aprobación.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error registrando gasto: {e}")
+
+        st.write("---")
+        st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
+        
+        mes_filtro = st.text_input("Filtrar gastos por periodo (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="filtro_gastos_admin")
+        
+        try:
+            with engine.connect() as conn:
+                df_gastos_pendientes = pd.read_sql(
+                    text("SELECT id, concepto, monto, estatus, mes_anio FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
+                    conn, params={"m": mes_filtro}
+                )
+
+            if df_gastos_pendientes.empty:
+                st.info(f"No hay gastos registrados para el periodo {mes_filtro}.")
+            else:
+                for _, r_gasto in df_gastos_pendientes.iterrows():
+                    c_detalles, c_acciones = st.columns([3, 2])
+                    with c_detalles:
+                        badge_estatus = "🟡 Pendiente" if r_gasto['estatus'] == 'Pendiente' else "🟢 Aprobado"
+                        st.markdown(f"**Concepto:** {r_gasto['concepto']} | **Monto:** ${float(r_gasto['monto']):,.2f} | **Estatus:** {badge_estatus}")
+                    
+                    with c_acciones:
+                        btn_col1, btn_col2 = st.columns(2)
+                        with btn_col1:
+                            if r_gasto['estatus'] == 'Pendiente':
+                                if st.button("✅ Aprobar", key=f"app_gasto_{r_gasto['id']}", type="primary"):
+                                    with engine.connect() as conn:
+                                        conn.execute(
+                                            text("UPDATE gastos SET estatus = 'Aprobado' WHERE id = :id"),
+                                            {"id": r_gasto['id']}
+                                        )
+                                        conn.commit()
+                                    st.success("Gasto aprobado.")
+                                    st.rerun()
+                        with btn_col2:
+                            if st.button("❌ Eliminar", key=f"del_gasto_{r_gasto['id']}", type="secondary"):
+                                with engine.connect() as conn:
+                                    conn.execute(
+                                        text("DELETE FROM gastos WHERE id = :id"),
+                                        {"id": r_gasto['id']}
+                                    )
+                                    conn.commit()
+                                st.success("Gasto eliminado.")
+                                st.rerun()
+                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"Error consultando gastos: {e}")
+
+    # TABS 2: GASTOS NO COMUNES (CARGOS INDIVIDUALES)
+    with t2:
+        st.subheader("🛠️ Cargar Gasto No Común (Cargo Individual)")
+        df_unidades_list = obtener_unidades_df()
+        
+        with st.form("form_cargo_ind"):
+            c_nc1, c_nc2 = st.columns(2)
+            with c_nc1:
+                apt_destino = st.selectbox("Apartamento / Unidad Destino", df_unidades_list['unidad'].tolist())
+                mes_nc = st.text_input("Periodo (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="nc_mes")
+            with c_nc2:
+                concepto_nc = st.text_input("Concepto (ej. Llave de portón, Reparación tubería)")
+                monto_nc = st.number_input("Monto ($)", min_value=0.01, step=0.01, key="nc_monto")
+
+            btn_nc = st.form_submit_button("Asignar Cargo Individual", type="primary")
+
+            if btn_nc and concepto_nc:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO cargos_individuales (apartamento, mes_anio, concepto, monto, fecha)
+                                VALUES (:a, :m, :c, :mo, CURRENT_DATE)
+                            """),
+                            {"a": apt_destino, "m": mes_nc, "c": concepto_nc, "mo": monto_nc}
+                        )
+                        conn.commit()
+                    st.success(f"Cargo no común cargado exitosamente a la unidad {apt_destino}.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error registrando cargo individual: {e}")
+
+        st.write("---")
+        st.subheader("📋 Cargos No Comunes Registrados")
+        try:
+            with engine.connect() as conn:
+                df_cargos_nc = pd.read_sql(text("SELECT id, apartamento, mes_anio, concepto, monto, fecha FROM cargos_individuales ORDER BY id DESC"), conn)
+            if df_cargos_nc.empty:
+                st.info("No hay cargos individuales registrados.")
+            else:
+                st.dataframe(df_cargos_nc, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error listando cargos: {e}")
+
+    # TABS 3: CUOTAS EXTRAORDINARIAS
+    with t3:
+        st.subheader("⭐ Cargar Cuota Extraordinaria")
+        with st.form("form_cuota_extra"):
+            col_ce1, col_ce2 = st.columns(2)
+            with col_ce1:
+                concepto_ce = st.text_input("Proyecto / Concepto (ej. Pintura Fachada)")
+            with col_ce2:
+                monto_ce = st.number_input("Monto Total del Proyecto ($)", min_value=0.01, step=0.01)
+
+            btn_ce = st.form_submit_button("Registrar Cuota Extraordinaria", type="primary")
+
+            if btn_ce and concepto_ce:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO cuotas_extraordinarias (concepto, monto_total, fecha_emision, estatus)
+                                VALUES (:c, :m, CURRENT_DATE, 'Aprobado')
+                            """),
+                            {"c": concepto_ce, "m": monto_ce}
+                        )
+                        conn.commit()
+                    st.success("Cuota extraordinaria registrada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar cuota extra: {e}")
+
+        st.write("---")
+        st.subheader("⭐ Proyectos y Cuotas Extraordinarias Activas")
+        try:
+            with engine.connect() as conn:
+                df_ce = pd.read_sql(text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"), conn)
+            if df_ce.empty:
+                st.info("No hay cuotas extraordinarias registradas.")
+            else:
+                st.dataframe(df_ce, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error consultando cuotas extras: {e}")
+
+    # TABS 4: VALIDAR PAGOS
+    with t4:
+        st.subheader("✅ Verificación y Aprobación de Pagos")
+        try:
+            with engine.connect() as conn:
+                df_pagos_pend = pd.read_sql(
+                    text("SELECT id, apartamento, tipo_pago, mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE estatus = 'Pendiente' ORDER BY id ASC"),
+                    conn
+                )
+
+            if df_pagos_pend.empty:
+                st.success("🎉 No hay pagos pendientes por verificar.")
+            else:
+                for _, row_p in df_pagos_pend.iterrows():
+                    c_p1, c_p2 = st.columns([3, 2])
+                    with c_p1:
+                        st.markdown(f"**Apto:** {row_p['apartamento']} | **Tipo:** {row_p['tipo_pago']} | **Monto:** ${float(row_p['monto']):,.2f}")
+                        st.caption(f"Método: {row_p['metodo_pago']} | Ref: {row_p['referencia']} | Fecha: {row_p['fecha_pago']}")
+                    with c_p2:
+                        b_val1, b_val2 = st.columns(2)
+                        with b_val1:
+                            if st.button("✅ Aprobar", key=f"val_p_{row_p['id']}", type="primary"):
+                                with engine.connect() as conn:
+                                    conn.execute(text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :id"), {"id": row_p['id']})
+                                    conn.commit()
+                                st.success("Pago Aprobado.")
+                                st.rerun()
+                        with b_val2:
+                            if st.button("❌ Rechazar", key=f"rec_p_{row_p['id']}", type="secondary"):
+                                with engine.connect() as conn:
+                                    conn.execute(text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"), {"id": row_p['id']})
+                                    conn.commit()
+                                st.warning("Pago Rechazado.")
+                                st.rerun()
+                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Error validando pagos: {e}")
+
+    # TABS 5: ALÍCUOTAS Y UNIDADES
+    with t5:
+        st.subheader("🏢 Gestión de Unidades y Alícuotas")
+        df_unid = obtener_unidades_df()
+        
+        st.dataframe(df_unid, use_container_width=True)
+
+        st.write("---")
+        st.subheader("✏️ Modificar Datos de Unidad")
+        with st.form("form_edit_unidad"):
+            c_u1, c_u2 = st.columns(2)
+            with c_u1:
+                u_sel = st.selectbox("Seleccionar Unidad", df_unid['unidad'].tolist())
+                prop_in = st.text_input("Nombre del Propietario")
+            with c_u2:
+                tel_in = st.text_input("Teléfono de Contacto")
+                alic_in = st.number_input("Alícuota (%)", min_value=0.01, max_value=100.0, step=0.01, value=6.0)
+
+            btn_u_save = st.form_submit_button("Actualizar Unidad", type="primary")
+
+            if btn_u_save:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("UPDATE unidades SET propietario = :p, telefono = :t, alicuota = :a WHERE unidad = :u"),
+                            {"p": prop_in, "t": tel_in, "a": alic_in, "u": u_sel}
+                        )
+                        conn.commit()
+                    st.success(f"Datos de la unidad {u_sel} actualizados correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error editando unidad: {e}")
+
+    # TABS 6: MOROSIDAD Y RECIBOS
+    with t6:
+        st.subheader("🚨 Control de Deudas por Unidad")
+        mes_mor = st.text_input("Periodo a Consultar (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="mes_morosidad")
+
+        try:
+            with engine.connect() as conn:
+                gastos_totales = conn.execute(
+                    text("SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    {"m": mes_mor}
+                ).scalar() or 0
+
+                df_u_mor = pd.read_sql(text("SELECT unidad, alicuota, propietario FROM unidades ORDER BY unidad ASC"), conn)
+
+            res_morosidad = []
+            for _, r in df_u_mor.iterrows():
+                cuota_c = float(gastos_totales) * (float(r['alicuota']) / 100.0)
+                
+                try:
+                    with engine.connect() as conn:
+                        c_ind = conn.execute(
+                            text("SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :u AND mes_anio = :m"),
+                            {"u": r['unidad'], "m": mes_mor}
+                        ).scalar() or 0
+
+                        p_pagado = conn.execute(
+                            text("SELECT SUM(monto) FROM pagos_reportados WHERE apartamento = :u AND mes_anio = :m AND estatus = 'Aprobado'"),
+                            {"u": r['unidad'], "m": mes_mor}
+                        ).scalar() or 0
+                except Exception:
+                    c_ind = 0
+                    p_pagado = 0
+
+                total_deuda = cuota_c + float(c_ind) - float(p_pagado)
+                est_deuda = "🔴 Pendiente / Moroso" if total_deuda > 0 else "🟢 Al Día"
+
+                res_morosidad.append({
+                    "Unidad": r['unidad'],
+                    "Propietario": r['propietario'],
+                    "Alícuota (%)": r['alicuota'],
+                    "Monto Mes ($)": cuota_c + float(c_ind),
+                    "Abonado ($)": float(p_pagado),
+                    "Saldo Pendiente ($)": total_deuda,
+                    "Estatus": est_deuda
+                })
+
+            st.dataframe(pd.DataFrame(res_morosidad), use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Error generando reporte de morosidad: {e}")
+
+    # TABS 7: DATOS EDIFICIO
+    with t7:
+        st.subheader("⚙️ Configuración del Edificio")
+        d_ed = obtener_datos_edificio()
+
+        with st.form("form_edificio_config"):
+            ed_nombre = st.text_input("Nombre del Condominio / Edificio", value=d_ed['nombre'])
+            ed_rif = st.text_input("RIF / Documento de Identificación", value=d_ed['rif'])
+            ed_dir = st.text_area("Dirección Física", value=d_ed['direccion'])
+
+            btn_ed = st.form_submit_button("Guardar Cambios del Edificio", type="primary")
+
+            if btn_ed:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("UPDATE configuracion_edificio SET nombre = :n, rif = :r, direccion = :d WHERE id = 1"),
+                            {"n": ed_nombre, "r": ed_rif, "d": ed_dir}
+                        )
+                        conn.commit()
+                    st.success("Configuración actualizada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error guardando datos: {e}")
