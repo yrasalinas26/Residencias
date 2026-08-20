@@ -3,7 +3,6 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime
 import io
-import urllib.parse
 from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -469,4 +468,4 @@ elif st.session_state.rol_logueado == "admin":
                             """),
                             {"m": mes, "c": concepto, "mo": monto, "p": proveedor if proveedor.strip() else "N/A"}
                         )
-                  
+                        conn.commit()
