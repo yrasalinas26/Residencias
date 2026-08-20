@@ -375,4 +375,4 @@ elif st.session_state.rol_logueado == "admin":
 
         except Exception as e:
             st.error(f"Error consultando gastos: {e}")
-            
+
