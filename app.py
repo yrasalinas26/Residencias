@@ -380,46 +380,83 @@ elif st.session_state.rol_logueado == "propietario":
     st.write("---")
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Recibo del Mes", "⭐ Cuotas Extraordinarias", "📥 Reportar Pago", "📋 Mis Pagos"])
+# TABS 1: GASTOS COMUNES
+    with t1:
+        st.subheader("➕ Registrar Nuevo Gasto Común")
+        with st.form("form_gasto_comun"):
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                mes_gasto = st.text_input("Mes / Año (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
+                concepto_gasto = st.text_input("Descripción del Gasto (Ej. Corpoelec, Limpieza)")
+            with col_g2:
+                monto_gasto = st.number_input("Monto ($)", min_value=0.01, step=0.01)
 
-    with tab1:
-        mes_filtro = st.text_input("Consulta de mes (AAAA-MM):", value=datetime.now().strftime("%Y-%m"))
-        datos = calcular_estado_cuenta(user_actual, mes_filtro)
+            btn_gasto = st.form_submit_button("Cargar Gasto (Previsualizar)", type="primary")
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Morosidad Anterior", f"${datos['deuda_anterior']:,.2f}")
-        c2.metric("Cuota Común Mes", f"${datos['mes_actual']:,.2f}")
-        c3.metric("Gastos No Comunes", f"${datos['cargos_ind']:,.2f}")
-        c4.metric("Pagos Validados", f"${datos['pagos_mes']:,.2f}")
-        c5.metric("TOTAL A PAGAR", f"${datos['total_deber']:,.2f}", delta=-datos['total_deber'] if datos['total_deber'] > 0 else 0)
-
-        if datos['cargos_ind'] > 0:
-            st.info("📌 **Desglose de Gastos No Comunes / Cargos Individuales del Mes:**")
-            try:
-                with engine.connect() as conn:
-                    df_ind_det = pd.read_sql(
-                        text("SELECT concepto, monto, fecha FROM cargos_individuales WHERE apartamento = :ap AND mes_anio = :m"),
-                        conn, params={"ap": user_actual, "m": mes_filtro}
-                    )
-                st.dataframe(df_ind_det, use_container_width=True)
-            except Exception:
-                pass
+            if btn_gasto and concepto_gasto:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus) 
+                                VALUES (:m, :m, :c, :mo, 'Pendiente')
+                            """),
+                            {"m": mes_gasto, "c": concepto_gasto, "mo": monto_gasto}
+                        )
+                        conn.commit()
+                    st.success("Gasto registrado como 'Pendiente' para revisión.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error registrando gasto: {e}")
 
         st.write("---")
-        c_pdf, c_wa = st.columns(2)
-        with c_pdf:
-            pdf_bytes = generar_pdf_recibo(user_actual, mes_filtro, datos)
-            st.download_button(
-                label="📄 Descargar Recibo Digital (PDF)",
-                data=pdf_bytes,
-                file_name=f"Recibo_{user_actual}_{mes_filtro}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-        with c_wa:
-            msg_p = f"🏢 *{datos_ed['nombre']}*\nRIF: {datos_ed['rif']}\n\nEstimado(a) {prop_nombre} ({user_actual}):\nResumen Estado de Cuenta ({mes_filtro}):\n- Cuota Común del Mes: ${datos['mes_actual']:,.2f}\n- Gastos No Comunes: ${datos['cargos_ind']:,.2f}\n- Deuda Anterior: ${datos['deuda_anterior']:,.2f}\n- Abonado: ${datos['pagos_mes']:,.2f}\n*TOTAL PENDIENTE: ${datos['total_deber']:,.2f}*"
-            link_w = generar_link_whatsapp("", msg_p)
-            st.link_button("📱 Compartir Recibo por WhatsApp", link_w, use_container_width=True)
+        st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
+        
+        mes_filtro = st.text_input("Filtrar gastos por periodo (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="filtro_gastos_admin")
+        
+        try:
+            with engine.connect() as conn:
+                df_gastos_pendientes = pd.read_sql(
+                    text("SELECT id, concepto, monto, estatus, mes_anio FROM gastos WHERE mes_anio = :m ORDER BY id DESC"),
+                    conn, params={"m": mes_filtro}
+                )
 
+            if df_gastos_pendientes.empty:
+                st.info(f"No hay gastos registrados para el periodo {mes_filtro}.")
+            else:
+                for _, r_gasto in df_gastos_pendientes.iterrows():
+                    c_detalles, c_acciones = st.columns([3, 2])
+                    with c_detalles:
+                        badge_estatus = "🟡 Pendiente" if r_gasto['estatus'] == 'Pendiente' else "🟢 Aprobado"
+                        st.markdown(f"**Concepto:** {r_gasto['concepto']} | **Monto:** ${float(r_gasto['monto']):,.2f} | **Estatus:** {badge_estatus}")
+                    
+                    with c_acciones:
+                        btn_col1, btn_col2 = st.columns(2)
+                        with btn_col1:
+                            if r_gasto['estatus'] == 'Pendiente':
+                                if st.button("✅ Aprobar", key=f"app_gasto_{r_gasto['id']}", type="primary"):
+                                    with engine.connect() as conn:
+                                        conn.execute(
+                                            text("UPDATE gastos SET estatus = 'Aprobado' WHERE id = :id"),
+                                            {"id": r_gasto['id']}
+                                        )
+                                        conn.commit()
+                                    st.success("Gasto aprobado.")
+                                    st.rerun()
+                        with btn_col2:
+                            if st.button("❌ Eliminar", key=f"del_gasto_{r_gasto['id']}", type="secondary"):
+                                with engine.connect() as conn:
+                                    conn.execute(
+                                        text("DELETE FROM gastos WHERE id = :id"),
+                                        {"id": r_gasto['id']}
+                                    )
+                                    conn.commit()
+                                st.success("Gasto eliminado.")
+                                st.rerun()
+                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"Error consultando gastos: {e}")
     with tab2:
         st.subheader("Cuotas Extraordinarias Asignadas")
         try:
