@@ -2,13 +2,7 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime
-import io
-import urllib.parse
 from PIL import Image
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA E ICONO PERSONALIZADO
@@ -115,34 +109,16 @@ def inicializar_tablas():
                     conn.execute(text("INSERT INTO usuarios (usuario, clave, rol) VALUES (:u, '1234', 'propietario')"), {"u": u})
 
             conn.execute(text("""
-               # TABS 1: GASTOS COMUNES
-    with t1:
-        st.subheader("➕ Cargar Nuevo Gasto Común")
-        with st.form("form_gasto"):
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                mes = st.text_input("Mes / Año (AAAA-MM)", value=datetime.now().strftime("%Y-%m"))
-                concepto = st.text_input("Descripción del Gasto Común")
-            with col_g2:
-                monto = st.number_input("Monto Total ($)", min_value=0.01, step=0.01)
-
-            btn = st.form_submit_button("Cargar para Previsualizar/Aprobar", type="primary")
-
-            if btn and concepto:
-                try:
-                    with engine.connect() as conn:
-                        conn.execute(
-                            text("""
-                                INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha) 
-                                VALUES (:m, :m, :c, :mo, 'Pendiente', CURRENT_DATE)
-                            """),
-                            {"m": mes, "c": concepto, "mo": monto}
-                        )
-                        conn.commit()
-                    st.success("Gasto guardado en estado pendiente de aprobación.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error registrando gasto: {e}")
+                CREATE TABLE IF NOT EXISTS gastos (
+                    id SERIAL PRIMARY KEY,
+                    periodo VARCHAR(7),
+                    mes_anio VARCHAR(7) NOT NULL,
+                    concepto VARCHAR(200) NOT NULL,
+                    monto NUMERIC(12,2) NOT NULL,
+                    estatus VARCHAR(20) DEFAULT 'Pendiente',
+                    fecha DATE DEFAULT CURRENT_DATE
+                );
+            """))
 
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS cargos_individuales (
@@ -302,7 +278,15 @@ elif st.session_state.rol_logueado == "admin":
 
     st.write("---")
 
-    t1, t2, t3, t4, t5, t6, t7 = st.tabs(["📊 Gastos Comunes", "🛠️ Gastos No Comunes", "⭐ Cuotas Extras", "✅ Validar Pagos", "🏢 Alícuotas y Unidades", "🚨 Morosidad y Recibos", "⚙️ Datos Edificio"])
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs([
+        "📊 Gastos Comunes", 
+        "🛠️ Gastos No Comunes", 
+        "⭐ Cuotas Extras", 
+        "✅ Validar Pagos", 
+        "🏢 Alícuotas y Unidades", 
+        "🚨 Morosidad y Recibos", 
+        "⚙️ Datos Edificio"
+    ])
 
     # TABS 1: GASTOS COMUNES
     with t1:
@@ -322,8 +306,8 @@ elif st.session_state.rol_logueado == "admin":
                     with engine.connect() as conn:
                         conn.execute(
                             text("""
-                                INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus) 
-                                VALUES (:m, :m, :c, :mo, 'Pendiente')
+                                INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha) 
+                                VALUES (:m, :m, :c, :mo, 'Pendiente', CURRENT_DATE)
                             """),
                             {"m": mes, "c": concepto, "mo": monto}
                         )
