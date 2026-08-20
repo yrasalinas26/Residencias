@@ -348,7 +348,7 @@ elif st.session_state.rol_logueado == "propietario":
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Cuota Común Estimada", f"${cuota_comun:,.2f}")
-            c2.metric("Cargos No Comunes", f"${float(cargos_ind):,.2f}")
+            c2.metric("Cargos No Comunes / Extra", f"${float(cargos_ind):,.2f}")
             c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
 
             st.write("---")
@@ -356,7 +356,7 @@ elif st.session_state.rol_logueado == "propietario":
             
             detalles = [
                 {"concepto": "Gastos Comunes del Edificio", "base": float(gastos_aprob), "monto": cuota_comun},
-                {"concepto": "Cargos Indiv. No Comunes", "base": float(cargos_ind), "monto": float(cargos_ind)}
+                {"concepto": "Cargos Indiv. No Comunes / Cuotas Extras", "base": float(cargos_ind), "monto": float(cargos_ind)}
             ]
             pdf_bytes = generar_pdf_recibo(user_actual, mes_actual, total_mes, detalles, pct_user)
 
@@ -567,17 +567,17 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
             st.error(f"Error listando cargos: {e}")
 
-    # TABS 3: CUOTAS EXTRAORDINARIAS
+    # TABS 3: CUOTAS EXTRAORDINARIAS (CORREGIDO)
     with t3:
-        st.subheader("⭐ Cargar Cuota Extraordinaria")
+        st.subheader("⭐ Cargar Nueva Cuota Extraordinaria")
         with st.form("form_cuota_extra"):
             col_ce1, col_ce2 = st.columns(2)
             with col_ce1:
-                concepto_ce = st.text_input("Proyecto / Concepto (ej. Pintura Fachada)")
+                concepto_ce = st.text_input("Proyecto / Concepto (ej. Pintura Fachada, Reparación Ascensor)")
             with col_ce2:
                 monto_ce = st.number_input("Monto Total del Proyecto ($)", min_value=0.01, step=0.01)
 
-            btn_ce = st.form_submit_button("Registrar Cuota Extraordinaria", type="primary")
+            btn_ce = st.form_submit_button("Crear Cuota Extraordinaria (Pendiente)", type="primary")
 
             if btn_ce and concepto_ce:
                 try:
@@ -585,25 +585,98 @@ elif st.session_state.rol_logueado == "admin":
                         conn.execute(
                             text("""
                                 INSERT INTO cuotas_extraordinarias (concepto, monto_total, fecha_emision, estatus)
-                                VALUES (:c, :m, CURRENT_DATE, 'Aprobado')
+                                VALUES (:c, :m, CURRENT_DATE, 'Pendiente')
                             """),
                             {"c": concepto_ce, "m": monto_ce}
                         )
                         conn.commit()
-                    st.success("Cuota extraordinaria registrada correctamente.")
+                    st.success("Cuota extraordinaria creada en estado Pendiente. Puedes previsualizarla y aprobarla abajo.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar cuota extra: {e}")
 
         st.write("---")
-        st.subheader("⭐ Proyectos y Cuotas Extraordinarias Activas")
+        st.subheader("🔍 Previsualizar, Aprobar y Distribuir Cuotas Extraordinarias")
         try:
             with engine.connect() as conn:
-                df_ce = pd.read_sql(text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"), conn)
+                df_ce = pd.read_sql(
+                    text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"),
+                    conn
+                )
+
             if df_ce.empty:
                 st.info("No hay cuotas extraordinarias registradas.")
             else:
-                st.dataframe(df_ce, use_container_width=True)
+                mes_dist = st.text_input("Periodo de aplicación al aprobar (AAAA-MM):", value=datetime.now().strftime("%Y-%m"), key="ce_mes_dist")
+
+                for _, r_ce in df_ce.iterrows():
+                    c_det, c_act = st.columns([3, 2])
+                    with c_det:
+                        badge_st = "🟡 Pendiente" if r_ce['estatus'] == 'Pendiente' else "🟢 Aprobada y Distribuida"
+                        st.markdown(f"**PROYECTO #{r_ce['id']}:** {r_ce['concepto']} | **Monto Total:** ${float(r_ce['monto_total']):,.2f}")
+                        st.caption(f"Fecha Emisión: {r_ce['fecha_emision']} | **Estatus:** {badge_st}")
+
+                    with c_act:
+                        b_col1, b_col2 = st.columns(2)
+                        
+                        # BOTÓN DE APROBAR Y DISTRIBUIR SEGÚN ALÍCUOTAS
+                        with b_col1:
+                            if r_ce['estatus'] == 'Pendiente':
+                                if st.button("✅ Aprobar y Distribuir", key=f"app_ce_{r_ce['id']}", type="primary"):
+                                    try:
+                                        with engine.connect() as conn:
+                                            # 1. Obtener todas las unidades y sus alícuotas
+                                            unidades_res = conn.execute(text("SELECT unidad, alicuota FROM unidades")).fetchall()
+                                            
+                                            # 2. Generar un cargo individual para cada apartamento prorrateado por su alícuota
+                                            monto_tot = float(r_ce['monto_total'])
+                                            for u_row in unidades_res:
+                                                u_cod = u_row[0]
+                                                u_alic = float(u_row[1])
+                                                monto_apto = monto_tot * (u_alic / 100.0)
+
+                                                conn.execute(
+                                                    text("""
+                                                        INSERT INTO cargos_individuales (apartamento, mes_anio, concepto, monto, fecha)
+                                                        VALUES (:a, :m, :c, :mo, CURRENT_DATE)
+                                                    """),
+                                                    {
+                                                        "a": u_cod,
+                                                        "m": mes_dist,
+                                                        "c": f"Cuota Extra: {r_ce['concepto']}",
+                                                        "mo": monto_apto
+                                                    }
+                                                )
+
+                                            # 3. Marcar la cuota extra como Aprobada
+                                            conn.execute(
+                                                text("UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id"),
+                                                {"id": r_ce['id']}
+                                            )
+                                            conn.commit()
+
+                                        st.success(f"🎉 Cuota distribuida exitosamente a los 13 apartamentos para el periodo {mes_dist}.")
+                                        st.rerun()
+                                    except Exception as e_dist:
+                                        st.error(f"Error al distribuir la cuota: {e_dist}")
+
+                        # BOTÓN DE ELIMINAR
+                        with b_col2:
+                            if st.button("❌ Eliminar", key=f"del_ce_{r_ce['id']}", type="secondary"):
+                                try:
+                                    with engine.connect() as conn:
+                                        conn.execute(
+                                            text("DELETE FROM cuotas_extraordinarias WHERE id = :id"),
+                                            {"id": r_ce['id']}
+                                        )
+                                        conn.commit()
+                                    st.warning("Cuota extraordinaria eliminada.")
+                                    st.rerun()
+                                except Exception as e_del:
+                                    st.error(f"Error al eliminar: {e_del}")
+
+                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+
         except Exception as e:
             st.error(f"Error consultando cuotas extras: {e}")
 
