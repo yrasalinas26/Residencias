@@ -3,6 +3,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime
 import io
+import urllib.parse
 from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -179,7 +180,7 @@ def inicializar_tablas():
 inicializar_tablas()
 
 # -----------------------------------------------------------------------------
-# FUNCIONES AUXILIARES Y DE PDF
+# FUNCIONES AUXILIARES, DE PDF Y WHATSAPP
 # -----------------------------------------------------------------------------
 def obtener_datos_edificio():
     if not engine:
@@ -201,6 +202,13 @@ def obtener_unidades_df():
             return pd.read_sql(text("SELECT unidad, alicuota, propietario, telefono FROM unidades ORDER BY unidad ASC"), conn)
     except Exception:
         return pd.DataFrame(UNIDADES_DEFECTO, columns=["unidad", "alicuota"])
+
+def generar_enlace_whatsapp(telefono, mensaje):
+    num_limpio = "".join(filter(str.isdigit, str(telefono or "")))
+    msg_enc = urllib.parse.quote(mensaje)
+    if num_limpio:
+        return f"https://wa.me/{num_limpio}?text={msg_enc}"
+    return f"https://wa.me/?text={msg_enc}"
 
 def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
     datos_ed = obtener_datos_edificio()
@@ -312,6 +320,7 @@ elif st.session_state.rol_logueado == "propietario":
     df_u = obtener_unidades_df()
     row_u = df_u[df_u['unidad'] == user_actual]
     prop_nombre = row_u['propietario'].values[0] if not row_u.empty else "Propietario"
+    prop_tel = row_u['telefono'].values[0] if not row_u.empty else ""
     pct_user = float(row_u['alicuota'].values[0]) if not row_u.empty else 6.0
 
     col_head, col_out = st.columns([3, 1])
@@ -352,7 +361,7 @@ elif st.session_state.rol_logueado == "propietario":
             c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
 
             st.write("---")
-            st.subheader("📥 Descargar Recibo del Mes")
+            st.subheader("📥 Descargar Recibo / Compartir por WhatsApp")
             
             detalles = [
                 {"concepto": "Gastos Comunes del Edificio", "base": float(gastos_aprob), "monto": cuota_comun},
@@ -360,12 +369,20 @@ elif st.session_state.rol_logueado == "propietario":
             ]
             pdf_bytes = generar_pdf_recibo(user_actual, mes_actual, total_mes, detalles, pct_user)
 
-            st.download_button(
-                f"📄 Descargar Recibo PDF ({mes_actual})",
-                data=pdf_bytes,
-                file_name=f"recibo_{user_actual}_{mes_actual}.pdf",
-                mime="application/pdf"
-            )
+            msg_ws = f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO ({mes_actual})*\nUnidad: {user_actual}\nTotal a Pagar: ${total_mes:,.2f}\n\nPor favor reportar el pago a través de la app."
+            link_ws = generar_enlace_whatsapp(prop_tel, msg_ws)
+
+            col_pdf, col_ws = st.columns(2)
+            with col_pdf:
+                st.download_button(
+                    f"📄 Descargar Recibo PDF ({mes_actual})",
+                    data=pdf_bytes,
+                    file_name=f"recibo_{user_actual}_{mes_actual}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            with col_ws:
+                st.link_button("📲 Compartir por WhatsApp", link_ws, use_container_width=True)
 
         except Exception as e:
             st.error(f"Error consultando estado de cuenta: {e}")
@@ -523,7 +540,7 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
             st.error(f"Error consultando gastos: {e}")
 
-    # TABS 2: GASTOS NO COMUNES (CARGOS INDIVIDUALES)
+    # TABS 2: GASTOS NO COMUNES
     with t2:
         st.subheader("🛠️ Cargar Gasto No Común (Cargo Individual)")
         df_unidades_list = obtener_unidades_df()
@@ -567,7 +584,7 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
             st.error(f"Error listando cargos: {e}")
 
-    # TABS 3: CUOTAS EXTRAORDINARIAS (CORREGIDO)
+    # TABS 3: CUOTAS EXTRAORDINARIAS (CON WHATSAPP)
     with t3:
         st.subheader("⭐ Cargar Nueva Cuota Extraordinaria")
         with st.form("form_cuota_extra"):
@@ -596,7 +613,7 @@ elif st.session_state.rol_logueado == "admin":
                     st.error(f"Error al guardar cuota extra: {e}")
 
         st.write("---")
-        st.subheader("🔍 Previsualizar, Aprobar y Distribuir Cuotas Extraordinarias")
+        st.subheader("🔍 Previsualizar, Aprobar, Distribuir y Notificar")
         try:
             with engine.connect() as conn:
                 df_ce = pd.read_sql(
@@ -618,17 +635,12 @@ elif st.session_state.rol_logueado == "admin":
 
                     with c_act:
                         b_col1, b_col2 = st.columns(2)
-                        
-                        # BOTÓN DE APROBAR Y DISTRIBUIR SEGÚN ALÍCUOTAS
                         with b_col1:
                             if r_ce['estatus'] == 'Pendiente':
                                 if st.button("✅ Aprobar y Distribuir", key=f"app_ce_{r_ce['id']}", type="primary"):
                                     try:
                                         with engine.connect() as conn:
-                                            # 1. Obtener todas las unidades y sus alícuotas
                                             unidades_res = conn.execute(text("SELECT unidad, alicuota FROM unidades")).fetchall()
-                                            
-                                            # 2. Generar un cargo individual para cada apartamento prorrateado por su alícuota
                                             monto_tot = float(r_ce['monto_total'])
                                             for u_row in unidades_res:
                                                 u_cod = u_row[0]
@@ -648,19 +660,17 @@ elif st.session_state.rol_logueado == "admin":
                                                     }
                                                 )
 
-                                            # 3. Marcar la cuota extra como Aprobada
                                             conn.execute(
                                                 text("UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id"),
                                                 {"id": r_ce['id']}
                                             )
                                             conn.commit()
 
-                                        st.success(f"🎉 Cuota distribuida exitosamente a los 13 apartamentos para el periodo {mes_dist}.")
+                                        st.success(f"🎉 Cuota distribuida exitosamente para el periodo {mes_dist}.")
                                         st.rerun()
                                     except Exception as e_dist:
                                         st.error(f"Error al distribuir la cuota: {e_dist}")
 
-                        # BOTÓN DE ELIMINAR
                         with b_col2:
                             if st.button("❌ Eliminar", key=f"del_ce_{r_ce['id']}", type="secondary"):
                                 try:
@@ -674,6 +684,11 @@ elif st.session_state.rol_logueado == "admin":
                                     st.rerun()
                                 except Exception as e_del:
                                     st.error(f"Error al eliminar: {e_del}")
+
+                    # OPCIÓN DE NOTIFICACIÓN GENERAL POR WHATSAPP
+                    msg_ce = f"📢 *NUEVA CUOTA EXTRAORDINARIA*\n🏢 *{datos_ed['nombre']}*\n\nConcepto: {r_ce['concepto']}\nMonto Total: ${float(r_ce['monto_total']):,.2f}\nEstatus: {r_ce['estatus']}\n\nFavor revisar su estado de cuenta en la plataforma."
+                    link_ws_ce = generar_enlace_whatsapp("", msg_ce)
+                    st.link_button("📲 Notificar Cuota por WhatsApp", link_ws_ce)
 
                     st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
 
@@ -733,7 +748,7 @@ elif st.session_state.rol_logueado == "admin":
                 u_sel = st.selectbox("Seleccionar Unidad", df_unid['unidad'].tolist())
                 prop_in = st.text_input("Nombre del Propietario")
             with c_u2:
-                tel_in = st.text_input("Teléfono de Contacto")
+                tel_in = st.text_input("Teléfono de Contacto (incluir código de país, ej. 584120000000)")
                 alic_in = st.number_input("Alícuota (%)", min_value=0.01, max_value=100.0, step=0.01, value=6.0)
 
             btn_u_save = st.form_submit_button("Actualizar Unidad", type="primary")
@@ -751,9 +766,9 @@ elif st.session_state.rol_logueado == "admin":
                 except Exception as e:
                     st.error(f"Error editando unidad: {e}")
 
-    # TABS 6: MOROSIDAD Y RECIBOS
+    # TABS 6: MOROSIDAD Y RECIBOS (CON WHATSAPP DIRECTO)
     with t6:
-        st.subheader("🚨 Control de Deudas por Unidad")
+        st.subheader("🚨 Control de Deudas por Unidad y Cobranza por WhatsApp")
         mes_mor = st.text_input("Periodo a Consultar (AAAA-MM)", value=datetime.now().strftime("%Y-%m"), key="mes_morosidad")
 
         try:
@@ -763,9 +778,8 @@ elif st.session_state.rol_logueado == "admin":
                     {"m": mes_mor}
                 ).scalar() or 0
 
-                df_u_mor = pd.read_sql(text("SELECT unidad, alicuota, propietario FROM unidades ORDER BY unidad ASC"), conn)
+                df_u_mor = pd.read_sql(text("SELECT unidad, alicuota, propietario, telefono FROM unidades ORDER BY unidad ASC"), conn)
 
-            res_morosidad = []
             for _, r in df_u_mor.iterrows():
                 cuota_c = float(gastos_totales) * (float(r['alicuota']) / 100.0)
                 
@@ -787,17 +801,16 @@ elif st.session_state.rol_logueado == "admin":
                 total_deuda = cuota_c + float(c_ind) - float(p_pagado)
                 est_deuda = "🔴 Pendiente / Moroso" if total_deuda > 0 else "🟢 Al Día"
 
-                res_morosidad.append({
-                    "Unidad": r['unidad'],
-                    "Propietario": r['propietario'],
-                    "Alícuota (%)": r['alicuota'],
-                    "Monto Mes ($)": cuota_c + float(c_ind),
-                    "Abonado ($)": float(p_pagado),
-                    "Saldo Pendiente ($)": total_deuda,
-                    "Estatus": est_deuda
-                })
+                c_m1, c_m2, c_m3 = st.columns([2, 2, 1])
+                with c_m1:
+                    st.markdown(f"**Apto {r['unidad']}** - {r['propietario']}")
+                    st.caption(f"Saldo Pendiente: **${total_deuda:,.2f}** | Estatus: {est_deuda}")
+                with c_m2:
+                    msg_cobro = f"Estimado(a) {r['propietario']} ({r['unidad']}), le recordamos que su aviso de cobro del periodo {mes_mor} en *{datos_ed['nombre']}* presenta un saldo pendiente de *${total_deuda:,.2f}*. Agradecemos reportar su pago por la aplicación."
+                    link_ws_cobro = generar_enlace_whatsapp(r['telefono'], msg_cobro)
+                    st.link_button("📲 Enviar Recibo/Cobro por WhatsApp", link_ws_cobro, use_container_width=True)
 
-            st.dataframe(pd.DataFrame(res_morosidad), use_container_width=True)
+                st.markdown("<hr style='margin: 3px 0;'>", unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"Error generando reporte de morosidad: {e}")
