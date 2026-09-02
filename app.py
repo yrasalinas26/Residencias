@@ -223,8 +223,8 @@ def generar_enlace_whatsapp(telefono, mensaje):
     num_limpio = "".join(filter(str.isdigit, str(telefono or "")))
     msg_enc = urllib.parse.quote(mensaje)
     if num_limpio:
-        return f"[https://wa.me/](https://wa.me/){num_limpio}?text={msg_enc}"
-    return f"[https://wa.me/?text=](https://wa.me/?text=){msg_enc}"
+        return f"https://wa.me/{num_limpio}?text={msg_enc}"
+    return f"https://wa.me/?text={msg_enc}"
 
 def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
     datos_ed = obtener_datos_edificio()
@@ -796,9 +796,9 @@ elif st.session_state.rol_logueado == "admin":
                     {"m": mes_recibo}
                 ).scalar() or 0
 
-                # 2. Detalle de Gastos Comunes
+                # 2. Detalle de Gastos Comunes Aprobados
                 df_gastos_det = pd.read_sql(
-                    text("SELECT concepto, monto, proveedor FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    text("SELECT concepto, monto, proveedor FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado' ORDER BY id ASC"),
                     conn, params={"m": mes_recibo}
                 )
 
@@ -825,9 +825,24 @@ elif st.session_state.rol_logueado == "admin":
             # CONSTRUCCIÓN DEL MENSAJE GENERAL PARA EL GRUPO DE WHATSAPP
             # -----------------------------------------------------------------
             msg_grupo = f"🏢 *{datos_ed['nombre']}*\n"
-            msg_grupo += f"📄 *DESGLOSE GENERAL DE RECIBOS - {mes_recibo}*\n"
-            msg_grupo += f"💰 *Total Gastos Comunes:* ${m_gc_red:,.0f}\n"
-            msg_grupo += "-----------------------------------------\n"
+            msg_grupo += f"📄 *AVISO DE COBRO GENERAL - {mes_recibo}*\n"
+            msg_grupo += "=========================================\n\n"
+
+            # SECCIÓN 1: DETALLE DE GASTOS
+            msg_grupo += "🛠️ *DESGLOSE DE GASTOS DEL MES:*\n"
+            if df_gastos_det.empty:
+                msg_grupo += "• Sin gastos comunes registrados o aprobados.\n"
+            else:
+                for _, r_gasto in df_gastos_det.iterrows():
+                    m_gasto_red = redondear_custom(r_gasto['monto'])
+                    prov_str = f" ({r_gasto['proveedor']})" if r_gasto['proveedor'] and r_gasto['proveedor'] != "N/A" else ""
+                    msg_grupo += f"• {r_gasto['concepto']}{prov_str}: *${m_gasto_red:,.0f}*\n"
+            
+            msg_grupo += f"\n💰 *TOTAL GASTOS COMUNES:* *${m_gc_red:,.0f}*\n"
+            msg_grupo += "=========================================\n\n"
+
+            # SECCIÓN 2: TABLA POR APARTAMENTO
+            msg_grupo += "📊 *DESGLOSE A PAGAR POR APARTAMENTO:*\n"
             msg_grupo += "```\n"
             msg_grupo += f"{'Apto':<6} {'Alíc':<7} {'Común':<9} {'Extra':<8} {'Total':<8}\n"
             msg_grupo += "-" * 40 + "\n"
@@ -854,7 +869,7 @@ elif st.session_state.rol_logueado == "admin":
                 total_apto = monto_comun + monto_nc
 
                 # Fila formateada para WhatsApp
-                msg_grupo += f"{u_cod:<6} {u_alic:>5.1f}%  ${monto_comun:<7,.0f} ${monto_nc:<7,.0f} ${total_apto:<7,.0f}\n"
+                msg_grupo += f"{u_cod:<6} {u_alic:>5.1f}%  ${monto_comun:<7,.0f} ${monto_nc:<7,.0f}${total_apto:<7,.0f}\n"
 
                 # Enlace de WhatsApp individual
                 mensaje_wa_ind = (
@@ -873,73 +888,3 @@ elif st.session_state.rol_logueado == "admin":
 
                 filas_recibo.append({
                     "Unidad": u_cod,
-                    "Propietario": u_prop,
-                    "Alícuota (%)": f"{u_alic:.2f}%",
-                    "Cuota Común ($)": f"${monto_comun:,.0f}",
-                    "Cargos Indiv. ($)": f"${monto_nc:,.0f}",
-                    "Total a Pagar ($)": f"${total_apto:,.0f}",
-                    "Teléfono": u_tel if u_tel else "Sin registrar",
-                    "WhatsApp Link": link_wa_ind
-                })
-
-            msg_grupo += "```\n"
-            msg_grupo += "-----------------------------------------\n"
-            msg_grupo += "📌 *Por favor realizar sus pagos y reportarlos a través de la aplicación.*"
-
-            # -----------------------------------------------------------------
-            # BLOQUE 1: ENVIAR AL GRUPO GENERAL
-            # -----------------------------------------------------------------
-            st.markdown("### 📢 Publicar Desglose Completo en el Grupo General")
-            st.info("Copia el texto del cuadro inferior o haz clic en el botón para abrir WhatsApp Web/App y seleccionar el grupo de condominio:")
-            
-            st.code(msg_grupo, language="markdown")
-
-            link_grupo_wa = generar_enlace_whatsapp("", msg_grupo)
-            st.link_button("🚀 Enviar Desglose Completo al Grupo de WhatsApp", link_grupo_wa, type="primary", use_container_width=True)
-
-            st.write("---")
-
-            # -----------------------------------------------------------------
-            # BLOQUE 2: ENVÍOS INDIVIDUALES POR PROPIETARIO
-            # -----------------------------------------------------------------
-            st.markdown("### 👤 Notificaciones Individuales por Apartamento")
-            df_recibo_gen = pd.DataFrame(filas_recibo)
-
-            for idx, r_rec in df_recibo_gen.iterrows():
-                col_u1, col_u2, col_u3, col_u4 = st.columns([1.5, 2.5, 2, 2])
-                with col_u1:
-                    st.markdown(f"**Apto {r_rec['Unidad']}** ({r_rec['Alícuota (%)']})")
-                with col_u2:
-                    st.markdown(f"👤 {r_rec['Propietario']}")
-                with col_u3:
-                    st.markdown(f"💰 **Total:** {r_rec['Total a Pagar ($)']}")
-                with col_u4:
-                    st.link_button("📲 Enviar Privado", r_rec['WhatsApp Link'], use_container_width=True)
-                st.markdown("<hr style='margin: 3px 0;'>", unsafe_allow_html=True)
-
-        except Exception as e:
-            st.error(f"Error generando recibo general: {e}")
-
-    # TABS 7: DATOS EDIFICIO
-    with t7:
-        st.subheader("⚙️ Configuración de Datos del Edificio")
-        datos_actuales = obtener_datos_edificio()
-
-        with st.form("form_datos_edificio"):
-            n_nombre = st.text_input("Nombre del Condominio", value=datos_actuales['nombre'])
-            n_rif = st.text_input("RIF", value=datos_actuales['rif'])
-            n_dir = st.text_area("Dirección Fiscal", value=datos_actuales['direccion'])
-
-            btn_edif = st.form_submit_button("Actualizar Información", type="primary")
-            if btn_edif:
-                try:
-                    with engine.connect() as conn:
-                        conn.execute(
-                            text("UPDATE configuracion_edificio SET nombre = :n, rif = :r, direccion = :d WHERE id = 1"),
-                            {"n": n_nombre, "r": n_rif, "d": n_dir}
-                        )
-                        conn.commit()
-                    st.success("Datos del edificio actualizados.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error actualizando información: {e}")
