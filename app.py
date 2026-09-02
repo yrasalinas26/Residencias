@@ -16,11 +16,6 @@ from reportlab.lib import colors
 # (> 0.5 sube al siguiente entero; <= 0.5 mantiene el entero actual)
 # -----------------------------------------------------------------------------
 def redondear_custom(val):
-    """
-    Aplica la regla de redondeo:
-    - Parte decimal > 0.5 -> Ceil (sube al entero siguiente)
-    - Parte decimal <= 0.5 -> Floor (mantiene el entero actual)
-    """
     if val is None:
         return 0
     val = float(val)
@@ -60,7 +55,6 @@ UNIDADES_DEFECTO = [
 # FUNCIONES AUXILIARES DE FECHA
 # -----------------------------------------------------------------------------
 def obtener_mes_anterior():
-    """Retorna el mes anterior en formato AAAA-MM (para cobro a mes vencido)"""
     hoy = datetime.now()
     if hoy.month == 1:
         return f"{hoy.year - 1}-12"
@@ -68,7 +62,6 @@ def obtener_mes_anterior():
         return f"{hoy.year}-{hoy.month - 1:02d}"
 
 def obtener_mes_actual():
-    """Retorna el mes actual en formato AAAA-MM"""
     return datetime.now().strftime("%Y-%m")
 
 # -----------------------------------------------------------------------------
@@ -230,8 +223,8 @@ def generar_enlace_whatsapp(telefono, mensaje):
     num_limpio = "".join(filter(str.isdigit, str(telefono or "")))
     msg_enc = urllib.parse.quote(mensaje)
     if num_limpio:
-        return f"https://wa.me/{num_limpio}?text={msg_enc}"
-    return f"https://wa.me/?text={msg_enc}"
+        return f"[https://wa.me/](https://wa.me/){num_limpio}?text={msg_enc}"
+    return f"[https://wa.me/?text=](https://wa.me/?text=){msg_enc}"
 
 def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
     datos_ed = obtener_datos_edificio()
@@ -790,7 +783,7 @@ elif st.session_state.rol_logueado == "admin":
                     except Exception as e:
                         st.error(f"Error actualizando unidad: {e}")
 
-    # TABS 6: NOTIFICAR RECIBOS Y TABLA GENERAL DEL EDIFICIO (MODULO AGREGADO/REPARADO)
+    # TABS 6: NOTIFICAR RECIBOS Y TABLA GENERAL DEL EDIFICIO
     with t6:
         st.subheader("📲 Recibo General del Edificio y Envío por WhatsApp")
         mes_recibo = st.text_input("Selecciona Periodo a Liquidar/Enviar (AAAA-MM):", value=obtener_mes_anterior(), key="admin_recibo_mes")
@@ -803,7 +796,7 @@ elif st.session_state.rol_logueado == "admin":
                     {"m": mes_recibo}
                 ).scalar() or 0
 
-                # 2. Detalle de Gastos Comunes para el reporte
+                # 2. Detalle de Gastos Comunes
                 df_gastos_det = pd.read_sql(
                     text("SELECT concepto, monto, proveedor FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
                     conn, params={"m": mes_recibo}
@@ -827,9 +820,18 @@ elif st.session_state.rol_logueado == "admin":
                     st.dataframe(df_gastos_det, use_container_width=True)
 
             st.write("---")
-            st.markdown("### 🏢 Alícuotas, Montos por Unidad y Envío directo por WhatsApp")
 
-            # Construir la lista consolidada
+            # -----------------------------------------------------------------
+            # CONSTRUCCIÓN DEL MENSAJE GENERAL PARA EL GRUPO DE WHATSAPP
+            # -----------------------------------------------------------------
+            msg_grupo = f"🏢 *{datos_ed['nombre']}*\n"
+            msg_grupo += f"📄 *DESGLOSE GENERAL DE RECIBOS - {mes_recibo}*\n"
+            msg_grupo += f"💰 *Total Gastos Comunes:* ${m_gc_red:,.0f}\n"
+            msg_grupo += "-----------------------------------------\n"
+            msg_grupo += "```\n"
+            msg_grupo += f"{'Apto':<6} {'Alíc':<7} {'Común':<9} {'Extra':<8} {'Total':<8}\n"
+            msg_grupo += "-" * 40 + "\n"
+
             filas_recibo = []
             for _, r in df_unidades.iterrows():
                 u_cod = r['unidad']
@@ -851,8 +853,11 @@ elif st.session_state.rol_logueado == "admin":
                 monto_nc = redondear_custom(cargos_ind_val)
                 total_apto = monto_comun + monto_nc
 
-                # Generar Enlace de WhatsApp directo
-                mensaje_wa = (
+                # Fila formateada para WhatsApp
+                msg_grupo += f"{u_cod:<6} {u_alic:>5.1f}%  ${monto_comun:<7,.0f} ${monto_nc:<7,.0f} ${total_apto:<7,.0f}\n"
+
+                # Enlace de WhatsApp individual
+                mensaje_wa_ind = (
                     f"🏢 *{datos_ed['nombre']}*\n"
                     f"📄 *AVISO DE COBRO ({mes_recibo})*\n\n"
                     f"Apto: *{u_cod}* | Propietario: {u_prop}\n"
@@ -864,7 +869,7 @@ elif st.session_state.rol_logueado == "admin":
                     f"💰 *TOTAL A PAGAR: ${total_apto:,.0f}*\n\n"
                     f"Por favor reportar su pago a través de la plataforma."
                 )
-                link_wa = generar_enlace_whatsapp(u_tel, mensaje_wa)
+                link_wa_ind = generar_enlace_whatsapp(u_tel, mensaje_wa_ind)
 
                 filas_recibo.append({
                     "Unidad": u_cod,
@@ -874,12 +879,32 @@ elif st.session_state.rol_logueado == "admin":
                     "Cargos Indiv. ($)": f"${monto_nc:,.0f}",
                     "Total a Pagar ($)": f"${total_apto:,.0f}",
                     "Teléfono": u_tel if u_tel else "Sin registrar",
-                    "WhatsApp Link": link_wa
+                    "WhatsApp Link": link_wa_ind
                 })
 
+            msg_grupo += "```\n"
+            msg_grupo += "-----------------------------------------\n"
+            msg_grupo += "📌 *Por favor realizar sus pagos y reportarlos a través de la aplicación.*"
+
+            # -----------------------------------------------------------------
+            # BLOQUE 1: ENVIAR AL GRUPO GENERAL
+            # -----------------------------------------------------------------
+            st.markdown("### 📢 Publicar Desglose Completo en el Grupo General")
+            st.info("Copia el texto del cuadro inferior o haz clic en el botón para abrir WhatsApp Web/App y seleccionar el grupo de condominio:")
+            
+            st.code(msg_grupo, language="markdown")
+
+            link_grupo_wa = generar_enlace_whatsapp("", msg_grupo)
+            st.link_button("🚀 Enviar Desglose Completo al Grupo de WhatsApp", link_grupo_wa, type="primary", use_container_width=True)
+
+            st.write("---")
+
+            # -----------------------------------------------------------------
+            # BLOQUE 2: ENVÍOS INDIVIDUALES POR PROPIETARIO
+            # -----------------------------------------------------------------
+            st.markdown("### 👤 Notificaciones Individuales por Apartamento")
             df_recibo_gen = pd.DataFrame(filas_recibo)
 
-            # Renderizado en tarjetas/filas interactivas con botón para enviar por WhatsApp
             for idx, r_rec in df_recibo_gen.iterrows():
                 col_u1, col_u2, col_u3, col_u4 = st.columns([1.5, 2.5, 2, 2])
                 with col_u1:
@@ -889,7 +914,7 @@ elif st.session_state.rol_logueado == "admin":
                 with col_u3:
                     st.markdown(f"💰 **Total:** {r_rec['Total a Pagar ($)']}")
                 with col_u4:
-                    st.link_button("📲 Enviar WhatsApp", r_rec['WhatsApp Link'], use_container_width=True)
+                    st.link_button("📲 Enviar Privado", r_rec['WhatsApp Link'], use_container_width=True)
                 st.markdown("<hr style='margin: 3px 0;'>", unsafe_allow_html=True)
 
         except Exception as e:
