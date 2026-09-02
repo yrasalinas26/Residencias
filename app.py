@@ -870,7 +870,8 @@ elif st.session_state.rol_logueado == "admin":
 
                 # Fila formateada para WhatsApp
                 msg_grupo += f"{u_cod:<6} {u_alic:>5.1f}%  ${monto_comun:<7,.0f} ${monto_nc:<7,.0f}${total_apto:<7,.0f}\n"
-# Enlace de WhatsApp individual
+
+                # Enlace de WhatsApp individual
                 mensaje_wa_ind = (
                     f"🏢 *{datos_ed['nombre']}*\n"
                     f"📄 *AVISO DE COBRO ({mes_recibo})*\n\n"
@@ -888,10 +889,68 @@ elif st.session_state.rol_logueado == "admin":
                 filas_recibo.append({
                     "Unidad": u_cod,
                     "Propietario": u_prop,
-                    "Alicuota": u_alic,
-                    "Cuota Comun": monto_comun,
-                    "Cargos No Comunes": monto_nc,
-                    "Total A Pagar": total_apto,
-                    "WhatsApp": link_wa_ind
+                    "Alícuota (%)": f"{u_alic:.2f}%",
+                    "Cuota Común ($)": f"${monto_comun:,.0f}",
+                    "Cargos Indiv. ($)": f"${monto_nc:,.0f}",
+                    "Total a Pagar ($)": f"${total_apto:,.0f}",
+                    "Teléfono": u_tel if u_tel else "Sin registrar",
+                    "WhatsApp Link": link_wa_ind
                 })
-    
+
+            msg_grupo += "```\n"
+            msg_grupo += "=========================================\n"
+            msg_grupo += "📌 *Por favor realizar sus pagos y reportarlos a través de la aplicación.*"
+
+            # BLOQUE 1: ENVIAR AL GRUPO GENERAL
+            st.markdown("### 📢 Publicar Desglose Completo en el Grupo General")
+            st.info("Copia el texto del cuadro inferior o haz clic en el botón para abrir WhatsApp Web/App y seleccionar el grupo de condominio:")
+            
+            st.code(msg_grupo, language="markdown")
+
+            link_grupo_wa = generar_enlace_whatsapp("", msg_grupo)
+            st.link_button("🚀 Enviar Desglose Completo al Grupo de WhatsApp", link_grupo_wa, type="primary", use_container_width=True)
+
+            st.write("---")
+
+            # BLOQUE 2: ENVÍOS INDIVIDUALES POR PROPIETARIO
+            st.markdown("### 👤 Notificaciones Individuales por Apartamento")
+            df_recibo_gen = pd.DataFrame(filas_recibo)
+
+            for idx, r_rec in df_recibo_gen.iterrows():
+                col_u1, col_u2, col_u3, col_u4 = st.columns([1.5, 2.5, 2, 2])
+                with col_u1:
+                    st.markdown(f"**Apto {r_rec['Unidad']}** ({r_rec['Alícuota (%)']})")
+                with col_u2:
+                    st.markdown(f"👤 {r_rec['Propietario']}")
+                with col_u3:
+                    st.markdown(f"💰 **Total:** {r_rec['Total a Pagar ($)']}")
+                with col_u4:
+                    st.link_button("📲 Enviar Privado", r_rec['WhatsApp Link'], use_container_width=True)
+                st.markdown("<hr style='margin: 3px 0;'>", unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"Error generando recibo general: {e}")
+
+    # TABS 7: DATOS EDIFICIO
+    with t7:
+        st.subheader("⚙️ Configuración de Datos del Edificio")
+        datos_actuales = obtener_datos_edificio()
+
+        with st.form("form_datos_edificio"):
+            n_nombre = st.text_input("Nombre del Condominio", value=datos_actuales['nombre'])
+            n_rif = st.text_input("RIF", value=datos_actuales['rif'])
+            n_dir = st.text_area("Dirección Fiscal", value=datos_actuales['direccion'])
+
+            btn_edif = st.form_submit_button("Actualizar Información", type="primary")
+            if btn_edif:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("UPDATE configuracion_edificio SET nombre = :n, rif = :r, direccion = :d WHERE id = 1"),
+                            {"n": n_nombre, "r": n_rif, "d": n_dir}
+                        )
+                        conn.commit()
+                    st.success("Datos del edificio actualizados.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error actualizando información: {e}")
