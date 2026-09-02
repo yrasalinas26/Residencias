@@ -4,11 +4,32 @@ from sqlalchemy import create_engine, text
 from datetime import datetime
 import io
 import urllib.parse
+import math
 from PIL import Image
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+
+# -----------------------------------------------------------------------------
+# REGLA DE REDONDEO PERSONALIZADA
+# (> 0.5 sube al siguiente entero; <= 0.5 mantiene el entero actual)
+# -----------------------------------------------------------------------------
+def redondear_custom(val):
+    """
+    Aplica la regla de redondeo:
+    - Parte decimal > 0.5 -> Ceil (sube al entero siguiente)
+    - Parte decimal <= 0.5 -> Floor (mantiene el entero actual)
+    """
+    if val is None:
+        return 0
+    val = float(val)
+    entero = math.floor(val)
+    decimal = val - entero
+    if decimal > 0.5:
+        return entero + 1
+    else:
+        return entero
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA E ICONO PERSONALIZADO
@@ -102,12 +123,6 @@ def inicializar_tablas():
                 );
             """))
 
-            try:
-                conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Sin Asignar'"))
-                conn.execute(text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS telefono VARCHAR(30) DEFAULT ''"))
-            except Exception:
-                pass
-
             res_u = conn.execute(text("SELECT COUNT(*) FROM unidades")).scalar()
             if res_u == 0:
                 for u, a in UNIDADES_DEFECTO:
@@ -142,13 +157,6 @@ def inicializar_tablas():
                     proveedor VARCHAR(100) DEFAULT 'N/A'
                 );
             """))
-
-            try:
-                conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS tipo VARCHAR(50) DEFAULT 'Comun'"))
-                conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS proveedor VARCHAR(100) DEFAULT 'N/A'"))
-                conn.execute(text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS fecha DATE DEFAULT CURRENT_DATE"))
-            except Exception:
-                pass
 
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS cargos_individuales (
@@ -252,9 +260,12 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
 
     tabla_datos = [["Concepto / Descripción", "Monto Base ($)", "Cuota Parte ($)"]]
     for item in detalles_gastos:
-        tabla_datos.append([item['concepto'], f"${item['base']:,.2f}", f"${item['monto']:,.2f}"])
+        m_base = redondear_custom(item['base'])
+        m_cuota = redondear_custom(item['monto'])
+        tabla_datos.append([item['concepto'], f"${m_base:,.0f}", f"${m_cuota:,.0f}"])
     
-    tabla_datos.append(["TOTAL A PAGAR", "", f"${total_cuota:,.2f}"])
+    tot_red = redondear_custom(total_cuota)
+    tabla_datos.append(["TOTAL A PAGAR", "", f"${tot_red:,.0f}"])
 
     t = Table(tabla_datos, colWidths=[280, 110, 110])
     t.setStyle(TableStyle([
@@ -354,7 +365,6 @@ elif st.session_state.rol_logueado == "propietario":
     with t_p1:
         st.subheader("📊 Mis Deudas y Recibos")
         
-        # Selección del mes a consultar (por defecto mes anterior)
         mes_vencido_defecto = obtener_mes_anterior()
         mes_actual = st.text_input("Periodo a Consultar (AAAA-MM):", value=mes_vencido_defecto, key="prop_consulta_mes")
         
@@ -370,24 +380,27 @@ elif st.session_state.rol_logueado == "propietario":
                     {"u": user_actual, "m": mes_actual}
                 ).scalar() or 0
 
-            cuota_comun = float(gastos_aprob) * (pct_user / 100.0)
-            total_mes = cuota_comun + float(cargos_ind)
+            # Aplicar redondeo personalizado en los módulos de cálculo
+            cuota_comun_raw = float(gastos_aprob) * (pct_user / 100.0)
+            cuota_comun = redondear_custom(cuota_comun_raw)
+            cargos_ind_red = redondear_custom(cargos_ind)
+            total_mes = cuota_comun + cargos_ind_red
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Cuota Común Estimada", f"${cuota_comun:,.2f}")
-            c2.metric("Cargos No Comunes / Extra", f"${float(cargos_ind):,.2f}")
-            c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
+            c1.metric("Cuota Común Estimada", f"${cuota_comun:,.0f}")
+            c2.metric("Cargos No Comunes / Extra", f"${cargos_ind_red:,.0f}")
+            c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.0f}")
 
             st.write("---")
             st.subheader("📥 Descargar Recibo / Compartir por WhatsApp")
             
             detalles = [
-                {"concepto": "Gastos Comunes del Edificio", "base": float(gastos_aprob), "monto": cuota_comun},
+                {"concepto": "Gastos Comunes del Edificio", "base": float(gastos_aprob), "monto": cuota_comun_raw},
                 {"concepto": "Cargos Indiv. No Comunes / Cuotas Extras", "base": float(cargos_ind), "monto": float(cargos_ind)}
             ]
             pdf_bytes = generar_pdf_recibo(user_actual, mes_actual, total_mes, detalles, pct_user)
 
-            msg_ws = f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO ({mes_actual})*\nUnidad: {user_actual}\nTotal a Pagar: ${total_mes:,.2f}\n\nPor favor reportar el pago a través de la app."
+            msg_ws = f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO ({mes_actual})*\nUnidad: {user_actual}\nTotal a Pagar: ${total_mes:,.0f}\n\nPor favor reportar el pago a través de la app."
             link_ws = generar_enlace_whatsapp(prop_tel, msg_ws)
 
             col_pdf, col_ws = st.columns(2)
@@ -410,7 +423,7 @@ elif st.session_state.rol_logueado == "propietario":
         with st.form("form_reportar_pago"):
             tipo_p = st.selectbox("Tipo de Pago", ["Mensualidad", "Cuota Extraordinaria"])
             mes_p = st.text_input("Periodo / Mes-Año a Pagar (AAAA-MM)", value=obtener_mes_anterior())
-            monto_p = st.number_input("Monto Pagado ($)", min_value=0.01, step=0.01)
+            monto_p = st.number_input("Monto Pagado ($)", min_value=1, step=1)
             metodo = st.selectbox("Método de Pago", ["Pago Móvil", "Transferencia", "Efectivo USD", "Zelle"])
             ref = st.text_input("Número de Referencia")
             fecha_p = st.date_input("Fecha de Realización del Pago", datetime.now())
@@ -421,6 +434,7 @@ elif st.session_state.rol_logueado == "propietario":
                 if not ref:
                     st.error("Debes ingresar el número de referencia.")
                 else:
+                    monto_red = redondear_custom(monto_p)
                     try:
                         with engine.connect() as conn:
                             conn.execute(
@@ -428,7 +442,7 @@ elif st.session_state.rol_logueado == "propietario":
                                     INSERT INTO pagos_reportados (apartamento, tipo_pago, mes_anio, monto, metodo_pago, referencia, fecha_pago, estatus)
                                     VALUES (:u, :tp, :m, :mo, :met, :ref, :f, 'Pendiente')
                                 """),
-                                {"u": user_actual, "tp": tipo_p, "m": mes_p, "mo": monto_p, "met": metodo, "ref": ref, "f": fecha_p}
+                                {"u": user_actual, "tp": tipo_p, "m": mes_p, "mo": monto_red, "met": metodo, "ref": ref, "f": fecha_p}
                             )
                             conn.commit()
                         st.success("✅ Pago reportado con éxito. Queda en espera de verificación por administración.")
@@ -448,6 +462,7 @@ elif st.session_state.rol_logueado == "propietario":
             if df_mis_pagos.empty:
                 st.info("No has registrado ningún pago hasta el momento.")
             else:
+                df_mis_pagos['monto'] = df_mis_pagos['monto'].apply(redondear_custom)
                 st.dataframe(df_mis_pagos, use_container_width=True)
         except Exception as e:
             st.error(f"Error cargando el historial: {e}")
@@ -482,7 +497,7 @@ elif st.session_state.rol_logueado == "admin":
     # TABS 1: GASTOS COMUNES
     with t1:
         st.subheader("➕ Cargar Nuevo Gasto Común")
-        st.info("ℹ️ Para cobro a mes vencido, el campo del periodo viene configurado por defecto con el mes anterior. Puedes modificarlo libremente.")
+        st.info("ℹ️ Los montos cargados serán procesados aplicando la regla de redondeo personalizada.")
         
         with st.form("form_gasto"):
             col_g1, col_g2 = st.columns(2)
@@ -496,6 +511,7 @@ elif st.session_state.rol_logueado == "admin":
             btn = st.form_submit_button("Cargar para Previsualizar/Aprobar", type="primary")
 
             if btn and concepto:
+                monto_red = redondear_custom(monto)
                 try:
                     with engine.connect() as conn:
                         conn.execute(
@@ -503,7 +519,7 @@ elif st.session_state.rol_logueado == "admin":
                                 INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha, tipo, proveedor) 
                                 VALUES (:m, :m, :c, :mo, 'Pendiente', CURRENT_DATE, 'Comun', :p)
                             """),
-                            {"m": mes, "c": concepto, "mo": monto, "p": proveedor if proveedor.strip() else "N/A"}
+                            {"m": mes, "c": concepto, "mo": monto_red, "p": proveedor if proveedor.strip() else "N/A"}
                         )
                         conn.commit()
                     st.success("Gasto guardado en estado pendiente de aprobación.")
@@ -530,7 +546,8 @@ elif st.session_state.rol_logueado == "admin":
                     c_detalles, c_acciones = st.columns([3, 2])
                     with c_detalles:
                         badge_estatus = "🟡 Pendiente" if r_gasto['estatus'] == 'Pendiente' else "🟢 Aprobado"
-                        st.markdown(f"**Concepto:** {r_gasto['concepto']} | **Monto:** ${float(r_gasto['monto']):,.2f} | **Estatus:** {badge_estatus}")
+                        m_gasto_red = redondear_custom(r_gasto['monto'])
+                        st.markdown(f"**Concepto:** {r_gasto['concepto']} | **Monto:** ${m_gasto_red:,.0f} | **Estatus:** {badge_estatus}")
                     
                     with c_acciones:
                         btn_col1, btn_col2 = st.columns(2)
@@ -577,6 +594,7 @@ elif st.session_state.rol_logueado == "admin":
             btn_nc = st.form_submit_button("Asignar Cargo Individual", type="primary")
 
             if btn_nc and concepto_nc:
+                m_nc_red = redondear_custom(monto_nc)
                 try:
                     with engine.connect() as conn:
                         conn.execute(
@@ -584,7 +602,7 @@ elif st.session_state.rol_logueado == "admin":
                                 INSERT INTO cargos_individuales (apartamento, mes_anio, concepto, monto, fecha)
                                 VALUES (:a, :m, :c, :mo, CURRENT_DATE)
                             """),
-                            {"a": apt_destino, "m": mes_nc, "c": concepto_nc, "mo": monto_nc}
+                            {"a": apt_destino, "m": mes_nc, "c": concepto_nc, "mo": m_nc_red}
                         )
                         conn.commit()
                     st.success(f"Cargo no común cargado exitosamente a la unidad {apt_destino}.")
@@ -600,6 +618,7 @@ elif st.session_state.rol_logueado == "admin":
             if df_cargos_nc.empty:
                 st.info("No hay cargos individuales registrados.")
             else:
+                df_cargos_nc['monto'] = df_cargos_nc['monto'].apply(redondear_custom)
                 st.dataframe(df_cargos_nc, use_container_width=True)
         except Exception as e:
             st.error(f"Error listando cargos: {e}")
@@ -617,6 +636,7 @@ elif st.session_state.rol_logueado == "admin":
             btn_ce = st.form_submit_button("Crear Cuota Extraordinaria (Pendiente)", type="primary")
 
             if btn_ce and concepto_ce:
+                m_ce_red = redondear_custom(monto_ce)
                 try:
                     with engine.connect() as conn:
                         conn.execute(
@@ -624,10 +644,10 @@ elif st.session_state.rol_logueado == "admin":
                                 INSERT INTO cuotas_extraordinarias (concepto, monto_total, fecha_emision, estatus)
                                 VALUES (:c, :m, CURRENT_DATE, 'Pendiente')
                             """),
-                            {"c": concepto_ce, "m": monto_ce}
+                            {"c": concepto_ce, "m": m_ce_red}
                         )
                         conn.commit()
-                    st.success("Cuota extraordinaria creada en estado Pendiente. Puedes previsualizarla y aprobarla abajo.")
+                    st.success("Cuota extraordinaria creada en estado Pendiente.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar cuota extra: {e}")
@@ -650,7 +670,8 @@ elif st.session_state.rol_logueado == "admin":
                     c_det, c_act = st.columns([3, 2])
                     with c_det:
                         badge_st = "🟡 Pendiente" if r_ce['estatus'] == 'Pendiente' else "🟢 Aprobada y Distribuida"
-                        st.markdown(f"**PROYECTO #{r_ce['id']}:** {r_ce['concepto']} | **Monto Total:** ${float(r_ce['monto_total']):,.2f}")
+                        m_ce_tot = redondear_custom(r_ce['monto_total'])
+                        st.markdown(f"**PROYECTO #{r_ce['id']}:** {r_ce['concepto']} | **Monto Total:** ${m_ce_tot:,.0f}")
                         st.caption(f"Fecha Emisión: {r_ce['fecha_emision']} | **Estatus:** {badge_st}")
 
                     with c_act:
@@ -665,7 +686,10 @@ elif st.session_state.rol_logueado == "admin":
                                             for u_row in unidades_res:
                                                 u_cod = u_row[0]
                                                 u_alic = float(u_row[1])
-                                                monto_apto = monto_tot * (u_alic / 100.0)
+                                                
+                                                # Distribución con redondeo personalizado por alícuota
+                                                monto_apto_raw = monto_tot * (u_alic / 100.0)
+                                                monto_apto = redondear_custom(monto_apto_raw)
 
                                                 conn.execute(
                                                     text("""
@@ -722,17 +746,18 @@ elif st.session_state.rol_logueado == "admin":
             if df_pagos.empty:
                 st.info("No hay reportes de pago registrados.")
             else:
+                df_pagos['monto'] = df_pagos['monto'].apply(redondear_custom)
                 st.dataframe(df_pagos, use_container_width=True)
                 st.write("---")
                 
-                # Acciones individuales sobre pagos
                 pagos_pendientes = df_pagos[df_pagos['estatus'] == 'Pendiente']
                 if not pagos_pendientes.empty:
                     st.markdown("### ⏳ Pagos Pendientes por Conciliar")
                     for _, p_row in pagos_pendientes.iterrows():
                         cp1, cp2 = st.columns([3, 2])
                         with cp1:
-                            st.write(f"**Apto:** {p_row['apartamento']} | **Monto:** ${float(p_row['monto']):,.2f} | **Ref:** {p_row['referencia']} ({p_row['metodo_pago']})")
+                            m_pago_red = redondear_custom(p_row['monto'])
+                            st.write(f"**Apto:** {p_row['apartamento']} | **Monto:** ${m_pago_red:,.0f} | **Ref:** {p_row['referencia']} ({p_row['metodo_pago']})")
                             st.caption(f"Tipo: {p_row['tipo_pago']} | Periodo: {p_row['mes_anio']} | Fecha Pago: {p_row['fecha_pago']}")
                         with cp2:
                             b_v1, b_v2 = st.columns(2)
@@ -814,29 +839,33 @@ elif st.session_state.rol_logueado == "admin":
                         u_prop = r_u['propietario']
                         u_tel = r_u['telefono']
 
-                        cuota_c = float(gastos_totales) * (u_alic / 100.0)
+                        # Cálculo de cuota común y redondeo
+                        cuota_c_raw = float(gastos_totales) * (u_alic / 100.0)
+                        cuota_c = redondear_custom(cuota_c_raw)
 
-                        cargos_indiv = conn.execute(
+                        cargos_indiv_raw = conn.execute(
                             text("SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :u AND mes_anio = :m"),
                             {"u": u_code, "m": mes_rep}
                         ).scalar() or 0
+                        cargos_indiv = redondear_custom(cargos_indiv_raw)
 
-                        pagos_aprob = conn.execute(
+                        pagos_aprob_raw = conn.execute(
                             text("SELECT SUM(monto) FROM pagos_reportados WHERE apartamento = :u AND mes_anio = :m AND estatus = 'Aprobado'"),
                             {"u": u_code, "m": mes_rep}
                         ).scalar() or 0
+                        pagos_aprob = redondear_custom(pagos_aprob_raw)
 
-                        total_deuda = cuota_c + float(cargos_indiv)
-                        saldo = total_deuda - float(pagos_aprob)
+                        total_deuda = cuota_c + cargos_indiv
+                        saldo = total_deuda - pagos_aprob
 
                         reporte_lista.append({
                             "Unidad": u_code,
                             "Propietario": u_prop,
                             "Teléfono": u_tel,
                             "Cuota Común": cuota_c,
-                            "Cargos Indiv.": float(cargos_indiv),
+                            "Cargos Indiv.": cargos_indiv,
                             "Total Mes": total_deuda,
-                            "Pagado": float(pagos_aprob),
+                            "Pagado": pagos_aprob,
                             "Saldo Pendiente": saldo,
                             "Estado": "🟢 Al día" if saldo <= 0 else "🔴 Pendiente"
                         })
