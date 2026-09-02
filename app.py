@@ -870,8 +870,7 @@ elif st.session_state.rol_logueado == "admin":
 
                 # Fila formateada para WhatsApp
                 msg_grupo += f"{u_cod:<6} {u_alic:>5.1f}%  ${monto_comun:<7,.0f} ${monto_nc:<7,.0f}${total_apto:<7,.0f}\n"
-
-                # Enlace de WhatsApp individual
+# Enlace de WhatsApp individual
                 mensaje_wa_ind = (
                     f"🏢 *{datos_ed['nombre']}*\n"
                     f"📄 *AVISO DE COBRO ({mes_recibo})*\n\n"
@@ -886,5 +885,13 @@ elif st.session_state.rol_logueado == "admin":
                 )
                 link_wa_ind = generar_enlace_whatsapp(u_tel, mensaje_wa_ind)
 
-                filas_recibo.append})
+                filas_recibo.append({
                     "Unidad": u_cod,
+                    "Propietario": u_prop,
+                    "Alicuota": u_alic,
+                    "Cuota Comun": monto_comun,
+                    "Cargos No Comunes": monto_nc,
+                    "Total A Pagar": total_apto,
+                    "WhatsApp": link_wa_ind
+                })
+    
