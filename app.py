@@ -886,5 +886,5 @@ elif st.session_state.rol_logueado == "admin":
                 )
                 link_wa_ind = generar_enlace_whatsapp(u_tel, mensaje_wa_ind)
 
-                filas_recibo.append({
+                filas_recibo.append({})
                     "Unidad": u_cod,
