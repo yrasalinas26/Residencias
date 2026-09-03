@@ -731,7 +731,6 @@ elif st.session_state.rol_logueado == "admin":
         try:
             df_unidades_act = obtener_unidades_df()
             
-            # Validación de suma de alícuotas
             suma_total_alicuotas = df_unidades_act['alicuota'].sum()
             if abs(suma_total_alicuotas - 100.0) < 0.01:
                 st.success(f"✅ Suma total de alícuotas: {suma_total_alicuotas:.2f}% (Correcto)")
@@ -764,34 +763,73 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
             st.error(f"Error gestionando unidades: {e}")
 
-    # TABS 6: MOROSIDAD Y RECIBOS (INCLUYE RECIBO GENERAL WHATSAPP)
+    # TABS 6: MOROSIDAD Y RECIBOS (INCLUYE RECIBOS INDIVIDUALES Y GENERALES PARA WHATSAPP)
     with t6:
-        st.subheader("🚨 Reporte General y Recibo para WhatsApp")
-        st.info("Genera el resumen de gastos aprobados del mes y el desglose de alícuotas listo para difundir por WhatsApp.")
+        st.subheader("🚨 Recibos y Envíos a WhatsApp")
+        st.info("Genera el reporte general para el grupo y los recibos personalizados con enlace directo de WhatsApp para cada propietario.")
 
-        mes_recibo_gral = st.text_input("Periodo del Recibo General (AAAA-MM):", value=obtener_mes_anterior(), key="input_mes_recibo_gen")
+        mes_recibo_gral = st.text_input("Periodo del Recibo (AAAA-MM):", value=obtener_mes_anterior(), key="input_mes_recibo_gen")
 
         try:
             with engine.connect() as conn:
-                # Obtener gastos aprobados del mes
                 gastos_mes_df = pd.read_sql(
                     text("SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
                     conn, params={"m": mes_recibo_gral}
                 )
                 total_gastos_comunes = gastos_mes_df['monto'].sum() if not gastos_mes_df.empty else 0.0
 
-                # Obtener unidades y alícuotas
                 unidades_df = pd.read_sql(
-                    text("SELECT unidad, alicuota FROM unidades ORDER BY unidad ASC"),
+                    text("SELECT unidad, alicuota, propietario, telefono FROM unidades ORDER BY unidad ASC"),
                     conn
                 )
 
+            # SUBSECCIÓN A: RECIBOS INDIVIDUALES POR PROPIETARIO PARA WHATSAPP
+            st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
+            st.write("Selecciona o visualiza el aviso de cobro individualizado de cada unidad para enviárselo directamente a su WhatsApp:")
+
+            for _, u_row in unidades_df.iterrows():
+                u_cod = u_row['unidad']
+                u_prop = u_row['propietario']
+                u_tel = u_row['telefono']
+                u_alic = float(u_row['alicuota'])
+
+                # Calcular gastos comunes y cargos individuales del apto
+                cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
+                
+                with engine.connect() as conn:
+                    cargos_apt = conn.execute(
+                        text("SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :u AND mes_anio = :m"),
+                        {"u": u_cod, "m": mes_recibo_gral}
+                    ).scalar() or 0.0
+
+                total_apt = cuota_comun_apt + float(cargos_apt)
+
+                with st.expander(f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"):
+                    # Construir mensaje individual
+                    msg_ind = f"🏢 *{datos_ed['nombre']}*\n"
+                    msg_ind += f"📄 *AVISO DE COBRO - {mes_recibo_gral}*\n"
+                    msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
+                    msg_ind += f"Alícuota: {u_alic}%\n"
+                    msg_ind += f"----------------------------------------\n"
+                    msg_ind += f"• Cuota Común: ${cuota_comun_apt:,.2f}\n"
+                    if float(cargos_apt) > 0:
+                        msg_ind += f"• Cargos Extras / No Comunes: ${float(cargos_apt):,.2f}\n"
+                    msg_ind += f"----------------------------------------\n"
+                    msg_ind += f"💰 *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
+                    msg_ind += f"Por favor realizar su pago y reportarlo en la plataforma. ¡Gracias!"
+
+                    st.text_area(f"Mensaje WhatsApp Apt {u_cod}:", msg_ind, height=150, key=f"txt_msg_{u_cod}")
+                    
+                    enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
+                    st.link_button(f"📲 Enviar WhatsApp a Apt {u_cod} ({u_tel or 'Sin teléfono'})", enlace_wa_apt, use_container_width=True)
+
+            st.write("---")
+            
+            # SUBSECCIÓN B: RECIBO GENERAL PARA DIFUSIÓN
+            st.markdown("### 📢 Recibo General para Grupo / Difusión")
             if gastos_mes_df.empty:
                 st.warning(f"No hay gastos aprobados registrados para el periodo {mes_recibo_gral}.")
             else:
-                st.markdown(f"**Total Gastos Comunes Aprobados:** ${float(total_gastos_comunes):,.2f}")
-
-                # Construir mensaje de WhatsApp
                 texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
                 texto_ws += f"📄 *RESUMEN DE GASTOS Y COBRANZA - {mes_recibo_gral}*\n"
                 texto_ws += f"----------------------------------------\n\n"
@@ -811,13 +849,13 @@ elif st.session_state.rol_logueado == "admin":
                 texto_ws += f"\n----------------------------------------\n"
                 texto_ws += "📌 *Nota:* Por favor reportar su pago a la brevedad posible en la plataforma. ¡Gracias!"
 
-                st.text_area("Vista previa del mensaje para WhatsApp:", texto_ws, height=300)
+                st.text_area("Vista previa del mensaje general para WhatsApp:", texto_ws, height=250)
 
                 enlace_wa_general = f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
                 st.link_button("📲 Abrir WhatsApp con el Recibo General", enlace_wa_general, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Error generando recibo general: {e}")
+            st.error(f"Error generando recibos: {e}")
 
     # TABS 7: DATOS EDIFICIO
     with t7:
