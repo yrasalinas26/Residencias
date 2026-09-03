@@ -9,6 +9,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import requests
 from sqlalchemy import create_engine, text
+import streamlit as st
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA E ICONO PERSONALIZADO
@@ -316,7 +317,6 @@ def verificar_y_actualizar_tasa_hoy(eng):
     return 36.00
   try:
     with eng.connect() as conn:
-      # 1. Verificar si ya existe la tasa de hoy en la base de datos
       tasa_existente = conn.execute(
           text("SELECT tasa FROM tasa_cambio WHERE fecha = :f"), {"f": hoy}
       ).scalar()
@@ -324,7 +324,6 @@ def verificar_y_actualizar_tasa_hoy(eng):
       if tasa_existente:
         return float(tasa_existente)
 
-      # 2. Consultar automáticamente a la API pública del BCV
       response = requests.get(
           "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=bcv",
           timeout=5,
@@ -336,7 +335,6 @@ def verificar_y_actualizar_tasa_hoy(eng):
         )
 
         if tasa_bcv > 0:
-          # 3. Guardarla automáticamente en la base de datos
           conn.execute(
               text("""
                         INSERT INTO tasa_cambio (fecha, tasa)
@@ -351,7 +349,6 @@ def verificar_y_actualizar_tasa_hoy(eng):
   except Exception:
     pass
 
-  # 4. Respaldo: Buscar la última tasa guardada si la API no responde
   try:
     with eng.connect() as conn:
       ultima_tasa = conn.execute(
@@ -375,7 +372,10 @@ def obtener_datos_edificio():
   try:
     with engine.connect() as conn:
       row = conn.execute(
-          text("SELECT nombre, rif, direccion FROM configuracion_edificio WHERE id = 1")
+          text(
+              "SELECT nombre, rif, direccion FROM configuracion_edificio WHERE"
+              " id = 1"
+          )
       ).fetchone()
       if row:
         return {"nombre": row[0], "rif": row[1], "direccion": row[2]}
@@ -533,7 +533,6 @@ def cerrar_sesion():
   st.rerun()
 
 
-# Consultar la tasa del día automáticamente al cargar la app
 tasa_del_dia_auto = verificar_y_actualizar_tasa_hoy(engine)
 
 # -----------------------------------------------------------------------------
@@ -840,7 +839,6 @@ elif st.session_state.rol_logueado == "admin":
       "⚙️ Datos Edificio",
   ])
 
-  # TABS 1: GASTOS COMUNES
   with t1:
     st.subheader("➕ Cargar Nuevo Gasto Común")
     with st.form("form_gasto"):
@@ -863,7 +861,7 @@ elif st.session_state.rol_logueado == "admin":
           with engine.connect() as conn:
             conn.execute(
                 text("""
-                                VALIDAR / INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha, tipo, proveedor) 
+                                INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha, tipo, proveedor) 
                                 VALUES (:m, :m, :c, :mo, 'Pendiente', CURRENT_DATE, 'Comun', :p)
                             """),
                 {
@@ -877,26 +875,7 @@ elif st.session_state.rol_logueado == "admin":
           st.success("Gasto guardado en estado pendiente de aprobación.")
           st.rerun()
         except Exception as e:
-          # Fallback seguro para la inserción limpia si la palabra VALIDAR sobraba
-          try:
-            with engine.connect() as conn:
-              conn.execute(
-                  text("""
-                                    INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha, tipo, proveedor) 
-                                    VALUES (:m, :m, :c, :mo, 'Pendiente', CURRENT_DATE, 'Comun', :p)
-                                """),
-                  {
-                      "m": mes,
-                      "c": concepto,
-                      "mo": monto,
-                      "p": proveedor if proveedor.strip() else "N/A",
-                  },
-              )
-              conn.commit()
-            st.success("Gasto guardado en estado pendiente de aprobación.")
-            st.rerun()
-          except Exception as ex:
-            st.error(f"Error registrando gasto: {ex}")
+          st.error(f"Error registrando gasto: {e}")
 
     st.write("---")
     st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
@@ -975,7 +954,6 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error consultando gastos: {e}")
 
-  # TABS 2: GASTOS NO COMUNES
   with t2:
     st.subheader("🛠️ Cargar Gasto No Común (Cargo Individual)")
     df_unidades_list = obtener_unidades_df()
@@ -1037,7 +1015,6 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error listando cargos: {e}")
 
-  # TABS 3: CUOTAS EXTRAORDINARIAS
   with t3:
     st.subheader("⭐ Cargar Nueva Cuota Extraordinaria")
     with st.form("form_cuota_extra"):
@@ -1066,10 +1043,7 @@ elif st.session_state.rol_logueado == "admin":
                 {"c": concepto_ce, "m": monto_ce},
             )
             conn.commit()
-          st.success(
-              "Cuota extraordinaria creada. Puedes aprobarla y distribuirla"
-              " abajo."
-          )
+          st.success("Cuota extraordinaria creada.")
           st.rerun()
         except Exception as e:
           st.error(f"Error al guardar cuota extra: {e}")
@@ -1162,15 +1136,13 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error cargando cuotas extraordinarias: {e}")
 
-  # TABS 4: TASAS DE CAMBIO (AUTOMÁTICA Y MANUAL)
   with t4:
     st.subheader(
         "💱 Actualización Automática y Registro de Tasas de Cambio (BCV)"
     )
     st.info(
         f"ℹ️ La tasa actual obtenida automáticamente hoy es:"
-        f" **{tasa_del_dia_auto:,.4f} VES/USD**. El sistema también guarda el"
-        " histórico para los respaldos de pago."
+        f" **{tasa_del_dia_auto:,.4f} VES/USD**."
     )
 
     with st.form("form_tasa"):
@@ -1228,7 +1200,6 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error cargando tasas: {e}")
 
-  # TABS 5: VALIDAR PAGOS
   with t5:
     st.subheader("✅ Conciliación de Pagos Reportados")
     try:
@@ -1289,7 +1260,6 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error al cargar pagos reportados: {e}")
 
-  # TABS 6: ALÍCUOTAS Y UNIDADES
   with t6:
     st.subheader("🏢 Configuración de Unidades y Alícuotas")
     try:
@@ -1332,14 +1302,11 @@ elif st.session_state.rol_logueado == "admin":
                   },
               )
             conn.commit()
-          st.success(
-              "✅ Datos de las unidades actualizados correctamente."
-          )
+          st.success("✅ Datos de las unidades actualizados correctamente.")
           st.rerun()
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
-  # TABS 7: MOROSIDAD Y RECIBOS
   with t7:
     st.subheader("🚨 Recibos y Envíos a WhatsApp")
     mes_recibo_gral = st.text_input(
@@ -1449,7 +1416,6 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error generando recibos: {e}")
 
-  # TABS 8: DATOS EDIFICIO
   with t8:
     st.subheader("⚙️ Configuración General del Edificio")
     datos_actuales = obtener_datos_edificio()
