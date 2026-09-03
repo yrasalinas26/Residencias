@@ -13,7 +13,6 @@ from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
 # REGLA DE REDONDEO PERSONALIZADA (SOLO PARA TOTALES FINALES)
-# (> 0.5 sube al siguiente entero; <= 0.5 mantiene el entero actual)
 # -----------------------------------------------------------------------------
 def redondear_custom(val):
     if val is None:
@@ -25,6 +24,37 @@ def redondear_custom(val):
         return entero + 1
     else:
         return entero
+
+# -----------------------------------------------------------------------------
+# FUNCIÓN DE DISTRIBUCIÓN CONTABLE EXACTA (RESIDUAL AL PH)
+# -----------------------------------------------------------------------------
+def calcular_distribucion_gastos(tot_gastos_com, df_unidades):
+    """
+    Calcula la cuota exacta de cada apartamento:
+    - 10 aptos (6%): Redondeo a 2 decimales.
+    - 2 aptos (12%): Redondeo a 2 decimales.
+    - PH (16%): Recibe el ajuste residual exacto para cuadrar al 100% del gasto total.
+    """
+    tot_gastos_com = float(tot_gastos_com)
+    resultado = {}
+    
+    # 1. Calcular para los 12 apartamentos estándar (excluyendo el PH temporalmente)
+    suma_parcial = 0.0
+    for _, row in df_unidades.iterrows():
+        u = row['unidad']
+        alic = float(row['alicuota'])
+        if u != "PH":
+            cuota_exacta = tot_gastos_com * (alic / 100.0)
+            cuota_redondeada = round(cuota_exacta, 2)
+            resultado[u] = cuota_redondeada
+            suma_parcial += cuota_redondeada
+            
+    # 2. Asignar el residuo exacto al Penthouse (PH)
+    if "PH" in df_unidades['unidad'].values:
+        cuota_ph = tot_gastos_com - suma_parcial
+        resultado["PH"] = round(cuota_ph, 2)
+        
+    return resultado
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA E ICONO PERSONALIZADO
@@ -373,14 +403,16 @@ elif st.session_state.rol_logueado == "propietario":
                     {"u": user_actual, "m": mes_actual}
                 ).scalar() or 0.0
 
-            cuota_comun_raw = float(gastos_aprob) * (pct_user / 100.0)
+            # Aplicar distribución exacta con residuo al PH
+            distribucion_comun = calcular_distribucion_gastos(float(gastos_aprob), df_u)
+            cuota_comun_raw = distribucion_comun.get(user_actual, 0.0)
             cargos_ind_raw = float(cargos_ind)
             
             total_mes_raw = cuota_comun_raw + cargos_ind_raw
             total_mes_red = redondear_custom(total_mes_raw)
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Cuota Común Estimada", f"${cuota_comun_raw:,.2f}")
+            c1.metric("Cuota Común Exacta", f"${cuota_comun_raw:,.2f}")
             c2.metric("Cargos No Comunes / Extra", f"${cargos_ind_raw:,.2f}")
             c3.metric(f"Total a Pagar Periodo ({mes_actual})", f"${total_mes_red:,.0f}")
 
@@ -670,12 +702,13 @@ elif st.session_state.rol_logueado == "admin":
                                     try:
                                         with engine.connect() as conn:
                                             unidades_res = conn.execute(text("SELECT unidad, alicuota FROM unidades")).fetchall()
+                                            df_unidades_tmp = pd.DataFrame(unidades_res, columns=["unidad", "alicuota"])
                                             monto_tot = float(r_ce['monto_total'])
-                                            for u_row in unidades_res:
-                                                u_cod = u_row[0]
-                                                u_alic = float(u_row[1])
-                                                monto_apto_raw = monto_tot * (u_alic / 100.0)
-
+                                            
+                                            # Usar la función de distribución exacta con residuo al PH
+                                            dist_extra = calcular_distribucion_gastos(monto_tot, df_unidades_tmp)
+                                            
+                                            for u_cod, monto_apto_raw in dist_extra.items():
                                                 conn.execute(
                                                     text("""
                                                         INSERT INTO cargos_individuales (apartamento, mes_anio, concepto, monto, fecha)
@@ -686,7 +719,7 @@ elif st.session_state.rol_logueado == "admin":
                                             
                                             conn.execute(text("UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id"), {"id": r_ce['id']})
                                             conn.commit()
-                                        st.success("Cuota extraordinaria distribuida entre todas las unidades.")
+                                        st.success("Cuota extraordinaria distribuida exactamente entre las unidades (residuo asignado al PH).")
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Error distribuyendo cuota extra: {e}")
@@ -775,7 +808,7 @@ elif st.session_state.rol_logueado == "admin":
             except Exception as e:
                 st.error(f"Error actualizando unidades: {e}")
 
-    # TAB 6: NOTIFICAR RECIBOS POR WHATSAPP (AQUÍ ESTÁ LA MAGIA DEL GRUPO)
+    # TAB 6: NOTIFICAR RECIBOS POR WHATSAPP
     with t6:
         st.subheader("📲 Notificación e Informes para Grupo de WhatsApp")
         mes_notif = st.text_input("Selecciona el Periodo (AAAA-MM):", value=obtener_mes_anterior(), key="mes_notif_key")
@@ -791,7 +824,9 @@ elif st.session_state.rol_logueado == "admin":
 
             st.info(f"📊 **Total Gastos Comunes Aprobados ({mes_notif}):** ${float(tot_gastos_com):,.2f}")
 
-            # GENERADOR DE RESUMEN CONSOLIDADO PARA GRUPO DE WHATSAPP
+            # DISTRIBUCIÓN EXACTA CON RESIDUO AL PH
+            distribucion_comun_total = calcular_distribucion_gastos(float(tot_gastos_com), df_unid_all)
+
             st.markdown("### 📢 Publicar Relación de Cobro al Grupo")
             
             lineas_grupo = []
@@ -812,7 +847,7 @@ elif st.session_state.rol_logueado == "admin":
                         {"u": u_cod, "m": mes_notif}
                     ).scalar() or 0.0
 
-                cuota_comun = float(tot_gastos_com) * (u_alic / 100.0)
+                cuota_comun = distribucion_comun_total.get(u_cod, 0.0)
                 cuota_ind = float(c_ind)
                 subtotal_apt = cuota_comun + cuota_ind
                 total_red = redondear_custom(subtotal_apt)
