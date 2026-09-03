@@ -312,55 +312,50 @@ inicializar_tablas()
 # FUNCIONES AUTOMÁTICAS DE TASA Y AUXILIARES
 # -----------------------------------------------------------------------------
 def verificar_y_actualizar_tasa_hoy(eng):
-  hoy = date.today()
-  if not eng:
-    return 36.00
-  try:
-    with eng.connect() as conn:
-      tasa_existente = conn.execute(
-          text("SELECT tasa FROM tasa_cambio WHERE fecha = :f"), {"f": hoy}
-      ).scalar()
-
-      if tasa_existente:
-        return float(tasa_existente)
-
-      response = requests.get(
-          "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=bcv",
-          timeout=5,
-      )
-      if response.status_code == 200:
-        data = response.json()
-        tasa_bcv = float(
-            data.get("sources", {}).get("bcv", {}).get("price", 0.0)
+    hoy = date.today()
+    if not eng:
+        return 36.00
+    
+    # Intentamos consultar la API oficial del BCV para tener siempre la tasa del día más reciente
+    try:
+        response = requests.get(
+            "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=bcv",
+            timeout=5,
         )
+        if response.status_code == 200:
+            data = response.json()
+            tasa_bcv = float(
+                data.get("sources", {}).get("bcv", {}).get("price", 0.0)
+            )
 
-        if tasa_bcv > 0:
-          conn.execute(
-              text("""
-                        INSERT INTO tasa_cambio (fecha, tasa)
-                        VALUES (:f, :t)
-                        ON CONFLICT (fecha) DO UPDATE SET tasa = EXCLUDED.tasa
-                    """),
-              {"f": hoy, "t": tasa_bcv},
-          )
-          conn.commit()
-          return tasa_bcv
+            if tasa_bcv > 0:
+                with eng.connect() as conn:
+                    # Guardamos o actualizamos directamente la tasa correspondiente a la fecha de hoy
+                    conn.execute(
+                        text("""
+                            INSERT INTO tasa_cambio (fecha, tasa)
+                            VALUES (:f, :t)
+                            ON CONFLICT (fecha) DO UPDATE SET tasa = EXCLUDED.tasa
+                        """),
+                        {"f": hoy, "t": tasa_bcv},
+                    )
+                    conn.commit()
+                return tasa_bcv
+    except Exception:
+        pass
 
-  except Exception:
-    pass
+    # Si falla la conexión a internet o la API, buscamos la última tasa registrada en la base de datos como respaldo
+    try:
+        with eng.connect() as conn:
+            ultima_tasa = conn.execute(
+                text("SELECT tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 1")
+            ).scalar()
+            if ultima_tasa:
+                return float(ultima_tasa)
+    except Exception:
+        pass
 
-  try:
-    with eng.connect() as conn:
-      ultima_tasa = conn.execute(
-          text("SELECT tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 1")
-      ).scalar()
-      if ultima_tasa:
-        return float(ultima_tasa)
-  except Exception:
-    pass
-
-  return 36.00
-
+    return 36.00
 
 def obtener_datos_edificio():
   if not engine:
