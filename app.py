@@ -316,35 +316,53 @@ def verificar_y_actualizar_tasa_hoy(eng):
     if not eng:
         return 36.00
     
-    # Intentamos consultar la API oficial del BCV para tener siempre la tasa del día más reciente
+    tasa_bcv = 0.0
+
+    # Opción 1: Intentar con DolarApi (Suele ser muy estable)
     try:
-        response = requests.get(
-            "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=bcv",
-            timeout=5,
-        )
+        response = requests.get("https://ve.dolarapi.com/v1/dolares/bcv", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            tasa_bcv = float(
-                data.get("sources", {}).get("bcv", {}).get("price", 0.0)
-            )
-
-            if tasa_bcv > 0:
-                with eng.connect() as conn:
-                    # Guardamos o actualizamos directamente la tasa correspondiente a la fecha de hoy
-                    conn.execute(
-                        text("""
-                            INSERT INTO tasa_cambio (fecha, tasa)
-                            VALUES (:f, :t)
-                            ON CONFLICT (fecha) DO UPDATE SET tasa = EXCLUDED.tasa
-                        """),
-                        {"f": hoy, "t": tasa_bcv},
-                    )
-                    conn.commit()
-                return tasa_bcv
+            # DolarApi devuelve un diccionario con la clave 'promedio' o 'venta'
+            tasa_bcv = float(data.get("promedio", 0.0))
     except Exception:
         pass
 
-    # Si falla la conexión a internet o la API, buscamos la última tasa registrada en la base de datos como respaldo
+    # Opción 2: Si la Opción 1 falla, intentamos con la API alternativa de PyDolar
+    if tasa_bcv <= 0:
+        try:
+            response = requests.get(
+                "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=bcv",
+                timeout=5,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                # Intentamos leer según las estructuras comunes de esta API
+                if "sources" in data:
+                    tasa_bcv = float(data.get("sources", {}).get("bcv", {}).get("price", 0.0))
+                elif "monitor" in data:
+                    tasa_bcv = float(data.get("monitor", {}).get("bcv", {}).get("price", 0.0))
+        except Exception:
+            pass
+
+    # Si logramos obtener una tasa válida de alguna de las dos APIs, la guardamos/actualizamos en la BD
+    if tasa_bcv > 0:
+        try:
+            with eng.connect() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO tasa_cambio (fecha, tasa)
+                        VALUES (:f, :t)
+                        ON CONFLICT (fecha) DO UPDATE SET tasa = EXCLUDED.tasa
+                    """),
+                    {"f": hoy, "t": tasa_bcv},
+                )
+                conn.commit()
+            return tasa_bcv
+        except Exception:
+            pass
+
+    # Respaldo final: Si ninguna API responde, leemos la última tasa guardada en la base de datos
     try:
         with eng.connect() as conn:
             ultima_tasa = conn.execute(
@@ -356,7 +374,6 @@ def verificar_y_actualizar_tasa_hoy(eng):
         pass
 
     return 36.00
-
 def obtener_datos_edificio():
   if not engine:
     return {
