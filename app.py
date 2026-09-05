@@ -1508,12 +1508,12 @@ elif st.session_state.rol_logueado == "admin":
           st.rerun()
         except Exception as e:
           st.error(f"Error actualizando configuración: {e}")
-   with t9:
-     st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa BCV)")
-     st.markdown(
+    with t9:
+      st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa BCV)")
+      st.markdown(
       "Este módulo toma la tasa registrada en el sistema y compara las"
       " transferencias en bolívares de los propietarios."
-     )
+      )
 
   mes_conciliacion = st.text_input(
       "Periodo a Conciliar (AAAA-MM):",
