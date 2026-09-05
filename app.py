@@ -1511,30 +1511,53 @@ elif st.session_state.rol_logueado == "admin":
     with t9:
       st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa BCV)")
       st.markdown(
-      "Este módulo toma la tasa registrada en el sistema y compara las"
-      " transferencias en bolívares de los propietarios."
+      "Este módulo toma la tasa oficial registrada en la tabla `tasas_cambio` y"
+      " compara las transferencias en bolívares de los propietarios."
       )
 
-  mes_conciliacion = st.text_input(
-      "Periodo a Conciliar (AAAA-MM):",
-      value=obtener_mes_anterior(),
-      key="input_mes_conciliacion",
-  )
+  col_t1, col_t2 = st.columns(2)
+  with col_t1:
+    mes_conciliacion = st.text_input(
+        "Periodo a Conciliar (AAAA-MM):",
+        value=obtener_mes_anterior(),
+        key="input_mes_conciliacion",
+    )
+  with col_t2:
+    tasa_bcv_manual = st.number_input(
+        "Tasa BCV de Respaldo (Bs / USD):",
+        min_value=1.0,
+        value=36.50,
+        step=0.01,
+        format="%.2f",
+        key="input_tasa_bcv_manual",
+    )
 
   try:
+    tasa_bcv = tasa_bcv_manual  # Valor por defecto inicial
+
     with engine.connect() as conn:
-      # Consultar la tasa oficial directamente desde el registro correspondiente al periodo
-      # (Si tu tabla se llama distinto en la BD, se ajusta al instante)
-      tasa_query = conn.execute(
-          text(
-              "SELECT tasa FROM tasas WHERE mes_anio = :m LIMIT 1"
-          ),  # Ajusta 'tasas' y 'tasa' si es necesario
-          {"m": mes_conciliacion},
-      ).scalar()
+      # Consulta directa a tu tabla 'tasas_cambio'
+      try:
+        tasa_db = conn.execute(
+            text(
+                "SELECT tasa FROM tasas_cambio WHERE mes_anio = :m LIMIT 1"
+            ),
+            {"m": mes_conciliacion},
+        ).scalar()
+        if tasa_db:
+          tasa_bcv = float(tasa_db)
+          st.toast(
+              f"✅ Tasa cargada exitosamente desde 'tasas_cambio': Bs."
+              f" {tasa_bcv:,.2f}",
+              icon="💱",
+          )
+      except Exception as ex:
+        st.warning(
+            "⚠️ No se pudo leer la tasa automática para este periodo. Usando la"
+            f" tasa manual. Detalle: {ex}"
+        )
 
-      # Si no encuentra un registro exacto para ese mes, usamos un valor por defecto o manual
-      tasa_bcv = float(tasa_query) if tasa_query else 36.50
-
+      # Obtener gastos aprobados del mes
       gastos_mes_df = pd.read_sql(
           text(
               "SELECT monto FROM gastos WHERE mes_anio = :m AND (estatus ="
@@ -1547,6 +1570,7 @@ elif st.session_state.rol_logueado == "admin":
           gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
       )
 
+      # Obtener unidades
       unidades_df = pd.read_sql(
           text(
               "SELECT unidad, alicuota, propietario FROM unidades ORDER BY"
@@ -1558,10 +1582,11 @@ elif st.session_state.rol_logueado == "admin":
     st.markdown("---")
     st.markdown(
         f"📊 **Gasto Común Total:** ${total_gastos_comunes:,.2f} USD | 💱 **Tasa"
-        f" Oficial (t4):** Bs. {tasa_bcv:,.2f}"
+        f" BCV Activa:** Bs. {tasa_bcv:,.2f}"
     )
     st.markdown("---")
 
+    # Listado y Conciliación por Apartamento
     for _, u_row in unidades_df.iterrows():
       u_cod = u_row["unidad"]
       u_prop = u_row["propietario"]
@@ -1626,7 +1651,7 @@ elif st.session_state.rol_logueado == "admin":
             if abs(diferencia_bs) < 5.0:
               st.success(
                   "✅ El monto en Bs cubre exactamente la deuda con la tasa"
-                  " oficial de t4."
+                  " oficial."
               )
             elif monto_reportado_bs > total_bs_teorico:
               st.info(
@@ -1642,4 +1667,4 @@ elif st.session_state.rol_logueado == "admin":
         st.markdown("---")
 
   except Exception as e:
-    st.error(f"Error en la conciliación con t4: {e}")
+    st.error(f"Error en el módulo de conciliación: {e}")
