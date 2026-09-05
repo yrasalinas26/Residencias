@@ -1307,13 +1307,13 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
- with t7:
-  st.subheader("🚨 Recibos y Envíos a WhatsApp")
-  mes_recibo_gral = st.text_input(
-      "Periodo del Recibo (AAAA-MM):",
-      value=obtener_mes_anterior(),
-      key="input_mes_recibo_gen",
-  )
+    with t7:
+      st.subheader("🚨 Recibos y Envíos a WhatsApp")
+      mes_recibo_gral = st.text_input(
+          "Periodo del Recibo (AAAA-MM):",
+          value=obtener_mes_anterior(),
+          key="input_mes_recibo_gen",
+          )
 
   try:
     with engine.connect() as conn:
