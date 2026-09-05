@@ -877,15 +877,15 @@ elif st.session_state.rol_logueado == "admin":
   st.write("---")
 
   t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
-      "📊 Gastos Comunes",
-      "🛠️ Gastos No Comunes",
-      "⭐ Cuotas Extras",
-      "💱 Tasas de Cambio",
-      "✅ Validar Pagos",
-      "🏢 Alícuotas y Unidades",
-      "🚨 Morosidad y Recibos",
-      "⚙️ Datos Edificio",
-  ])
+    "📊 Gastos Comunes",
+    "🛠️ Gastos No Comunes",
+    "⭐ Cuotas Extras",
+    "💱 Tasas de Cambio",
+    "✅ Validar Pagos",
+    "🏢 Alícuotas y Unidades",
+    "🚨 Morosidad y Recibos",
+    "⚙️ Datos Edificio",
+])
 
   with t1:
     st.subheader("➕ Cargar Nuevo Gasto Común")
