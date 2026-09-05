@@ -595,6 +595,20 @@ if not st.session_state.usuario_logueado:
             st.error("❌ Credenciales incorrectas.")
         except Exception as e:
           st.error(f"Error al ingresar: {e}")
+if not st.session_state.usuario_logueado:
+    st.markdown("<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>", unsafe_allow_html=True)
+    # ... tu formulario de login ...
+    # ... tus validaciones de base de datos ...
+
+# 2. Pones el ELSE justo aquí abajo 👇
+else:
+    # Barra lateral opcional para salir
+    with st.sidebar:
+        st.write(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
+        if st.button("🚪 Cerrar Sesión"):
+            st.session_state.usuario_logueado = None
+            st.session_state.rol_logueado = None
+            st.rerun()
 
 # -----------------------------------------------------------------------------
 # 2. VISTA DE PROPIETARIOS
