@@ -1308,12 +1308,12 @@ elif st.session_state.rol_logueado == "admin":
       st.error(f"Error gestionando unidades: {e}")
 
     with t7:
-      st.subheader("🚨 Recibos y Envíos a WhatsApp")
-      mes_recibo_gral = st.text_input(
-          "Periodo del Recibo (AAAA-MM):",
-          value=obtener_mes_anterior(),
-          key="input_mes_recibo_gen",
-          )
+  st.subheader("🚨 Recibos y Envíos a WhatsApp")
+  mes_recibo_gral = st.text_input(
+      "Periodo del Recibo (AAAA-MM):",
+      value=obtener_mes_anterior(),
+      key="input_mes_recibo_gen",
+  )
 
   try:
     with engine.connect() as conn:
@@ -1361,10 +1361,8 @@ elif st.session_state.rol_logueado == "admin":
 
       total_apt = cuota_comun_apt + float(cargos_apt)
 
-      with st.expander(
-          f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"
-      ):
-        # --- CONSTRUCCIÓN DEL MENSAJE DESGLOSADO ---
+      with st.expander(f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"):
+        # --- MENSAJE INDIVIDUAL DESGLOSADO ---
         msg_ind = f"  *{datos_ed['nombre']}*\n"
         msg_ind += f"  *AVISO DE COBRO - {mes_recibo_gral}*\n"
         msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
@@ -1372,7 +1370,6 @@ elif st.session_state.rol_logueado == "admin":
         msg_ind += f"----------------------------------------\n"
         msg_ind += f"  *Desglose de Gastos Comunes:*\n"
 
-        # Añadir cada gasto común multiplicado por la alícuota del apartamento
         if not gastos_mes_df.empty:
           for _, g_row in gastos_mes_df.iterrows():
             g_concepto = g_row["concepto"]
@@ -1393,7 +1390,6 @@ elif st.session_state.rol_logueado == "admin":
         msg_ind += (
             "Por favor realizar su pago y reportarlo en la plataforma. ¡Gracias!"
         )
-        # -------------------------------------------
 
         st.text_area(
             f"Mensaje WhatsApp Apt {u_cod}:",
@@ -1410,18 +1406,47 @@ elif st.session_state.rol_logueado == "admin":
 
     st.write("---")
     st.markdown("### 📢 Recibo General para Grupo / Difusión")
+
     if not gastos_mes_df.empty:
+      # --- CONSTRUCCIÓN DEL RECIBO GENERAL CON ALÍCUOTAS ---
       texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
       texto_ws += f"📄 *RESUMEN DE GASTOS Y COBRANZA - {mes_recibo_gral}*\n\n"
+      texto_ws += f"  *Gastos Comunes del Edificio:*\n"
+
       for _, g in gastos_mes_df.iterrows():
         texto_ws += f"• {g['concepto']}: ${float(g['monto']):,.2f}\n"
+
       texto_ws += (
-          f"\n💰 *TOTAL GASTOS COMUNES:* *${float(total_gastos_comunes):,.2f}*\n"
+          f"----------------------------------------\n"
+          f"💰 *TOTAL GASTOS COMUNES:* *${float(total_gastos_comunes):,.2f}*\n"
+          f"----------------------------------------\n"
+          f"  *Distribución por Apartamentos:*\n"
+      )
+
+      # Recorremos cada apartamento para calcular su cuota común en el mensaje general
+      for _, u_row in unidades_df.iterrows():
+        u_cod = u_row["unidad"]
+        u_alic = float(u_row["alicuota"])
+        cuota_apt_gral = float(total_gastos_comunes) * (u_alic / 100.0)
+        texto_ws += f"• Apto {u_cod} ({u_alic:.1f}%): ${cuota_apt_gral:,.2f}\n"
+
+      texto_ws += (
+          f"----------------------------------------\n"
+          "🙏 Por favor realizar sus pagos correspondientes y reportarlos en"
+          " la plataforma. ¡Gracias!"
+      )
+      # ----------------------------------------------------
+
+      st.text_area(
+          "Vista Previa Recibo General:",
+          texto_ws,
+          height=220,
+          key="txt_msg_general_grupo",
       )
 
       enlace_wa_general = f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
       st.link_button(
-          "📲 Abrir WhatsApp con el Recibo General",
+          "📲 Abrir WhatsApp con el Recibo General Completo",
           enlace_wa_general,
           use_container_width=True,
       )
