@@ -307,72 +307,61 @@ def inicializar_tablas():
 
 inicializar_tablas()
 
+
 # -----------------------------------------------------------------------------
 # FUNCIONES AUTOMÁTICAS DE TASA Y AUXILIARES
 # -----------------------------------------------------------------------------
 def verificar_y_actualizar_tasa_hoy(eng):
-    hoy = date.today()
-    if not eng:
-        return 36.00
-    
-    tasa_bcv = 0.0
+  hoy = date.today()
+  if not eng:
+    return 36.00
+  try:
+    with eng.connect() as conn:
+      tasa_existente = conn.execute(
+          text("SELECT tasa FROM tasa_cambio WHERE fecha = :f"), {"f": hoy}
+      ).scalar()
 
-    # Opción 1: Intentar con DolarApi (Suele ser muy estable)
-    try:
-        response = requests.get("https://ve.dolarapi.com/v1/dolares/bcv", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            # DolarApi devuelve un diccionario con la clave 'promedio' o 'venta'
-            tasa_bcv = float(data.get("promedio", 0.0))
-    except Exception:
-        pass
+      if tasa_existente:
+        return float(tasa_existente)
 
-    # Opción 2: Si la Opción 1 falla, intentamos con la API alternativa de PyDolar
-    if tasa_bcv <= 0:
-        try:
-            response = requests.get(
-                "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=bcv",
-                timeout=5,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                # Intentamos leer según las estructuras comunes de esta API
-                if "sources" in data:
-                    tasa_bcv = float(data.get("sources", {}).get("bcv", {}).get("price", 0.0))
-                elif "monitor" in data:
-                    tasa_bcv = float(data.get("monitor", {}).get("bcv", {}).get("price", 0.0))
-        except Exception:
-            pass
+      response = requests.get(
+          "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?monitor=bcv",
+          timeout=5,
+      )
+      if response.status_code == 200:
+        data = response.json()
+        tasa_bcv = float(
+            data.get("sources", {}).get("bcv", {}).get("price", 0.0)
+        )
 
-    # Si logramos obtener una tasa válida de alguna de las dos APIs, la guardamos/actualizamos en la BD
-    if tasa_bcv > 0:
-        try:
-            with eng.connect() as conn:
-                conn.execute(
-                    text("""
+        if tasa_bcv > 0:
+          conn.execute(
+              text("""
                         INSERT INTO tasa_cambio (fecha, tasa)
                         VALUES (:f, :t)
                         ON CONFLICT (fecha) DO UPDATE SET tasa = EXCLUDED.tasa
                     """),
-                    {"f": hoy, "t": tasa_bcv},
-                )
-                conn.commit()
-            return tasa_bcv
-        except Exception:
-            pass
+              {"f": hoy, "t": tasa_bcv},
+          )
+          conn.commit()
+          return tasa_bcv
 
-    # Respaldo final: Si ninguna API responde, leemos la última tasa guardada en la base de datos
-    try:
-        with eng.connect() as conn:
-            ultima_tasa = conn.execute(
-                text("SELECT tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 1")
-            ).scalar()
-            if ultima_tasa:
-                return float(ultima_tasa)
-    except Exception:
-        pass
+  except Exception:
+    pass
 
-    return 36.00
+  try:
+    with eng.connect() as conn:
+      ultima_tasa = conn.execute(
+          text("SELECT tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 1")
+      ).scalar()
+      if ultima_tasa:
+        return float(ultima_tasa)
+  except Exception:
+    pass
+
+  return 36.00
+
+
 def obtener_datos_edificio():
   if not engine:
     return {
@@ -528,6 +517,7 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
   buffer.seek(0)
   return buffer
 
+
 # -----------------------------------------------------------------------------
 # CONTROL DE SESIÓN
 # -----------------------------------------------------------------------------
@@ -546,321 +536,285 @@ def cerrar_sesion():
 tasa_del_dia_auto = verificar_y_actualizar_tasa_hoy(engine)
 
 # -----------------------------------------------------------------------------
-# 1. PORTAL DE ACCESO (Si NO está logueado)
+# 1. PORTAL DE ACCESO
 # -----------------------------------------------------------------------------
-if not st.session_state.get("usuario_logueado"):
-    st.markdown(
-        "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<p style='text-align: center; color: gray;'>Ingresa tus credenciales para continuar.</p>",
-        unsafe_allow_html=True,
-    )
+if not st.session_state.usuario_logueado:
+  st.markdown(
+      "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
+      unsafe_allow_html=True,
+  )
+  st.markdown(
+      "<p style='text-align: center; color: gray;'>Ingresa tus credenciales"
+      " para continuar.</p>",
+      unsafe_allow_html=True,
+  )
 
-    if 'error_conexion' in locals() and error_conexion:
-        st.error(f"⚠️ Error de conexión: {error_conexion}")
+  if error_conexion:
+    st.error(f"⚠️ Error de conexión: {error_conexion}")
 
-    with st.form("form_login"):
-        usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
-        clave_input = st.text_input("Contraseña", type="password").strip()
-        bot_login = st.form_submit_button(
-            "Ingresar", type="primary", use_container_width=True
-        )
-
-        if bot_login:
-            if not usuario_input or not clave_input:
-                st.error("Por favor completa los campos.")
-            elif 'engine' not in locals() or not engine:
-                st.error("Base de datos no disponible.")
-            else:
-                try:
-                    with engine.connect() as conn:
-                        row = conn.execute(
-                            text(
-                                "SELECT usuario, clave, rol FROM usuarios WHERE LOWER(usuario) = LOWER(:u)"
-                            ),
-                            {"u": usuario_input},
-                        ).fetchone()
-
-                    if row and row[1] == clave_input:
-                        st.session_state.usuario_logueado = row[0]
-                        st.session_state.rol_logueado = row[2]
-                        st.rerun()
-                    else:
-                        st.error("❌ Credenciales incorrectas.")
-                except Exception as e:
-                    st.error(f"Error al ingresar: {e}")
-
-    # 🛑 Detiene la ejecución aquí si no hay sesión activa
-    st.stop()
-
-# -----------------------------------------------------------------------------
-# 2. VISTA DE PROPIETARIOS (Si está logueado y es propietario)
-# -----------------------------------------------------------------------------
-if st.session_state.get("rol_logueado") == "propietario":
-    user_actual = st.session_state.usuario_logueado
-    datos_ed = obtener_datos_edificio()
-    df_u = obtener_unidades_df()
-    row_u = df_u[df_u["unidad"] == user_actual]
-    prop_nombre = (
-        row_u["propietario"].values[0] if not row_u.empty else "Propietario"
-    )
-    prop_tel = row_u["telefono"].values[0] if not row_u.empty else ""
-    pct_user = float(row_u["alicuota"].values[0]) if not row_u.empty else 6.0
-
-    col_head, col_out = st.columns([3, 1])
-    with col_head:
-        st.title(f"🏢 {datos_ed['nombre']} - Unidad {user_actual}")
-        st.caption(f"Propietario: {prop_nombre} | Alícuota: {pct_user}%")
-    with col_out:
-        st.write("")
-        if st.button("🚪 Cerrar Sesión", use_container_width=True):
-            st.session_state.usuario_logueado = None
-            st.session_state.rol_logueado = None
-            st.rerun()
-
-    st.write("---")
-
-    t_p1, t_p2, t_p3 = st.tabs(
-        ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
+  with st.form("form_login"):
+    usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
+    clave_input = st.text_input("Contraseña", type="password").strip()
+    bot_login = st.form_submit_button(
+        "Ingresar", type="primary", use_container_width=True
     )
 
-    with t_p1:
-        st.subheader("📊 Mis Deudas y Recibos")
-        mes_vencido_defecto = obtener_mes_anterior()
-# -----------------------------------------------------------------------------
-# 2. VISTA DE PROPIETARIOS (Continuación y fin de sus 3 pestañas)
-# -----------------------------------------------------------------------------
-elif st.session_state.get("rol_logueado") == "propietario":
-    # (Aquí va todo tu código de arriba del propietario: user_actual, datos_ed, etc.)
-    
-    t_p1, t_p2, t_p3 = st.tabs(
-        ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
-    )
-
-    with t_p1:
-        st.subheader("📊 Mis Deudas y Recibos")
-        mes_vencido_defecto = obtener_mes_anterior()
-        mes_actual = st.text_input(
-            "Periodo a Consultar (AAAA-MM):",
-            value=mes_vencido_defecto,
-            key="prop_consulta_mes",
-        )
-
+    if bot_login:
+      if not usuario_input or not clave_input:
+        st.error("Por favor completa los campos.")
+      elif not engine:
+        st.error("Base de datos no disponible.")
+      else:
         try:
-            with engine.connect() as conn:
-                gastos_aprob = (
-                    conn.execute(
-                        text(
-                            "SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"
-                        ),
-                        {"m": mes_actual},
-                    ).scalar()
-                    or 0
-                )
+          with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT usuario, clave, rol FROM usuarios WHERE"
+                    " LOWER(usuario) = LOWER(:u)"
+                ),
+                {"u": usuario_input},
+            ).fetchone()
 
-                cargos_ind = (
-                    conn.execute(
-                        text(
-                            "SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :u AND mes_anio = :m"
-                        ),
-                        {"u": user_actual, "m": mes_actual},
-                    ).scalar()
-                    or 0
-                )
-
-            cuota_comun = float(gastos_aprob) * (pct_user / 100.0)
-            total_mes = cuota_comun + float(cargos_ind)
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Cuota Común Estimada", f"${cuota_comun:,.2f}")
-            c2.metric("Cargos No Comunes / Extra", f"${float(cargos_ind):,.2f}")
-            c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
-
-            st.write("---")
-            st.subheader("📥 Descargar Recibo / Compartir por WhatsApp")
-
-            detalles = [
-                {
-                    "concepto": "Gastos Comunes del Edificio",
-                    "base": float(gastos_aprob),
-                    "monto": cuota_comun,
-                },
-                {
-                    "concepto": "Cargos Indiv. No Comunes / Cuotas Extras",
-                    "base": float(cargos_ind),
-                    "monto": float(cargos_ind),
-                },
-            ]
-            pdf_bytes = generar_pdf_recibo(
-                user_actual, mes_actual, total_mes, detalles, pct_user
-            )
-
-            msg_ws = (
-                f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO ({mes_actual})*\n"
-                f"Unidad: {user_actual}\nTotal a Pagar: ${total_mes:,.2f}\n\n"
-                "Por favor reportar el pago a través de la app."
-            )
-            link_ws = generar_enlace_whatsapp(prop_tel, msg_ws)
-
-            col_pdf, col_ws = st.columns(2)
-            with col_pdf:
-                st.download_button(
-                    f"📄 Descargar Recibo PDF ({mes_actual})",
-                    data=pdf_bytes,
-                    file_name=f"recibo_{user_actual}_{mes_actual}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
-            with col_ws:
-                st.link_button(
-                    "📲 Compartir por WhatsApp", link_ws, use_container_width=True
-                )
-
+          if row and row[1] == clave_input:
+            st.session_state.usuario_logueado = row[0]
+            st.session_state.rol_logueado = row[2]
+            st.rerun()
+          else:
+            st.error("❌ Credenciales incorrectas.")
         except Exception as e:
-            st.error(f"Error consultando estado de cuenta: {e}")
+          st.error(f"Error al ingresar: {e}")
 
-    with t_p2:
-        st.subheader("📝 Formulario de Reporte de Pago (Bolívares o Dólares)")
-        st.info(
-            "ℹ️ Si pagas en Bolívares (VES), ingresa el monto en Bs. La aplicación "
-            "buscará automáticamente la tasa del dólar oficial BCV correspondiente "
-            "a la fecha de tu pago y lo convertirá a dólares ($)."
+# -----------------------------------------------------------------------------
+# 2. VISTA DE PROPIETARIOS
+# -----------------------------------------------------------------------------
+elif st.session_state.rol_logueado == "propietario":
+  user_actual = st.session_state.usuario_logueado
+  datos_ed = obtener_datos_edificio()
+  df_u = obtener_unidades_df()
+  row_u = df_u[df_u["unidad"] == user_actual]
+  prop_nombre = (
+      row_u["propietario"].values[0] if not row_u.empty else "Propietario"
+  )
+  prop_tel = row_u["telefono"].values[0] if not row_u.empty else ""
+  pct_user = float(row_u["alicuota"].values[0]) if not row_u.empty else 6.0
+
+  col_head, col_out = st.columns([3, 1])
+  with col_head:
+    st.title(f"🏢 {datos_ed['nombre']} - Unidad {user_actual}")
+    st.caption(f"Propietario: {prop_nombre} | Alícuota: {pct_user}%")
+  with col_out:
+    st.write("")
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+      cerrar_sesion()
+
+  st.write("---")
+
+  t_p1, t_p2, t_p3 = st.tabs(
+      ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
+  )
+
+  with t_p1:
+    st.subheader("📊 Mis Deudas y Recibos")
+
+    mes_vencido_defecto = obtener_mes_anterior()
+    mes_actual = st.text_input(
+        "Periodo a Consultar (AAAA-MM):",
+        value=mes_vencido_defecto,
+        key="prop_consulta_mes",
+    )
+
+    try:
+      with engine.connect() as conn:
+        gastos_aprob = (
+            conn.execute(
+                text(
+                    "SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus"
+                    " = 'Aprobado'"
+                ),
+                {"m": mes_actual},
+            ).scalar()
+            or 0
         )
 
-        with st.form("form_reportar_pago"):
-            tipo_p = st.selectbox(
-                "Tipo de Pago", ["Mensualidad", "Cuota Extraordinaria"]
-            )
-            mes_p = st.text_input(
-                "Periodo / Mes-Año a Pagar (AAAA-MM)", value=obtener_mes_anterior()
-            )
+        cargos_ind = (
+            conn.execute(
+                text(
+                    "SELECT SUM(monto) FROM cargos_individuales WHERE"
+                    " apartamento = :u AND mes_anio = :m"
+                ),
+                {"u": user_actual, "m": mes_actual},
+            ).scalar()
+            or 0
+        )
 
-            col_mon1, col_mon2 = st.columns(2)
-            with col_mon1:
-                moneda = st.selectbox("Moneda del Pago", ["USD ($)", "VES (Bs.)"])
-            with col_mon2:
-                fecha_p = st.date_input("Fecha de Realización del Pago", datetime.now())
+      cuota_comun = float(gastos_aprob) * (pct_user / 100.0)
+      total_mes = cuota_comun + float(cargos_ind)
 
-            monto_input = st.number_input(
-                "Monto Pagado (en la moneda seleccionada)", min_value=0.01, step=0.01
-            )
+      c1, c2, c3 = st.columns(3)
+      c1.metric("Cuota Común Estimada", f"${cuota_comun:,.2f}")
+      c2.metric("Cargos No Comunes / Extra", f"${float(cargos_ind):,.2f}")
+      c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
 
-            metodo = st.selectbox(
-                "Método de Pago",
-                [
-                    "Pago Móvil",
-                    "Transferencia VES",
-                    "Efectivo USD",
-                    "Zelle",
-                    "Binance / Crypto",
-                ],
-            )
-            ref = st.text_input("Número de Referencia / Comprobante")
+      st.write("---")
+      st.subheader("📥 Descargar Recibo / Compartir por WhatsApp")
 
-            btn_pago = st.form_submit_button("Enviar Reporte de Pago", type="primary")
+      detalles = [
+          {
+              "concepto": "Gastos Comunes del Edificio",
+              "base": float(gastos_aprob),
+              "monto": cuota_comun,
+          },
+          {
+              "concepto": "Cargos Indiv. No Comunes / Cuotas Extras",
+              "base": float(cargos_ind),
+              "monto": float(cargos_ind),
+          },
+      ]
+      pdf_bytes = generar_pdf_recibo(
+          user_actual, mes_actual, total_mes, detalles, pct_user
+      )
 
-            if btn_pago:
-                if not ref:
-                    st.error("Debes ingresar el número de referencia o comprobante.")
-                else:
-                    try:
-                        tasa_usada = 1.0
-                        monto_en_usd = monto_input
+      msg_ws = (
+          f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO"
+          f" ({mes_actual})*\nUnidad: {user_actual}\nTotal a Pagar:"
+          f" ${total_mes:,.2f}\n\nPor favor reportar el pago a través de la"
+          " app."
+      )
+      link_ws = generar_enlace_whatsapp(prop_tel, msg_ws)
 
-                        if "VES" in moneda:
-                            tasa_usada = obtener_tasa_por_fecha(fecha_p)
-                            if tasa_usada <= 1.0:
-                                st.warning(
-                                    f"⚠️ No se encontró tasa registrada para la fecha {fecha_p}. "
-                                    "Se usará 1.0 por defecto."
-                                )
-                            else:
-                                monto_en_usd = monto_input / tasa_usada
+      col_pdf, col_ws = st.columns(2)
+      with col_pdf:
+        st.download_button(
+            f"📄 Descargar Recibo PDF ({mes_actual})",
+            data=pdf_bytes,
+            file_name=f"recibo_{user_actual}_{mes_actual}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+      with col_ws:
+        st.link_button(
+            "📲 Compartir por WhatsApp", link_ws, use_container_width=True
+        )
 
-                        with engine.connect() as conn:
-                            conn.execute(
-                                text("""
+    except Exception as e:
+      st.error(f"Error consultando estado de cuenta: {e}")
+
+  with t_p2:
+    st.subheader("📝 Formulario de Reporte de Pago (Bolívares o Dólares)")
+    st.info(
+        "ℹ️ Si pagas en Bolívares (VES), ingresa el monto en Bs. La aplicación"
+        " buscará automáticamente la tasa del dólar oficial BCV correspondiente"
+        " a la fecha de tu pago y lo convertirá a dólares ($)."
+    )
+
+    with st.form("form_reportar_pago"):
+      tipo_p = st.selectbox(
+          "Tipo de Pago", ["Mensualidad", "Cuota Extraordinaria"]
+      )
+      mes_p = st.text_input(
+          "Periodo / Mes-Año a Pagar (AAAA-MM)", value=obtener_mes_anterior()
+      )
+
+      col_mon1, col_mon2 = st.columns(2)
+      with col_mon1:
+        moneda = st.selectbox("Moneda del Pago", ["USD ($)", "VES (Bs.)"])
+      with col_mon2:
+        fecha_p = st.date_input("Fecha de Realización del Pago", datetime.now())
+
+      monto_input = st.number_input(
+          "Monto Pagado (en la moneda seleccionada)", min_value=0.01, step=0.01
+      )
+
+      metodo = st.selectbox(
+          "Método de Pago",
+          [
+              "Pago Móvil",
+              "Transferencia VES",
+              "Efectivo USD",
+              "Zelle",
+              "Binance / Crypto",
+          ],
+      )
+      ref = st.text_input("Número de Referencia / Comprobante")
+
+      btn_pago = st.form_submit_button("Enviar Reporte de Pago", type="primary")
+
+      if btn_pago:
+        if not ref:
+          st.error("Debes ingresar el número de referencia o comprobante.")
+        else:
+          try:
+            tasa_usada = 1.0
+            monto_en_usd = monto_input
+
+            if "VES" in moneda:
+              tasa_usada = obtener_tasa_por_fecha(fecha_p)
+              if tasa_usada <= 1.0:
+                st.warning(
+                    f"⚠️ No se encontró tasa registrada para la fecha {fecha_p}."
+                    " Se usará 1.0 por defecto."
+                )
+              else:
+                monto_en_usd = monto_input / tasa_usada
+
+            with engine.connect() as conn:
+              conn.execute(
+                  text("""
                                     INSERT INTO pagos_reportados (
                                         apartamento, tipo_pago, mes_anio, monto_original, moneda, 
                                         tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus
                                     )
                                     VALUES (:u, :tp, :m, :mo_orig, :mon, :tasa, :mo_usd, :met, :ref, :f, 'Pendiente')
                                 """),
-                                {
-                                    "u": user_actual,
-                                    "tp": tipo_p,
-                                    "m": mes_p,
-                                    "mo_orig": monto_input,
-                                    "mon": "VES" if "VES" in moneda else "USD",
-                                    "tasa": tasa_usada,
-                                    "mo_usd": monto_en_usd,
-                                    "met": metodo,
-                                    "ref": ref,
-                                    "f": fecha_p,
-                                },
-                            )
-                            conn.commit()
-                        st.success(
-                            f"✅ Pago reportado con éxito. Equivalente calculado: "
-                            f"${monto_en_usd:,.2f} USD (Tasa: {tasa_usada:,.4f}). Queda en espera de verificación."
-                        )
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error al registrar pago: {e}")
+                  {
+                      "u": user_actual,
+                      "tp": tipo_p,
+                      "m": mes_p,
+                      "mo_orig": monto_input,
+                      "mon": "VES" if "VES" in moneda else "USD",
+                      "tasa": tasa_usada,
+                      "mo_usd": monto_en_usd,
+                      "met": metodo,
+                      "ref": ref,
+                      "f": fecha_p,
+                  },
+              )
+              conn.commit()
+            st.success(
+                f"✅ Pago reportado con éxito. Equivalente calculado:"
+                f" ${monto_en_usd:,.2f} USD (Tasa: {tasa_usada:,.4f}). Queda en"
+                " espera de verificación."
+            )
+            st.rerun()
+          except Exception as e:
+            st.error(f"Error al registrar pago: {e}")
 
-    with t_p3:
-        st.subheader("📋 Historial de Mis Reportes")
-        try:
-            with engine.connect() as conn:
-                df_mis_pagos = pd.read_sql(
-                    text("""
+  with t_p3:
+    st.subheader("📋 Historial de Mis Reportes")
+    try:
+      with engine.connect() as conn:
+        df_mis_pagos = pd.read_sql(
+            text("""
                         SELECT fecha_pago, tipo_pago, mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, metodo_pago, referencia, estatus 
                         FROM pagos_reportados 
                         WHERE apartamento = :u 
                         ORDER BY id DESC
                     """),
-                    conn,
-                    params={"u": user_actual},
-                )
+            conn,
+            params={"u": user_actual},
+        )
 
-            if df_mis_pagos.empty:
-                st.info("No has registrado ningún pago hasta el momento.")
-            else:
-                st.dataframe(df_mis_pagos, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error cargando el historial: {e}")
+      if df_mis_pagos.empty:
+        st.info("No has registrado ningún pago hasta el momento.")
+      else:
+        st.dataframe(df_mis_pagos, use_container_width=True)
+    except Exception as e:
+      st.error(f"Error cargando el historial: {e}")
 
-st.stop()
-
-# -----------------------------------------------------------------------------
-# 3. VISTA DE ADMINISTRADOR (Si está logueado y es admin)
-# -----------------------------------------------------------------------------
-if st.session_state.get("rol_logueado")=="admin":
-    with st.sidebar:
-        st.write(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
-        st.write(f"🔑 Rol: **admin**")
-        if st.button("🚪 Cerrar Sesión", type="secondary"):
-            st.session_state.usuario_logueado = None
-            st.session_state.rol_logueado = None
-            st.rerun()
-
-    # Tus 8 pestañas de administración
-    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
-        "📊 Gastos Comunes",
-        "🛠️ Gastos No Comunes",
-        "⭐ Cuotas Extras",
-        "💱 Tasas de Cambio",
-        "✅ Validar Pagos",
-        "🏢 Alícuotas y Unidades",
-        "🚨 Morosidad y Recibos",
-        "⚙️ Datos Edificio",
-    ])
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRACIÓN
 # -----------------------------------------------------------------------------
-if st.session_state.rol_logueado == "admin":
+elif st.session_state.rol_logueado == "admin":
   datos_ed = obtener_datos_edificio()
 
   col_head, col_out = st.columns([3, 1])
@@ -874,18 +828,18 @@ if st.session_state.rol_logueado == "admin":
 
   st.write("---")
 
-t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
-    "📊 Gastos Comunes",
-    "🛠️ Gastos No Comunes",
-    "⭐ Cuotas Extras",
-    "💱 Tasas de Cambio",
-    "✅ Validar Pagos",
-    "🏢 Alícuotas y Unidades",
-    "🚨 Morosidad y Recibos",
-    "⚙️ Datos Edificio",
-])
+  t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+      "📊 Gastos Comunes",
+      "🛠️ Gastos No Comunes",
+      "⭐ Cuotas Extras",
+      "💱 Tasas de Cambio",
+      "✅ Validar Pagos",
+      "🏢 Alícuotas y Unidades",
+      "🚨 Morosidad y Recibos",
+      "⚙️ Datos Edificio",
+  ])
 
-with t1:
+  with t1:
     st.subheader("➕ Cargar Nuevo Gasto Común")
     with st.form("form_gasto"):
       col_g1, col_g2 = st.columns(2)
@@ -1000,7 +954,7 @@ with t1:
     except Exception as e:
       st.error(f"Error consultando gastos: {e}")
 
-with t2:
+  with t2:
     st.subheader("🛠️ Cargar Gasto No Común (Cargo Individual)")
     df_unidades_list = obtener_unidades_df()
 
@@ -1061,7 +1015,7 @@ with t2:
     except Exception as e:
       st.error(f"Error listando cargos: {e}")
 
-with t3:
+  with t3:
     st.subheader("⭐ Cargar Nueva Cuota Extraordinaria")
     with st.form("form_cuota_extra"):
       col_ce1, col_ce2 = st.columns(2)
@@ -1182,7 +1136,7 @@ with t3:
     except Exception as e:
       st.error(f"Error cargando cuotas extraordinarias: {e}")
 
-with t4:
+  with t4:
     st.subheader(
         "💱 Actualización Automática y Registro de Tasas de Cambio (BCV)"
     )
@@ -1246,114 +1200,67 @@ with t4:
     except Exception as e:
       st.error(f"Error cargando tasas: {e}")
 
-with t5:
-    st.subheader("✅ Conciliación y Auditoría de Pagos Reportados")
-    
+  with t5:
+    st.subheader("✅ Conciliación de Pagos Reportados")
     try:
-        with engine.connect() as conn:
-            unidades_lista = pd.read_sql("SELECT unidad, propietario FROM unidades ORDER BY unidad ASC", conn)
-        
-        opciones_apt = ["🌐 Todos los Apartamentos"] + [f"Apt {row['unidad']} - {row['propietario']}" for _, row in unidades_lista.iterrows()]
-        apt_seleccionado_str = st.selectbox("Filtrar reporte por unidad:", opciones_apt, key="admin_select_apt_pagos_rep")
+      with engine.connect() as conn:
+        df_pagos_rep = pd.read_sql(
+            text("""
+                        SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
+                               tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus 
+                        FROM pagos_reportados 
+                        ORDER BY id DESC
+                    """),
+            conn,
+        )
 
-        with engine.connect() as conn:
-            if "Todos los Apartamentos" in apt_seleccionado_str:
-                query_admin_pagos = text("""
-                    SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
-                           tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus 
-                    FROM pagos_reportados 
-                    ORDER BY id DESC
-                """)
-                df_pagos_rep = pd.read_sql(query_admin_pagos, conn)
+      if df_pagos_rep.empty:
+        st.info("No hay pagos reportados.")
+      else:
+        for _, r_p in df_pagos_rep.iterrows():
+          c_info, c_btn = st.columns([3, 1])
+          with c_info:
+            if r_p["moneda"] == "VES":
+              detalle_monto = (
+                  f"Bs. {float(r_p['monto_original']):,.2f} (Tasa:"
+                  f" {float(r_p['tasa_aplicada']):,.4f}) ➔ **Equivalente:"
+                  f" ${float(r_p['monto_usd']):,.2f} USD**"
+              )
             else:
-                apt_cod = apt_seleccionado_str.split(" - ")[0].replace("Apt ", "").strip()
-                query_admin_pagos = text("""
-                    SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
-                           tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus 
-                    FROM pagos_reportados 
-                    WHERE apartamento = :apt 
-                    ORDER BY id DESC
-                """)
-                df_pagos_rep = pd.read_sql(query_admin_pagos, conn, params={"apt": apt_cod})
+              detalle_monto = f"**${float(r_p['monto_usd']):,.2f} USD**"
 
-        # --- VISTA DE TABLA CONSOLIDADA Y DESCARGA ---
-        if not df_pagos_rep.empty:
-            with st.expander("📊 Ver Reporte en Tabla Consolidada / Descargar CSV", expanded=False):
-                df_display = df_pagos_rep.rename(columns={
-                    "apartamento": "Apt",
-                    "tipo_pago": "Tipo",
-                    "mes_anio": "Periodo",
-                    "monto_original": "Monto Orig.",
-                    "moneda": "Moneda",
-                    "tasa_aplicada": "Tasa",
-                    "monto_usd": "USD Eq.",
-                    "metodo_pago": "Método",
-                    "referencia": "Referencia",
-                    "fecha_pago": "Fecha Realización",
-                    "estatus": "Estatus"
-                })
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
-                
-                csv_data = df_pagos_rep.to_csv(index=False).encode('utf-8')
-                nombre_csv = "todos_los_pagos.csv" if "Todos los Apartamentos" in apt_seleccionado_str else f"pagos_{apt_cod}.csv"
-                st.download_button(
-                    label="📥 Descargar Reporte Filtrado (CSV)",
-                    data=csv_data,
-                    file_name=nombre_csv,
-                    mime="text/csv",
-                    key="btn_csv_pagos_admin"
-                )
-        
-        st.write("---")
-        st.markdown("### ⚡ Listado de Aprobación de Pagos Pendientes")
-
-        if df_pagos_rep.empty:
-            st.info("No hay pagos reportados bajo este filtro.")
-        else:
-            for _, r_p in df_pagos_rep.iterrows():
-                c_info, c_btn = st.columns([3, 1])
-                with c_info:
-                    if r_p["moneda"] == "VES":
-                        detalle_monto = (
-                            f"Bs. {float(r_p['monto_original']):,.2f} (Tasa:"
-                            f" {float(r_p['tasa_aplicada']):,.4f}) ➔ **Equivalente:"
-                            f" ${float(r_p['monto_usd']):,.2f} USD**"
-                        )
-                    else:
-                        detalle_monto = f"**${float(r_p['monto_usd']):,.2f} USD**"
-
-                    st.markdown(
-                        f"**Apto:** {r_p['apartamento']} | **Tipo:**"
-                        f" {r_p['tipo_pago']} ({r_p['mes_anio']})"
-                    )
-                    st.markdown(f"Monto Pagado: {detalle_monto}")
-                    st.caption(
-                        f"Método: {r_p['metodo_pago']} | Ref: {r_p['referencia']} |"
-                        f" Fecha: {r_p['fecha_pago']} | **Estatus:** {r_p['estatus']}"
-                    )
-                with c_btn:
-                    if r_p["estatus"] == "Pendiente":
-                        if st.button(
-                            "Aprobar / Conciliar",
-                            key=f"aprobar_pago_{r_p['id']}",
-                            type="primary",
-                        ):
-                            with engine.connect() as conn:
-                                conn.execute(
-                                    text(
-                                        "UPDATE pagos_reportados SET estatus = 'Aprobado'"
-                                        " WHERE id = :id"
-                                    ),
-                                    {"id": r_p["id"]},
-                                )
-                                conn.commit()
-                            st.success("Pago conciliado y aprobado con éxito.")
-                            st.rerun()
-                st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
-                
+            st.markdown(
+                f"**Apto:** {r_p['apartamento']} | **Tipo:**"
+                f" {r_p['tipo_pago']} ({r_p['mes_anio']})"
+            )
+            st.markdown(f"Monto Pagado: {detalle_monto}")
+            st.caption(
+                f"Método: {r_p['metodo_pago']} | Ref: {r_p['referencia']} |"
+                f" Fecha: {r_p['fecha_pago']} | **Estatus:** {r_p['estatus']}"
+            )
+          with c_btn:
+            if r_p["estatus"] == "Pendiente":
+              if st.button(
+                  "Aprobar / Conciliar",
+                  key=f"aprobar_pago_{r_p['id']}",
+                  type="primary",
+              ):
+                with engine.connect() as conn:
+                  conn.execute(
+                      text(
+                          "UPDATE pagos_reportados SET estatus = 'Aprobado'"
+                          " WHERE id = :id"
+                      ),
+                      {"id": r_p["id"]},
+                  )
+                  conn.commit()
+                st.success("Pago conciliado y aprobado con éxito.")
+                st.rerun()
+          st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
     except Exception as e:
-        st.error(f"Error al cargar pagos reportados: {e}")
-with t6:
+      st.error(f"Error al cargar pagos reportados: {e}")
+
+  with t6:
     st.subheader("🏢 Configuración de Unidades y Alícuotas")
     try:
       df_unidades_act = obtener_unidades_df()
@@ -1400,9 +1307,7 @@ with t6:
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
-# ... aquí termina el código de tus pestañas anteriores (t1 a t6) ...
-
-with t7:
+  with t7:
     st.subheader("🚨 Recibos y Envíos a WhatsApp")
     mes_recibo_gral = st.text_input(
         "Periodo del Recibo (AAAA-MM):",
@@ -1411,143 +1316,132 @@ with t7:
     )
 
     try:
+      with engine.connect() as conn:
+        gastos_mes_df = pd.read_sql(
+            text(
+                "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
+                " estatus = 'Aprobado'"
+            ),
+            conn,
+            params={"m": mes_recibo_gral},
+        )
+        total_gastos_comunes = (
+            gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
+        )
+
+        unidades_df = pd.read_sql(
+            text(
+                "SELECT unidad, alicuota, propietario, telefono FROM unidades"
+                " ORDER BY unidad ASC"
+            ),
+            conn,
+        )
+
+      st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
+      for _, u_row in unidades_df.iterrows():
+        u_cod = u_row["unidad"]
+        u_prop = u_row["propietario"]
+        u_tel = u_row["telefono"]
+        u_alic = float(u_row["alicuota"])
+
+        cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
+
         with engine.connect() as conn:
-            gastos_mes_df = pd.read_sql(
-                text(
-                    "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
-                    " estatus = 'Aprobado'"
-                ),
-                conn,
-                params={"m": mes_recibo_gral},
+          cargos_apt = (
+              conn.execute(
+                  text(
+                      "SELECT SUM(monto) FROM cargos_individuales WHERE"
+                      " apartamento = :u AND mes_anio = :m"
+                  ),
+                  {"u": u_cod, "m": mes_recibo_gral},
+              ).scalar()
+              or 0.0
+          )
+
+        total_apt = cuota_comun_apt + float(cargos_apt)
+
+        with st.expander(
+            f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"
+        ):
+          msg_ind = f"🏢 *{datos_ed['nombre']}*\n"
+          msg_ind += f"📄 *AVISO DE COBRO - {mes_recibo_gral}*\n"
+          msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
+          msg_ind += f"Alícuota: {u_alic}%\n"
+          msg_ind += f"----------------------------------------\n"
+          msg_ind += f"• Cuota Común: ${cuota_comun_apt:,.2f}\n"
+          if float(cargos_apt) > 0:
+            msg_ind += (
+                f"• Cargos Extras / No Comunes: ${float(cargos_apt):,.2f}\n"
             )
-            total_gastos_comunes = (
-                gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
-            )
+          msg_ind += f"----------------------------------------\n"
+          msg_ind += f"💰 *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
+          msg_ind += (
+              "Por favor realizar su pago y reportarlo en la plataforma."
+              " ¡Gracias!"
+          )
 
-            unidades_df = pd.read_sql(
-                text(
-                    "SELECT unidad, alicuota, propietario, telefono FROM unidades"
-                    " ORDER BY unidad ASC"
-                ),
-                conn,
-            )
+          st.text_area(
+              f"Mensaje WhatsApp Apt {u_cod}:",
+              msg_ind,
+              height=150,
+              key=f"txt_msg_{u_cod}",
+          )
+          enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
+          st.link_button(
+              f"📲 Enviar WhatsApp a Apt {u_cod} ({u_tel or 'Sin teléfono'})",
+              enlace_wa_apt,
+              use_container_width=True,
+          )
 
-        st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
-        for _, u_row in unidades_df.iterrows():
-            u_cod = u_row["unidad"]
-            u_prop = u_row["propietario"]
-            u_tel = u_row["telefono"]
-            u_alic = float(u_row["alicuota"])
+      st.write("---")
+      st.markdown("### 📢 Recibo General para Grupo / Difusión")
+      if not gastos_mes_df.empty:
+        texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
+        texto_ws += f"📄 *RESUMEN DE GASTOS Y COBRANZA - {mes_recibo_gral}*\n\n"
+        for _, g in gastos_mes_df.iterrows():
+          texto_ws += f"• {g['concepto']}: ${float(g['monto']):,.2f}\n"
+        texto_ws += (
+            f"\n💰 *TOTAL GASTOS COMUNES:* *${float(total_gastos_comunes):,.2f}*\n"
+        )
 
-            cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
-
-            with engine.connect() as conn:
-                cargos_apt = (
-                    conn.execute(
-                        text(
-                            "SELECT SUM(monto) FROM cargos_individuales WHERE"
-                            " apartamento = :u AND mes_anio = :m"
-                        ),
-                        {"u": u_cod, "m": mes_recibo_gral},
-                    ).scalar()
-                    or 0.0
-                )
-
-            total_apt = cuota_comun_apt + float(cargos_apt)
-
-            with st.expander(
-                f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"
-            ):
-                
-                # --- DESGLOSE VISUAL EN PANTALLA ---
-                st.markdown(f"##### 📊 Desglose de Gastos Comunes (Alícuota: {u_alic}%)")
-                if not gastos_mes_df.empty:
-                    df_desglose = gastos_mes_df.copy()
-                    df_desglose["Monto Proporcional"] = df_desglose["monto"] * (u_alic / 100.0)
-                    df_desglose = df_desglose.rename(columns={
-                        "concepto": "Concepto de Gasto", 
-                        "monto": "Total Gasto Edificio", 
-                        "Monto Proporcional": f"Apto {u_cod}"
-                    })
-                    st.dataframe(df_desglose, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No hay gastos comunes aprobados para este periodo.")
-
-                # --- CONSTRUCCIÓN DEL MENSAJE DE WHATSAPP CON DESGLOSE ---
-                msg_ind = f"🏢 *{datos_ed['nombre']}*\n"
-                msg_ind += f"📄 *AVISO DE COBRO - {mes_recibo_gral}*\n"
-                msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
-                msg_ind += f"Alícuota: {u_alic}%\n"
-                msg_ind += f"----------------------------------------\n"
-                msg_ind += f"📊 *Desglose de Gastos Comunes:*\n"
-                
-                if not gastos_mes_df.empty:
-                    for _, g in gastos_mes_df.iterrows():
-                        g_prop = float(g['monto']) * (u_alic / 100.0)
-                        msg_ind += f"• {g['concepto']}: ${g_prop:,.2f}\n"
-                
-                msg_ind += f"----------------------------------------\n"
-                msg_ind += f"• Subtotal Cuota Común: ${cuota_comun_apt:,.2f}\n"
-                
-                if float(cargos_apt) > 0:
-                    msg_ind += f"• Cargos Extras / No Comunes: ${float(cargos_apt):,.2f}\n"
-                
-                msg_ind += f"----------------------------------------\n"
-                msg_ind += f"💰 *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
-                msg_ind += "Por favor realizar su pago y reportarlo en la plataforma. ¡Gracias!"
-
-                st.text_area(
-                    f"Mensaje WhatsApp Apt {u_cod}:",
-                    msg_ind,
-                    height=200,
-                    key=f"txt_msg_{u_cod}",
-                )
-                enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
-                st.link_button(
-                    f"📲 Enviar WhatsApp a Apt {u_cod} ({u_tel or 'Sin teléfono'})",
-                    enlace_wa_apt,
-                    use_container_width=True,
-                )
-
-        st.write("---")
-        st.markdown("### 📢 Recibo General para Grupo / Difusión (Incluye Alícuotas)")
-        
-        if not gastos_mes_df.empty:
-            texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
-            texto_ws += f"📄 *RESUMEN DE GASTOS Y DISTRIBUCIÓN - {mes_recibo_gral}*\n\n"
-            
-            texto_ws += "*1. RELACIÓN DE GASTOS COMUNES:*\n"
-            for _, g in gastos_mes_df.iterrows():
-                texto_ws += f"• {g['concepto']}: ${float(g['monto']):,.2f}\n"
-            texto_ws += f"💰 *TOTAL GASTOS:* *${float(total_gastos_comunes):,.2f}*\n\n"
-            
-            texto_ws += "*2. DISTRIBUCIÓN POR ALÍCUOTAS:*\n"
-            for _, u_row in unidades_df.iterrows():
-                u_cod = u_row["unidad"]
-                u_alic = float(u_row["alicuota"])
-                cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
-                texto_ws += f"• Apt {u_cod} ({u_alic}%): ${cuota_comun_apt:,.2f}\n"
-
-            enlace_wa_general = (
-                f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
-            )
-            
-            st.text_area("Vista previa mensaje general:", texto_ws, height=200, key="txt_general_prev")
-            st.link_button(
-                "📲 Abrir WhatsApp con el Recibo General y Alícuotas",
-                enlace_wa_general,
-                use_container_width=True,
-            )
-        else:
-            st.info("No hay gastos registrados para generar el recibo general.")
+        enlace_wa_general = (
+            f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
+        )
+        st.link_button(
+            "📲 Abrir WhatsApp con el Recibo General",
+            enlace_wa_general,
+            use_container_width=True,
+        )
 
     except Exception as e:
-        st.error(f"Error generando los recibos: {e}")
+      st.error(f"Error generando recibos: {e}")
 
-with t8:
-    st.write("ESTO ES UNA PRUEBA")
-    
-    # Comenta temporalmente todo lo demás poniendo un '#' al inicio de cada línea:
-    # try:
-    #     datos_actuales = obtener_datos_edificio()
-    # ...
+  with t8:
+    st.subheader("⚙️ Configuración General del Edificio")
+    datos_actuales = obtener_datos_edificio()
+
+    with st.form("form_config_edificio"):
+      nombre_ed = st.text_input(
+          "Nombre del Edificio / Residencias", value=datos_actuales["nombre"]
+      )
+      rif_ed = st.text_input("RIF", value=datos_actuales["rif"])
+      dir_ed = st.text_area("Dirección", value=datos_actuales["direccion"])
+
+      btn_act_ed = st.form_submit_button("Actualizar Datos", type="primary")
+
+      if btn_act_ed:
+        try:
+          with engine.connect() as conn:
+            conn.execute(
+                text("""
+                                UPDATE configuracion_edificio 
+                                SET nombre = :n, rif = :r, direccion = :d 
+                                WHERE id = 1
+                            """),
+                {"n": nombre_ed, "r": rif_ed, "d": dir_ed},
+            )
+            conn.commit()
+          st.success("✅ Datos del edificio actualizados con éxito.")
+          st.rerun()
+        except Exception as e:
+          st.error(f"Error actualizando configuración: {e}")
