@@ -707,7 +707,7 @@ elif st.session_state.rol_logueado == "propietario":
                 st.link_button(
                     "📲 Compartir por WhatsApp", link_ws, use_container_width=True
                 )
-/
+              
             # --- HISTORIAL DETALLADO DE PAGOS DEL PROPIETARIO ---
             st.write("---")
             st.subheader("📋 Historial y Detalles de Mis Pagos")
