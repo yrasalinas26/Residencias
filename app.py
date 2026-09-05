@@ -1255,7 +1255,7 @@ elif st.session_state.rol_logueado == "admin":
         df_pagos_rep = pd.read_sql(
             text("""
                         SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
-                               tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus 
+                               tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_de_realizacion_de_pago, estatus 
                         FROM pagos_reportados 
                         ORDER BY id DESC
                     """),
