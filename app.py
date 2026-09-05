@@ -624,7 +624,7 @@ elif st.session_state.get("rol_logueado") == "propietario":
         ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
     )
 
-    with t_p1:
+      with t_p1:
         st.subheader("📊 Mis Deudas y Recibos")
         mes_vencido_defecto = obtener_mes_anterior()
 
@@ -777,7 +777,7 @@ t_p1, t_p2, t_p3 = st.tabs(
         except Exception as e:
             st.error(f"Error consultando estado de cuenta o pagos: {e}")
 
-with t_p2:
+    with t_p2:
     st.subheader("📝 Formulario de Reporte de Pago (Bolívares o Dólares)")
     st.info(
         "ℹ️ Si pagas en Bolívares (VES), ingresa el monto en Bs. La aplicación"
@@ -867,7 +867,7 @@ with t_p2:
           except Exception as e:
             st.error(f"Error al registrar pago: {e}")
 
-  with t_p3:
+    with t_p3:
     st.subheader("📋 Historial de Mis Reportes")
     try:
       with engine.connect() as conn:
