@@ -606,6 +606,7 @@ elif st.session_state.get("rol_logueado") == "propietario":
     )
     prop_tel = row_u["telefono"].values[0] if not row_u.empty else ""
     pct_user = float(row_u["alicuota"].values[0]) if not row_u.empty else 6.0
+
     col_head, col_out = st.columns([3, 1])
     with col_head:
         st.title(f"🏢 {datos_ed['nombre']} - Unidad {user_actual}")
@@ -626,37 +627,18 @@ elif st.session_state.get("rol_logueado") == "propietario":
     with t_p1:
         st.subheader("📊 Mis Deudas y Recibos")
         mes_vencido_defecto = obtener_mes_anterior()
-
 # -----------------------------------------------------------------------------
-# 3. VISTA DE ADMINISTRADOR (Si está logueado y es admin)
+# 2. VISTA DE PROPIETARIOS (Continuación y fin de sus 3 pestañas)
 # -----------------------------------------------------------------------------
-elif st.session_state.get("rol_logueado") == "admin":
-    with st.sidebar:
-        st.write(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
-        st.write(f"🔑 Rol: **admin**")
-        if st.button("🚪 Cerrar Sesión", type="secondary"):
-            st.session_state.usuario_logueado = None
-            st.session_state.rol_logueado = None
-            st.rerun()
+elif st.session_state.get("rol_logueado") == "propietario":
+    # (Aquí va todo tu código de arriba del propietario: user_actual, datos_ed, etc.)
+    
+    t_p1, t_p2, t_p3 = st.tabs(
+        ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
+    )
 
-    # Tus 8 pestañas de administración
-    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
-        "📊 Gastos Comunes",
-        "🛠️ Gastos No Comunes",
-        "⭐ Cuotas Extras",
-        "💱 Tasas de Cambio",
-        "✅ Validar Pagos",
-        "🏢 Alícuotas y Unidades",
-        "🚨 Morosidad y Recibos",
-        "⚙️ Datos Edificio",
-    ])
-
-t_p1, t_p2, t_p3 = st.tabs(
-      ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"] )
-
-with t_p1:
+    with t_p1:
         st.subheader("📊 Mis Deudas y Recibos")
-
         mes_vencido_defecto = obtener_mes_anterior()
         mes_actual = st.text_input(
             "Periodo a Consultar (AAAA-MM):",
@@ -669,8 +651,7 @@ with t_p1:
                 gastos_aprob = (
                     conn.execute(
                         text(
-                            "SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus"
-                            " = 'Aprobado'"
+                            "SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"
                         ),
                         {"m": mes_actual},
                     ).scalar()
@@ -680,8 +661,7 @@ with t_p1:
                 cargos_ind = (
                     conn.execute(
                         text(
-                            "SELECT SUM(monto) FROM cargos_individuales WHERE"
-                            " apartamento = :u AND mes_anio = :m"
+                            "SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :u AND mes_anio = :m"
                         ),
                         {"u": user_actual, "m": mes_actual},
                     ).scalar()
@@ -716,10 +696,9 @@ with t_p1:
             )
 
             msg_ws = (
-                f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO"
-                f" ({mes_actual})*\nUnidad: {user_actual}\nTotal a Pagar:"
-                f" ${total_mes:,.2f}\n\nPor favor reportar el pago a través de la"
-                " app."
+                f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO ({mes_actual})*\n"
+                f"Unidad: {user_actual}\nTotal a Pagar: ${total_mes:,.2f}\n\n"
+                "Por favor reportar el pago a través de la app."
             )
             link_ws = generar_enlace_whatsapp(prop_tel, msg_ws)
 
@@ -736,158 +715,144 @@ with t_p1:
                 st.link_button(
                     "📲 Compartir por WhatsApp", link_ws, use_container_width=True
                 )
-              
-            # --- HISTORIAL DETALLADO DE PAGOS DEL PROPIETARIO ---
-            st.write("---")
-            st.subheader("📋 Historial y Detalles de Mis Pagos")
-            
-            with engine.connect() as conn:
-                query_mis_pagos = text("""
-                    SELECT fecha_pago, mes_anio, metodo_pago, moneda, monto_original, referencia, estatus 
-                    FROM pagos_reportados 
-                    WHERE apartamento = :u 
-                    ORDER BY fecha_pago DESC
-                """)
-                mis_pagos_df = pd.read_sql(query_mis_pagos, conn, params={"u": user_actual})
-
-            if not mis_pagos_df.empty:
-                mis_pagos_display = mis_pagos_df.rename(columns={
-                    "fecha_pago": "Fecha de Realización",
-                    "mes_anio": "Periodo (AAAA-MM)",
-                    "metodo_pago": "Método de Pago",
-                    "moneda": "Moneda",
-                    "monto_original": "Monto Pagado",
-                    "referencia": "Referencia / Comprobante",
-                    "estatus": "Estatus"
-                })
-                st.dataframe(mis_pagos_display, use_container_width=True, hide_index=True)
-                
-                csv_mis_pagos = mis_pagos_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Descargar mi Historial de Pagos (CSV)",
-                    data=csv_mis_pagos,
-                    file_name=f"mis_pagos_{user_actual}.csv",
-                    mime="text/csv",
-                    key="btn_dl_mis_pagos"
-                )
-            else:
-                st.info("No tienes pagos reportados en el sistema todavía.")
 
         except Exception as e:
-            st.error(f"Error consultando estado de cuenta o pagos: {e}")
+            st.error(f"Error consultando estado de cuenta: {e}")
 
-with t_p2:
-    st.subheader("📝 Formulario de Reporte de Pago (Bolívares o Dólares)")
-    st.info(
-        "ℹ️ Si pagas en Bolívares (VES), ingresa el monto en Bs. La aplicación"
-        " buscará automáticamente la tasa del dólar oficial BCV correspondiente"
-        " a la fecha de tu pago y lo convertirá a dólares ($)."
-    )
+    with t_p2:
+        st.subheader("📝 Formulario de Reporte de Pago (Bolívares o Dólares)")
+        st.info(
+            "ℹ️ Si pagas en Bolívares (VES), ingresa el monto en Bs. La aplicación "
+            "buscará automáticamente la tasa del dólar oficial BCV correspondiente "
+            "a la fecha de tu pago y lo convertirá a dólares ($)."
+        )
 
-    with st.form("form_reportar_pago"):
-      tipo_p = st.selectbox(
-          "Tipo de Pago", ["Mensualidad", "Cuota Extraordinaria"]
-      )
-      mes_p = st.text_input(
-          "Periodo / Mes-Año a Pagar (AAAA-MM)", value=obtener_mes_anterior()
-      )
+        with st.form("form_reportar_pago"):
+            tipo_p = st.selectbox(
+                "Tipo de Pago", ["Mensualidad", "Cuota Extraordinaria"]
+            )
+            mes_p = st.text_input(
+                "Periodo / Mes-Año a Pagar (AAAA-MM)", value=obtener_mes_anterior()
+            )
 
-      col_mon1, col_mon2 = st.columns(2)
-      with col_mon1:
-        moneda = st.selectbox("Moneda del Pago", ["USD ($)", "VES (Bs.)"])
-      with col_mon2:
-        fecha_p = st.date_input("Fecha de Realización del Pago", datetime.now())
+            col_mon1, col_mon2 = st.columns(2)
+            with col_mon1:
+                moneda = st.selectbox("Moneda del Pago", ["USD ($)", "VES (Bs.)"])
+            with col_mon2:
+                fecha_p = st.date_input("Fecha de Realización del Pago", datetime.now())
 
-      monto_input = st.number_input(
-          "Monto Pagado (en la moneda seleccionada)", min_value=0.01, step=0.01
-      )
+            monto_input = st.number_input(
+                "Monto Pagado (en la moneda seleccionada)", min_value=0.01, step=0.01
+            )
 
-      metodo = st.selectbox(
-          "Método de Pago",
-          [
-              "Pago Móvil",
-              "Transferencia VES",
-              "Efectivo USD",
-              "Zelle",
-              "Binance / Crypto",
-          ],
-      )
-      ref = st.text_input("Número de Referencia / Comprobante")
+            metodo = st.selectbox(
+                "Método de Pago",
+                [
+                    "Pago Móvil",
+                    "Transferencia VES",
+                    "Efectivo USD",
+                    "Zelle",
+                    "Binance / Crypto",
+                ],
+            )
+            ref = st.text_input("Número de Referencia / Comprobante")
 
-      btn_pago = st.form_submit_button("Enviar Reporte de Pago", type="primary")
+            btn_pago = st.form_submit_button("Enviar Reporte de Pago", type="primary")
 
-      if btn_pago:
-        if not ref:
-          st.error("Debes ingresar el número de referencia o comprobante.")
-        else:
-          try:
-            tasa_usada = 1.0
-            monto_en_usd = monto_input
+            if btn_pago:
+                if not ref:
+                    st.error("Debes ingresar el número de referencia o comprobante.")
+                else:
+                    try:
+                        tasa_usada = 1.0
+                        monto_en_usd = monto_input
 
-            if "VES" in moneda:
-              tasa_usada = obtener_tasa_por_fecha(fecha_p)
-              if tasa_usada <= 1.0:
-                st.warning(
-                    f"⚠️ No se encontró tasa registrada para la fecha {fecha_p}."
-                    " Se usará 1.0 por defecto."
-                )
-              else:
-                monto_en_usd = monto_input / tasa_usada
+                        if "VES" in moneda:
+                            tasa_usada = obtener_tasa_por_fecha(fecha_p)
+                            if tasa_usada <= 1.0:
+                                st.warning(
+                                    f"⚠️ No se encontró tasa registrada para la fecha {fecha_p}. "
+                                    "Se usará 1.0 por defecto."
+                                )
+                            else:
+                                monto_en_usd = monto_input / tasa_usada
 
-            with engine.connect() as conn:
-              conn.execute(
-                  text("""
+                        with engine.connect() as conn:
+                            conn.execute(
+                                text("""
                                     INSERT INTO pagos_reportados (
                                         apartamento, tipo_pago, mes_anio, monto_original, moneda, 
                                         tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus
                                     )
                                     VALUES (:u, :tp, :m, :mo_orig, :mon, :tasa, :mo_usd, :met, :ref, :f, 'Pendiente')
                                 """),
-                  {
-                      "u": user_actual,
-                      "tp": tipo_p,
-                      "m": mes_p,
-                      "mo_orig": monto_input,
-                      "mon": "VES" if "VES" in moneda else "USD",
-                      "tasa": tasa_usada,
-                      "mo_usd": monto_en_usd,
-                      "met": metodo,
-                      "ref": ref,
-                      "f": fecha_p,
-                  },
-              )
-              conn.commit()
-            st.success(
-                f"✅ Pago reportado con éxito. Equivalente calculado:"
-                f" ${monto_en_usd:,.2f} USD (Tasa: {tasa_usada:,.4f}). Queda en"
-                " espera de verificación."
-            )
-            st.rerun()
-          except Exception as e:
-            st.error(f"Error al registrar pago: {e}")
+                                {
+                                    "u": user_actual,
+                                    "tp": tipo_p,
+                                    "m": mes_p,
+                                    "mo_orig": monto_input,
+                                    "mon": "VES" if "VES" in moneda else "USD",
+                                    "tasa": tasa_usada,
+                                    "mo_usd": monto_en_usd,
+                                    "met": metodo,
+                                    "ref": ref,
+                                    "f": fecha_p,
+                                },
+                            )
+                            conn.commit()
+                        st.success(
+                            f"✅ Pago reportado con éxito. Equivalente calculado: "
+                            f"${monto_en_usd:,.2f} USD (Tasa: {tasa_usada:,.4f}). Queda en espera de verificación."
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al registrar pago: {e}")
 
-with t_p3:
-    st.subheader("📋 Historial de Mis Reportes")
-    try:
-      with engine.connect() as conn:
-        df_mis_pagos = pd.read_sql(
-            text("""
+    with t_p3:
+        st.subheader("📋 Historial de Mis Reportes")
+        try:
+            with engine.connect() as conn:
+                df_mis_pagos = pd.read_sql(
+                    text("""
                         SELECT fecha_pago, tipo_pago, mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, metodo_pago, referencia, estatus 
                         FROM pagos_reportados 
                         WHERE apartamento = :u 
                         ORDER BY id DESC
                     """),
-            conn,
-            params={"u": user_actual},
-        )
+                    conn,
+                    params={"u": user_actual},
+                )
 
-      if df_mis_pagos.empty:
-        st.info("No has registrado ningún pago hasta el momento.")
-      else:
-        st.dataframe(df_mis_pagos, use_container_width=True)
-    except Exception as e:
-      st.error(f"Error cargando el historial: {e}")
+            if df_mis_pagos.empty:
+                st.info("No has registrado ningún pago hasta el momento.")
+            else:
+                st.dataframe(df_mis_pagos, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error cargando el historial: {e}")
 
+# -----------------------------------------------------------------------------
+# 3. VISTA DE ADMINISTRADOR (Si está logueado y es admin)
+# -----------------------------------------------------------------------------
+elif st.session_state.get("rol_logueado") == "admin":
+    with st.sidebar:
+        st.write(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
+        st.write(f"🔑 Rol: **admin**")
+        if st.button("🚪 Cerrar Sesión", type="secondary"):
+            st.session_state.usuario_logueado = None
+            st.session_state.rol_logueado = None
+            st.rerun()
+
+    # Tus 8 pestañas de administración
+    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+        "📊 Gastos Comunes",
+        "🛠️ Gastos No Comunes",
+        "⭐ Cuotas Extras",
+        "💱 Tasas de Cambio",
+        "✅ Validar Pagos",
+        "🏢 Alícuotas y Unidades",
+        "🚨 Morosidad y Recibos",
+        "⚙️ Datos Edificio",
+    ])
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRACIÓN
 # -----------------------------------------------------------------------------
