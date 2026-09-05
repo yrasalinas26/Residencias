@@ -777,7 +777,7 @@ with t_p1:
         except Exception as e:
             st.error(f"Error consultando estado de cuenta o pagos: {e}")
 
-    with t_p2:
+with t_p2:
     st.subheader("📝 Formulario de Reporte de Pago (Bolívares o Dólares)")
     st.info(
         "ℹ️ Si pagas en Bolívares (VES), ingresa el monto en Bs. La aplicación"
