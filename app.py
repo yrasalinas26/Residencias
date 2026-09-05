@@ -1309,12 +1309,12 @@ elif st.session_state.rol_logueado == "admin":
       st.error(f"Error gestionando unidades: {e}")
     with t7:
       st.error("ESTO ES UNA PRUEBA DE LA PESTAÑA 7")
-  st.subheader("🚨 Recibos y Envíos a WhatsApp")
-  mes_recibo_gral = st.text_input(
+      st.subheader("🚨 Recibos y Envíos a WhatsApp")
+      mes_recibo_gral = st.text_input(
       "Periodo del Recibo (AAAA-MM):",
       value=obtener_mes_anterior(),
       key="input_mes_recibo_gen",
-  )
+      )
 
   try:
     with engine.connect() as conn:
@@ -1479,35 +1479,36 @@ elif st.session_state.rol_logueado == "admin":
   except Exception as e:
     st.error(f"Error generando recibos: {e}")
 
-  with t8:
-    st.subheader("⚙️ Configuración General del Edificio")
-    datos_actuales = obtener_datos_edificio()
+    with t8:
+      st.subheader("⚙️ Configuración General del Edificio")
+      datos_actuales = obtener_datos_edificio()
 
-    with st.form("form_config_edificio"):
-      nombre_ed = st.text_input(
-          "Nombre del Edificio / Residencias", value=datos_actuales["nombre"]
-      )
-      rif_ed = st.text_input("RIF", value=datos_actuales["rif"])
-      dir_ed = st.text_area("Dirección", value=datos_actuales["direccion"])
+  with st.form("form_config_edificio"):
+    nombre_ed = st.text_input(
+        "Nombre del Edificio / Residencias", value=datos_actuales["nombre"]
+    )
+    rif_ed = st.text_input("RIF", value=datos_actuales["rif"])
+    dir_ed = st.text_area("Dirección", value=datos_actuales["direccion"])
 
-      btn_act_ed = st.form_submit_button("Actualizar Datos", type="primary")
+    btn_act_ed = st.form_submit_button("Actualizar Datos", type="primary")
 
-      if btn_act_ed:
-        try:
-          with engine.connect() as conn:
-            conn.execute(
-                text("""
-                                UPDATE configuracion_edificio 
-                                SET nombre = :n, rif = :r, direccion = :d 
-                                WHERE id = 1
-                            """),
-                {"n": nombre_ed, "r": rif_ed, "d": dir_ed},
-            )
-            conn.commit()
-          st.success("✅ Datos del edificio actualizados con éxito.")
-          st.rerun()
-        except Exception as e:
-          st.error(f"Error actualizando configuración: {e}")
+    if btn_act_ed:
+      try:
+        with engine.connect() as conn:
+          conn.execute(
+              text("""
+                            UPDATE configuracion_edificio 
+                            SET nombre = :n, rif = :r, direccion = :d 
+                            WHERE id = 1
+                        """),
+              {"n": nombre_ed, "r": rif_ed, "d": dir_ed},
+          )
+          conn.commit()
+        st.success("✅ Datos del edificio actualizados con éxito.")
+        st.rerun()
+      except Exception as e:
+        st.error(f"Error actualizando configuración: {e}")
+
     with t9:
       st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa Diaria)")
       st.markdown(
