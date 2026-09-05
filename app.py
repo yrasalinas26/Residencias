@@ -593,6 +593,9 @@ if not st.session_state.get("usuario_logueado"):
                 except Exception as e:
                     st.error(f"Error al ingresar: {e}")
 
+    # 🛑 Detiene la ejecución aquí si no hay sesión activa
+    st.stop()
+
 # -----------------------------------------------------------------------------
 # 2. VISTA DE PROPIETARIOS (Si está logueado y es propietario)
 # -----------------------------------------------------------------------------
