@@ -528,7 +528,6 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
   buffer.seek(0)
   return buffer
 
-
 # -----------------------------------------------------------------------------
 # CONTROL DE SESIÓN
 # -----------------------------------------------------------------------------
@@ -599,7 +598,7 @@ if not st.session_state.get("usuario_logueado"):
 # -----------------------------------------------------------------------------
 # 2. VISTA DE PROPIETARIOS (Si está logueado y es propietario)
 # -----------------------------------------------------------------------------
-elif st.session_state.get("rol_logueado") == "propietario":
+if st.session_state.get("rol_logueado") == "propietario":
     user_actual = st.session_state.usuario_logueado
     datos_ed = obtener_datos_edificio()
     df_u = obtener_unidades_df()
@@ -1547,5 +1546,40 @@ with t7:
 
 with t8:
     st.subheader("⚙️ Configuración y Datos del Edificio")
-    # Aquí puedes colocar el contenido de la pestaña 8 de administración
-    st.info("Módulo de configuración general del edificio.")
+    
+    try:
+        datos_actuales = obtener_datos_edificio()
+        
+        with st.form("form_datos_edificio"):
+            col_ed1, col_ed2 = st.columns(2)
+            with col_ed1:
+                nuevo_nombre = st.text_input("Nombre del Edificio / Condominio", value=datos_actuales.get("nombre", ""))
+                nuevo_rif = st.text_input("RIF", value=datos_actuales.get("rif", ""))
+            with col_ed2:
+                nuevo_direccion = st.text_input("Dirección", value=datos_actuales.get("direccion", ""))
+                nuevo_banco = st.text_input("Datos Bancarios / Pago Móvil", value=datos_actuales.get("banco", ""))
+                
+            btn_guardar_edificio = st.form_submit_button("Actualizar Datos del Edificio", type="primary")
+            
+            if btn_guardar_edificio:
+                with engine.connect() as conn:
+                    # Verifica si la tabla tiene un registro o usa una estructura de clave-valor / ID fijo
+                    conn.execute(
+                        text("""
+                            UPDATE edificio_config 
+                            SET nombre = :n, rif = :r, direccion = :d, banco = :b 
+                            WHERE id = 1
+                        """),
+                        {
+                            "n": nuevo_nombre,
+                            "r": nuevo_rif,
+                            "d": nuevo_direccion,
+                            "b": nuevo_banco
+                        }
+                    )
+                    conn.commit()
+                st.success("✅ Los datos del edificio han sido actualizados exitosamente.")
+                st.rerun()
+                
+    except Exception as e:
+        st.error(f"Error al cargar o actualizar la configuración del edificio: {e}")
