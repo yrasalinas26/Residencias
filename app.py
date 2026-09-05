@@ -1247,7 +1247,7 @@ elif st.session_state.rol_logueado == "admin":
         st.dataframe(df_tasas, use_container_width=True)
     except Exception as e:
       st.error(f"Error cargando tasas: {e}")
-
+st.write("Variables activas:", "t5" in locals())
 with t5:
         st.subheader("✅ Conciliación y Auditoría de Pagos Reportados")
         
