@@ -1474,6 +1474,7 @@ elif st.session_state.rol_logueado == "admin":
           st.rerun()
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
+
     with t7:
       st.error("ESTO ES UNA PRUEBA DE LA PESTAÑA 7")
       st.subheader("🚨 Recibos y Envíos a WhatsApp")
@@ -1483,14 +1484,14 @@ elif st.session_state.rol_logueado == "admin":
       key="input_mes_recibo_gen",
       )
 
-  try:
-    with engine.connect() as conn:
-      # Consulta robusta asegurando nombres de columnas
-      gastos_mes_df = pd.read_sql(
+     try:
+       with engine.connect() as conn:
+       # Consulta robusta asegurando nombres de columnas
+       gastos_mes_df = pd.read_sql(
           text(
               "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
               " (estatus = 'Aprobado' OR estatus = 'APROBADO')"
-          ),
+              ),
           conn,
           params={"m": mes_recibo_gral},
       )
