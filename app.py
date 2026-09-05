@@ -1376,11 +1376,10 @@ with t7:
             f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"
         ):
           
-          # --- NUEVO: MOSTRAR DESGLOSE DE GASTOS PROPORCIONALES ---
+          # --- DESGLOSE DE GASTOS PROPORCIONALES ---
           st.markdown(f"##### 📊 Desglose de Gastos Comunes (Alícuota: {u_alic}%)")
           if not gastos_mes_df.empty:
               df_desglose = gastos_mes_df.copy()
-              # Calculamos la parte proporcional de cada gasto para este apartamento
               df_desglose["Monto Proporcional"] = df_desglose["monto"] * (u_alic / 100.0)
               df_desglose = df_desglose.rename(columns={
                   "concepto": "Concepto de Gasto", 
@@ -1421,9 +1420,6 @@ with t7:
               use_container_width=True,
           )
 
-    except Exception as e:
-      st.error(f"Error al generar los recibos: {e}")
-
       st.write("---")
       st.markdown("### 📢 Recibo General para Grupo / Difusión")
       if not gastos_mes_df.empty:
@@ -1445,7 +1441,7 @@ with t7:
         )
 
     except Exception as e:
-      st.error(f"Error generando recibos: {e}")
+      st.error(f"Error generando los recibos: {e}")
 
   with t8:
     st.subheader("⚙️ Configuración General del Edificio")
