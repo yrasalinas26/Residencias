@@ -829,6 +829,7 @@ elif st.session_state.get("rol_logueado") == "propietario":
                 st.dataframe(df_mis_pagos, use_container_width=True)
         except Exception as e:
             st.error(f"Error cargando el historial: {e}")
+st.stop()
 
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRADOR (Si está logueado y es admin)
