@@ -1249,113 +1249,112 @@ with t4:
       st.error(f"Error cargando tasas: {e}")
 
 with t5:
-        st.subheader("✅ Conciliación y Auditoría de Pagos Reportados")
+    st.subheader("✅ Conciliación y Auditoría de Pagos Reportados")
+    
+    try:
+        with engine.connect() as conn:
+            unidades_lista = pd.read_sql("SELECT unidad, propietario FROM unidades ORDER BY unidad ASC", conn)
         
-        try:
-            with engine.connect() as conn:
-                unidades_lista = pd.read_sql("SELECT unidad, propietario FROM unidades ORDER BY unidad ASC", conn)
-            
-            opciones_apt = ["🌐 Todos los Apartamentos"] + [f"Apt {row['unidad']} - {row['propietario']}" for _, row in unidades_lista.iterrows()]
-            apt_seleccionado_str = st.selectbox("Filtrar reporte por unidad:", opciones_apt, key="admin_select_apt_pagos_rep")
+        opciones_apt = ["🌐 Todos los Apartamentos"] + [f"Apt {row['unidad']} - {row['propietario']}" for _, row in unidades_lista.iterrows()]
+        apt_seleccionado_str = st.selectbox("Filtrar reporte por unidad:", opciones_apt, key="admin_select_apt_pagos_rep")
 
-            with engine.connect() as conn:
-                if "Todos los Apartamentos" in apt_seleccionado_str:
-                    query_admin_pagos = text("""
-                        SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
-                               tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_de_realizacion_de_pago, estatus 
-                        FROM pagos_reportados 
-                        ORDER BY id DESC
-                    """)
-                    df_pagos_rep = pd.read_sql(query_admin_pagos, conn)
-                else:
-                    apt_cod = apt_seleccionado_str.split(" - ")[0].replace("Apt ", "").strip()
-                    query_admin_pagos = text("""
-                        SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
-                               tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_de_realizacion_de_pago, estatus 
-                        FROM pagos_reportados 
-                        WHERE apartamento = :apt 
-                        ORDER BY id DESC
-                    """)
-                    df_pagos_rep = pd.read_sql(query_admin_pagos, conn, params={"apt": apt_cod})
-
-            # --- VISTA DE TABLA CONSOLIDADA Y DESCARGA ---
-            if not df_pagos_rep.empty:
-                with st.expander("📊 Ver Reporte en Tabla Consolidada / Descargar CSV", expanded=False):
-                    df_display = df_pagos_rep.rename(columns={
-                        "apartamento": "Apt",
-                        "tipo_pago": "Tipo",
-                        "mes_anio": "Periodo",
-                        "monto_original": "Monto Orig.",
-                        "moneda": "Moneda",
-                        "tasa_aplicada": "Tasa",
-                        "monto_usd": "USD Eq.",
-                        "metodo_pago": "Método",
-                        "referencia": "Referencia",
-                        "fecha_de_realizacion_de_pago": "Fecha Realización",
-                        "estatus": "Estatus"
-                    })
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
-                    
-                    csv_data = df_pagos_rep.to_csv(index=False).encode('utf-8')
-                    nombre_csv = "todos_los_pagos.csv" if "Todos los Apartamentos" in apt_seleccionado_str else f"pagos_{apt_cod}.csv"
-                    st.download_button(
-                        label="📥 Descargar Reporte Filtrado (CSV)",
-                        data=csv_data,
-                        file_name=nombre_csv,
-                        mime="text/csv",
-                        key="btn_csv_pagos_admin"
-                    )
-            
-            st.write("---")
-            st.markdown("### ⚡ Listado de Aprobación de Pagos Pendientes")
-
-            if df_pagos_rep.empty:
-                st.info("No hay pagos reportados bajo este filtro.")
+        with engine.connect() as conn:
+            if "Todos los Apartamentos" in apt_seleccionado_str:
+                query_admin_pagos = text("""
+                    SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
+                           tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus 
+                    FROM pagos_reportados 
+                    ORDER BY id DESC
+                """)
+                df_pagos_rep = pd.read_sql(query_admin_pagos, conn)
             else:
-                for _, r_p in df_pagos_rep.iterrows():
-                    c_info, c_btn = st.columns([3, 1])
-                    with c_info:
-                        if r_p["moneda"] == "VES":
-                            detalle_monto = (
-                                f"Bs. {float(r_p['monto_original']):,.2f} (Tasa:"
-                                f" {float(r_p['tasa_aplicada']):,.4f}) ➔ **Equivalente:"
-                                f" ${float(r_p['monto_usd']):,.2f} USD**"
-                            )
-                        else:
-                            detalle_monto = f"**${float(r_p['monto_usd']):,.2f} USD**"
+                apt_cod = apt_seleccionado_str.split(" - ")[0].replace("Apt ", "").strip()
+                query_admin_pagos = text("""
+                    SELECT id, apartamento, tipo_pago, mes_anio, monto_original, moneda, 
+                           tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus 
+                    FROM pagos_reportados 
+                    WHERE apartamento = :apt 
+                    ORDER BY id DESC
+                """)
+                df_pagos_rep = pd.read_sql(query_admin_pagos, conn, params={"apt": apt_cod})
 
-                        st.markdown(
-                            f"**Apto:** {r_p['apartamento']} | **Tipo:**"
-                            f" {r_p['tipo_pago']} ({r_p['mes_anio']})"
-                        )
-                        st.markdown(f"Monto Pagado: {detalle_monto}")
-                        st.caption(
-                            f"Método: {r_p['metodo_pago']} | Ref: {r_p['referencia']} |"
-                            f" Fecha: {r_p['fecha_de_realizacion_de_pago']} | **Estatus:** {r_p['estatus']}"
-                        )
-                    with c_btn:
-                        if r_p["estatus"] == "Pendiente":
-                            if st.button(
-                                "Aprobar / Conciliar",
-                                key=f"aprobar_pago_{r_p['id']}",
-                                type="primary",
-                            ):
-                                with engine.connect() as conn:
-                                    conn.execute(
-                                        text(
-                                            "UPDATE pagos_reportados SET estatus = 'Aprobado'"
-                                            " WHERE id = :id"
-                                        ),
-                                        {"id": r_p["id"]},
-                                    )
-                                    conn.commit()
-                                st.success("Pago conciliado y aprobado con éxito.")
-                                st.rerun()
-                    st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
-                    
-        except Exception as e:
-            st.error(f"Error al cargar pagos reportados: {e}")
+        # --- VISTA DE TABLA CONSOLIDADA Y DESCARGA ---
+        if not df_pagos_rep.empty:
+            with st.expander("📊 Ver Reporte en Tabla Consolidada / Descargar CSV", expanded=False):
+                df_display = df_pagos_rep.rename(columns={
+                    "apartamento": "Apt",
+                    "tipo_pago": "Tipo",
+                    "mes_anio": "Periodo",
+                    "monto_original": "Monto Orig.",
+                    "moneda": "Moneda",
+                    "tasa_aplicada": "Tasa",
+                    "monto_usd": "USD Eq.",
+                    "metodo_pago": "Método",
+                    "referencia": "Referencia",
+                    "fecha_pago": "Fecha Realización",
+                    "estatus": "Estatus"
+                })
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+                
+                csv_data = df_pagos_rep.to_csv(index=False).encode('utf-8')
+                nombre_csv = "todos_los_pagos.csv" if "Todos los Apartamentos" in apt_seleccionado_str else f"pagos_{apt_cod}.csv"
+                st.download_button(
+                    label="📥 Descargar Reporte Filtrado (CSV)",
+                    data=csv_data,
+                    file_name=nombre_csv,
+                    mime="text/csv",
+                    key="btn_csv_pagos_admin"
+                )
+        
+        st.write("---")
+        st.markdown("### ⚡ Listado de Aprobación de Pagos Pendientes")
 
+        if df_pagos_rep.empty:
+            st.info("No hay pagos reportados bajo este filtro.")
+        else:
+            for _, r_p in df_pagos_rep.iterrows():
+                c_info, c_btn = st.columns([3, 1])
+                with c_info:
+                    if r_p["moneda"] == "VES":
+                        detalle_monto = (
+                            f"Bs. {float(r_p['monto_original']):,.2f} (Tasa:"
+                            f" {float(r_p['tasa_aplicada']):,.4f}) ➔ **Equivalente:"
+                            f" ${float(r_p['monto_usd']):,.2f} USD**"
+                        )
+                    else:
+                        detalle_monto = f"**${float(r_p['monto_usd']):,.2f} USD**"
+
+                    st.markdown(
+                        f"**Apto:** {r_p['apartamento']} | **Tipo:**"
+                        f" {r_p['tipo_pago']} ({r_p['mes_anio']})"
+                    )
+                    st.markdown(f"Monto Pagado: {detalle_monto}")
+                    st.caption(
+                        f"Método: {r_p['metodo_pago']} | Ref: {r_p['referencia']} |"
+                        f" Fecha: {r_p['fecha_pago']} | **Estatus:** {r_p['estatus']}"
+                    )
+                with c_btn:
+                    if r_p["estatus"] == "Pendiente":
+                        if st.button(
+                            "Aprobar / Conciliar",
+                            key=f"aprobar_pago_{r_p['id']}",
+                            type="primary",
+                        ):
+                            with engine.connect() as conn:
+                                conn.execute(
+                                    text(
+                                        "UPDATE pagos_reportados SET estatus = 'Aprobado'"
+                                        " WHERE id = :id"
+                                    ),
+                                    {"id": r_p["id"]},
+                                )
+                                conn.commit()
+                            st.success("Pago conciliado y aprobado con éxito.")
+                            st.rerun()
+                st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+                
+    except Exception as e:
+        st.error(f"Error al cargar pagos reportados: {e}")
 with t6:
     st.subheader("🏢 Configuración de Unidades y Alícuotas")
     try:
