@@ -1354,9 +1354,9 @@ with t5:
                     st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
                     
         except Exception as e:
-            st.error(f"Error al cargar pagos reportados: {e}"))
+            st.error(f"Error al cargar pagos reportados: {e}")
 
-  with t6:
+with t6:
     st.subheader("🏢 Configuración de Unidades y Alícuotas")
     try:
       df_unidades_act = obtener_unidades_df()
