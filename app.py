@@ -1002,7 +1002,7 @@ with t1:
     except Exception as e:
       st.error(f"Error consultando gastos: {e}")
 
-  with t2:
+with t2:
     st.subheader("🛠️ Cargar Gasto No Común (Cargo Individual)")
     df_unidades_list = obtener_unidades_df()
 
@@ -1063,7 +1063,7 @@ with t1:
     except Exception as e:
       st.error(f"Error listando cargos: {e}")
 
-  with t3:
+with t3:
     st.subheader("⭐ Cargar Nueva Cuota Extraordinaria")
     with st.form("form_cuota_extra"):
       col_ce1, col_ce2 = st.columns(2)
@@ -1184,7 +1184,7 @@ with t1:
     except Exception as e:
       st.error(f"Error cargando cuotas extraordinarias: {e}")
 
-  with t4:
+with t4:
     st.subheader(
         "💱 Actualización Automática y Registro de Tasas de Cambio (BCV)"
     )
