@@ -1509,14 +1509,14 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
           st.error(f"Error actualizando configuración: {e}")
     with t9:
-      st.subheader("💱 Conciliación de Pagos y Tasas Diarias")
+      st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa Diaria)")
       st.markdown(
-      "Registra la tasa oficial de la fecha del pago y concilia las"
-      " transferencias en bolívares de cada apartamento."
+      "Selecciona la fecha del pago del propietario para aplicar la tasa"
+      " exacta registrada en la base de datos."
       )
 
-  # 1. Controles para la Fecha y el Registro de la Tasa Diaria
-  col_d1, col_d2, col_d3 = st.columns([2, 2, 1])
+  # 1. Controles superiores: Periodo a conciliar y Fecha del Pago/Tasa
+  col_d1, col_d2 = st.columns(2)
   with col_d1:
     mes_conciliacion = st.text_input(
         "Periodo a Conciliar (AAAA-MM):",
@@ -1525,91 +1525,29 @@ elif st.session_state.rol_logueado == "admin":
     )
   with col_d2:
     fecha_pago_input = st.date_input(
-        "Fecha de la Tasa / Pago:", key="input_fecha_tasa_diaria"
+        "Fecha de la Transferencia / Tasa:",
+        value=datetime.now(),
+        key="input_fecha_tasa_conciliacion",
     )
-  with col_d3:
-    st.write("")  # Espaciador
-    st.write("")
 
-  # Consultar o guardar la tasa para esa fecha exacta en la base de datos
-  tasa_dia = 36.50  # Valor por defecto
-
+  # 2. Consultar la tasa exacta para esa fecha en tu tabla 'tasa_cambio'
+  tasa_dia = 36.50  # Valor por defecto por si no hay tasa registrada aún para ese día
   try:
     with engine.connect() as conn:
-      # Buscar si ya existe una tasa guardada para este día exacto
       res_tasa = conn.execute(
-          text(
-              "SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT"
-              " 1"  # Ajusta 'tasas_cambio' o 'fecha' si tus nombres difieren
-          ),
+          text("SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT 1"),
           {"f": fecha_pago_input},
       ).scalar()
       if res_tasa:
         tasa_dia = float(res_tasa)
-  except Exception:
-    pass
-
-  # Formulario rápido para guardar/actualizar la tasa del día si cambió
-  with st.expander(
-      f"⚙️ Gestionar / Guardar Tasa para la fecha: {fecha_pago_input}"
-  ):
-    with st.form("form_guardar_tasa_diaria"):
-      nueva_tasa_val = st.number_input(
-          "Tasa BCV oficial para este día:",
-          min_value=1.0,
-          value=tasa_dia,
-          step=0.01,
-          format="%.2f",
-      )
-      guardar_tasa_btn = st.form_submit_button(
-          "💾 Guardar Tasa en la Base de Datos"
-      )
-
-      if guardar_tasa_btn:
-        try:
-          with engine.begin() as conn:
-            # Upsert o inserción de la tasa diaria
-            conn.execute(
-                text(
-                    "INSERT INTO tasa_cambio (fecha, mes_anio, tasa) VALUES"
-                    " (:f, :m, :t) ON CONFLICT (fecha) DO UPDATE SET tasa ="
-                    " EXCLUDED.tasa"
-                ),
-                {
-                    "f": fecha_pago_input,
-                    "m": mes_conciliacion,
-                    "t": nueva_tasa_val,
-                },
-            )
-          st.success(
-              f"✅ Tasa de Bs. {nueva_tasa_val:,.2f} guardada exitosamente"
-              f" para el {fecha_pago_input}."
-          )
-          tasa_dia = nueva_tasa_val
-        except Exception as err:
-          # Si la tabla no tiene restricción UNIQUE en 'fecha', hacemos un INSERT simple o UPDATE
-          try:
-            with engine.begin() as conn:
-              conn.execute(
-                  text(
-                      "INSERT INTO tasas_cambio (fecha, mes_anio, tasa) VALUES"
-                      " (:f, :m, :t)"
-                  ),
-                  {
-                      "f": fecha_pago_input,
-                      "m": mes_conciliacion,
-                      "t": nueva_tasa_val,
-                  },
-              )
-            st.success(
-                f"✅ Tasa de Bs. {nueva_tasa_val:,.2f} registrada exitosamente."
-            )
-            tasa_dia = nueva_tasa_val
-          except Exception as e_inner:
-            st.error(f"Error al guardar la tasa: {e_inner}")
+  except Exception as e_tasa:
+    st.warning(
+        f"No se pudo cargar la tasa para esta fecha (usando valor por"
+        f" defecto): {e_tasa}"
+    )
 
   try:
-    # 2. Carga de Gastos y Unidades
+    # 3. Carga de Gastos y Unidades desde PostgreSQL
     with engine.connect() as conn:
       gastos_mes_df = pd.read_sql(
           text(
@@ -1634,12 +1572,16 @@ elif st.session_state.rol_logueado == "admin":
     st.markdown("---")
     st.markdown(
         f"📊 **Gasto Común Total ({mes_conciliacion}):**"
-        f" ${total_gastos_comunes:,.2f} USD | 💱 **Tasa Activa ({fecha_pago_input}):**"
-        f" Bs. {tasa_dia:,.2f}"
+        f" ${total_gastos_comunes:,.2f} USD | 💱 **Tasa Activa para el"
+        f" {fecha_pago_input}:** Bs. {tasa_dia:,.4f}"
+    )
+    st.markdown(
+        "*(Si necesitas cambiar o registrar esta tasa, recuerda que puedes"
+        " hacerlo en la pestaña **t4**)*"
     )
     st.markdown("---")
 
-    # 3. Listado y Conciliación por Apartamento
+    # 4. Listado y Conciliación por Apartamento
     for _, u_row in unidades_df.iterrows():
       u_cod = u_row["unidad"]
       u_prop = u_row["propietario"]
