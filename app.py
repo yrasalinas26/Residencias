@@ -606,7 +606,6 @@ elif st.session_state.get("rol_logueado") == "propietario":
     )
     prop_tel = row_u["telefono"].values[0] if not row_u.empty else ""
     pct_user = float(row_u["alicuota"].values[0]) if not row_u.empty else 6.0
-
     col_head, col_out = st.columns([3, 1])
     with col_head:
         st.title(f"🏢 {datos_ed['nombre']} - Unidad {user_actual}")
