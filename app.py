@@ -626,90 +626,126 @@ elif st.session_state.rol_logueado == "propietario":
   )
 
   with t_p1:
-    st.subheader("📊 Mis Deudas y Recibos")
+        st.subheader("📊 Mis Deudas y Recibos")
 
-    mes_vencido_defecto = obtener_mes_anterior()
-    mes_actual = st.text_input(
-        "Periodo a Consultar (AAAA-MM):",
-        value=mes_vencido_defecto,
-        key="prop_consulta_mes",
-    )
-
-    try:
-      with engine.connect() as conn:
-        gastos_aprob = (
-            conn.execute(
-                text(
-                    "SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus"
-                    " = 'Aprobado'"
-                ),
-                {"m": mes_actual},
-            ).scalar()
-            or 0
+        mes_vencido_defecto = obtener_mes_anterior()
+        mes_actual = st.text_input(
+            "Periodo a Consultar (AAAA-MM):",
+            value=mes_vencido_defecto,
+            key="prop_consulta_mes",
         )
 
-        cargos_ind = (
-            conn.execute(
-                text(
-                    "SELECT SUM(monto) FROM cargos_individuales WHERE"
-                    " apartamento = :u AND mes_anio = :m"
-                ),
-                {"u": user_actual, "m": mes_actual},
-            ).scalar()
-            or 0
-        )
+        try:
+            with engine.connect() as conn:
+                gastos_aprob = (
+                    conn.execute(
+                        text(
+                            "SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus"
+                            " = 'Aprobado'"
+                        ),
+                        {"m": mes_actual},
+                    ).scalar()
+                    or 0
+                )
 
-      cuota_comun = float(gastos_aprob) * (pct_user / 100.0)
-      total_mes = cuota_comun + float(cargos_ind)
+                cargos_ind = (
+                    conn.execute(
+                        text(
+                            "SELECT SUM(monto) FROM cargos_individuales WHERE"
+                            " apartamento = :u AND mes_anio = :m"
+                        ),
+                        {"u": user_actual, "m": mes_actual},
+                    ).scalar()
+                    or 0
+                )
 
-      c1, c2, c3 = st.columns(3)
-      c1.metric("Cuota Común Estimada", f"${cuota_comun:,.2f}")
-      c2.metric("Cargos No Comunes / Extra", f"${float(cargos_ind):,.2f}")
-      c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
+            cuota_comun = float(gastos_aprob) * (pct_user / 100.0)
+            total_mes = cuota_comun + float(cargos_ind)
 
-      st.write("---")
-      st.subheader("📥 Descargar Recibo / Compartir por WhatsApp")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Cuota Común Estimada", f"${cuota_comun:,.2f}")
+            c2.metric("Cargos No Comunes / Extra", f"${float(cargos_ind):,.2f}")
+            c3.metric(f"Total Periodo ({mes_actual})", f"${total_mes:,.2f}")
 
-      detalles = [
-          {
-              "concepto": "Gastos Comunes del Edificio",
-              "base": float(gastos_aprob),
-              "monto": cuota_comun,
-          },
-          {
-              "concepto": "Cargos Indiv. No Comunes / Cuotas Extras",
-              "base": float(cargos_ind),
-              "monto": float(cargos_ind),
-          },
-      ]
-      pdf_bytes = generar_pdf_recibo(
-          user_actual, mes_actual, total_mes, detalles, pct_user
-      )
+            st.write("---")
+            st.subheader("📥 Descargar Recibo / Compartir por WhatsApp")
 
-      msg_ws = (
-          f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO"
-          f" ({mes_actual})*\nUnidad: {user_actual}\nTotal a Pagar:"
-          f" ${total_mes:,.2f}\n\nPor favor reportar el pago a través de la"
-          " app."
-      )
-      link_ws = generar_enlace_whatsapp(prop_tel, msg_ws)
+            detalles = [
+                {
+                    "concepto": "Gastos Comunes del Edificio",
+                    "base": float(gastos_aprob),
+                    "monto": cuota_comun,
+                },
+                {
+                    "concepto": "Cargos Indiv. No Comunes / Cuotas Extras",
+                    "base": float(cargos_ind),
+                    "monto": float(cargos_ind),
+                },
+            ]
+            pdf_bytes = generar_pdf_recibo(
+                user_actual, mes_actual, total_mes, detalles, pct_user
+            )
 
-      col_pdf, col_ws = st.columns(2)
-      with col_pdf:
-        st.download_button(
-            f"📄 Descargar Recibo PDF ({mes_actual})",
-            data=pdf_bytes,
-            file_name=f"recibo_{user_actual}_{mes_actual}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
-      with col_ws:
-        st.link_button(
-            "📲 Compartir por WhatsApp", link_ws, use_container_width=True
-        )
+            msg_ws = (
+                f"🏢 *{datos_ed['nombre']}*\n📄 *AVISO DE COBRO"
+                f" ({mes_actual})*\nUnidad: {user_actual}\nTotal a Pagar:"
+                f" ${total_mes:,.2f}\n\nPor favor reportar el pago a través de la"
+                " app."
+            )
+            link_ws = generar_enlace_whatsapp(prop_tel, msg_ws)
 
-    except Exception as e:
-      st.error(f"Error consultando estado de cuenta: {e}")
+            col_pdf, col_ws = st.columns(2)
+            with col_pdf:
+                st.download_button(
+                    f"📄 Descargar Recibo PDF ({mes_actual})",
+                    data=pdf_bytes,
+                    file_name=f"recibo_{user_actual}_{mes_actual}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            with col_ws:
+                st.link_button(
+                    "📲 Compartir por WhatsApp", link_ws, use_container_width=True
+                )
+
+            # --- NUEVA SECCIÓN: HISTORIAL DETALLADO DE PAGOS DEL PROPIETARIO ---
+            st.write("---")
+            st.subheader("📋 Historial y Detalles de Mis Pagos")
+            
+            with engine.connect() as conn:
+                query_mis_pagos = text("""
+                    SELECT fecha_pago, monto_pagado, moneda, tasa_bcv, metodo_pago, referencia, estatus 
+                    FROM pagos 
+                    WHERE apartamento = :u 
+                    ORDER BY fecha_pago DESC
+                """)
+                mis_pagos_df = pd.read_sql(query_mis_pagos, conn, params={"u": user_actual})
+
+            if not mis_pagos_df.empty:
+                mis_pagos_display = mis_pagos_df.rename(columns={
+                    "fecha_pago": "Fecha",
+                    "monto_pagado": "Monto Pagado",
+                    "moneda": "Moneda",
+                    "tasa_bcv": "Tasa BCV",
+                    "metodo_pago": "Método",
+                    "referencia": "Referencia",
+                    "estatus": "Estatus"
+                })
+                st.dataframe(mis_pagos_display, use_container_width=True, hide_index=True)
+                
+                csv_mis_pagos = mis_pagos_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Descargar mi Historial de Pagos (CSV)",
+                    data=csv_mis_pagos,
+                    file_name=f"mis_pagos_{user_actual}.csv",
+                    mime="text/csv",
+                    key="btn_dl_mis_pagos"
+                )
+            else:
+                st.info("No tienes pagos reportados o registrados en el sistema todavía.")
+
+        except Exception as e:
+            st.error(f"Error consultando estado de cuenta o pagos: {e}")
 
   with t_p2:
     st.subheader("📝 Formulario de Reporte de Pago (Bolívares o Dólares)")
