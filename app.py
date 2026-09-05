@@ -624,7 +624,7 @@ elif st.session_state.get("rol_logueado") == "propietario":
         ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
     )
 
-      with t_p1:
+    with t_p1:
         st.subheader("📊 Mis Deudas y Recibos")
         mes_vencido_defecto = obtener_mes_anterior()
 
