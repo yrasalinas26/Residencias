@@ -1308,12 +1308,12 @@ elif st.session_state.rol_logueado == "admin":
       st.error(f"Error gestionando unidades: {e}")
 
     with t7:
-  st.subheader("🚨 Recibos y Envíos a WhatsApp")
-  mes_recibo_gral = st.text_input(
+      st.subheader("🚨 Recibos y Envíos a WhatsApp")
+      mes_recibo_gral = st.text_input(
       "Periodo del Recibo (AAAA-MM):",
       value=obtener_mes_anterior(),
       key="input_mes_recibo_gen",
-  )
+        )
 
   try:
     with engine.connect() as conn:
@@ -1423,7 +1423,6 @@ elif st.session_state.rol_logueado == "admin":
           f"  *Distribución por Apartamentos:*\n"
       )
 
-      # Recorremos cada apartamento para calcular su cuota común en el mensaje general
       for _, u_row in unidades_df.iterrows():
         u_cod = u_row["unidad"]
         u_alic = float(u_row["alicuota"])
