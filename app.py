@@ -1509,32 +1509,107 @@ elif st.session_state.rol_logueado == "admin":
         except Exception as e:
           st.error(f"Error actualizando configuración: {e}")
     with t9:
-      st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa BCV)")
+      st.subheader("💱 Conciliación de Pagos y Tasas Diarias")
       st.markdown(
-      "Ingresa la tasa oficial del día e introduce los montos reportados en"
-      " bolívares para conciliar cada apartamento."
+      "Registra la tasa oficial de la fecha del pago y concilia las"
+      " transferencias en bolívares de cada apartamento."
       )
 
-  # Controles superiores: Periodo y Tasa Manual del Día
-  col_t1, col_t2 = st.columns(2)
-  with col_t1:
+  # 1. Controles para la Fecha y el Registro de la Tasa Diaria
+  col_d1, col_d2, col_d3 = st.columns([2, 2, 1])
+  with col_d1:
     mes_conciliacion = st.text_input(
         "Periodo a Conciliar (AAAA-MM):",
         value=obtener_mes_anterior(),
         key="input_mes_conciliacion",
     )
-  with col_t2:
-    tasa_bcv = st.number_input(
-        "Tasa BCV del Día (Bs / USD):",
-        min_value=1.0,
-        value=36.50,
-        step=0.01,
-        format="%.2f",
-        key="input_tasa_bcv_manual_directa",
+  with col_d2:
+    fecha_pago_input = st.date_input(
+        "Fecha de la Tasa / Pago:", key="input_fecha_tasa_diaria"
     )
+  with col_d3:
+    st.write("")  # Espaciador
+    st.write("")
+
+  # Consultar o guardar la tasa para esa fecha exacta en la base de datos
+  tasa_dia = 36.50  # Valor por defecto
 
   try:
-    # Carga de Gastos y Unidades de forma limpia
+    with engine.connect() as conn:
+      # Buscar si ya existe una tasa guardada para este día exacto
+      res_tasa = conn.execute(
+          text(
+              "SELECT tasa FROM tasas_cambio WHERE fecha = :f LIMIT"
+              " 1"  # Ajusta 'tasas_cambio' o 'fecha' si tus nombres difieren
+          ),
+          {"f": fecha_pago_input},
+      ).scalar()
+      if res_tasa:
+        tasa_dia = float(res_tasa)
+  except Exception:
+    pass
+
+  # Formulario rápido para guardar/actualizar la tasa del día si cambió
+  with st.expander(
+      f"⚙️ Gestionar / Guardar Tasa para la fecha: {fecha_pago_input}"
+  ):
+    with st.form("form_guardar_tasa_diaria"):
+      nueva_tasa_val = st.number_input(
+          "Tasa BCV oficial para este día:",
+          min_value=1.0,
+          value=tasa_dia,
+          step=0.01,
+          format="%.2f",
+      )
+      guardar_tasa_btn = st.form_submit_button(
+          "💾 Guardar Tasa en la Base de Datos"
+      )
+
+      if guardar_tasa_btn:
+        try:
+          with engine.begin() as conn:
+            # Upsert o inserción de la tasa diaria
+            conn.execute(
+                text(
+                    "INSERT INTO tasas_cambio (fecha, mes_anio, tasa) VALUES"
+                    " (:f, :m, :t) ON CONFLICT (fecha) DO UPDATE SET tasa ="
+                    " EXCLUDED.tasa"
+                ),
+                {
+                    "f": fecha_pago_input,
+                    "m": mes_conciliacion,
+                    "t": nueva_tasa_val,
+                },
+            )
+          st.success(
+              f"✅ Tasa de Bs. {nueva_tasa_val:,.2f} guardada exitosamente"
+              f" para el {fecha_pago_input}."
+          )
+          tasa_dia = nueva_tasa_val
+        except Exception as err:
+          # Si la tabla no tiene restricción UNIQUE en 'fecha', hacemos un INSERT simple o UPDATE
+          try:
+            with engine.begin() as conn:
+              conn.execute(
+                  text(
+                      "INSERT INTO tasas_cambio (fecha, mes_anio, tasa) VALUES"
+                      " (:f, :m, :t)"
+                  ),
+                  {
+                      "f": fecha_pago_input,
+                      "m": mes_conciliacion,
+                      "t": nueva_tasa_val,
+                  },
+              )
+            st.success(
+                f"✅ Tasa de Bs. {nueva_tasa_val:,.2f} registrada exitosamente."
+            )
+            tasa_dia = nueva_tasa_val
+          except Exception as e_inner:
+            st.error(f"Error al guardar la tasa: {e_inner}")
+
+  try:
+    # 2. Carga de Gastos y Unidades
     with engine.connect() as conn:
       gastos_mes_df = pd.read_sql(
           text(
@@ -1558,12 +1633,13 @@ elif st.session_state.rol_logueado == "admin":
 
     st.markdown("---")
     st.markdown(
-        f"📊 **Gasto Común Total:** ${total_gastos_comunes:,.2f} USD | 💱 **Tasa"
-        f" Activa:** Bs. {tasa_bcv:,.2f}"
+        f"📊 **Gasto Común Total ({mes_conciliacion}):**"
+        f" ${total_gastos_comunes:,.2f} USD | 💱 **Tasa Activa ({fecha_pago_input}):**"
+        f" Bs. {tasa_dia:,.2f}"
     )
     st.markdown("---")
 
-    # Listado y Conciliación por Apartamento
+    # 3. Listado y Conciliación por Apartamento
     for _, u_row in unidades_df.iterrows():
       u_cod = u_row["unidad"]
       u_prop = u_row["propietario"]
@@ -1585,7 +1661,7 @@ elif st.session_state.rol_logueado == "admin":
         )
 
       total_usd = cuota_comun_apt + float(cargos_apt)
-      total_bs_teorico = total_usd * tasa_bcv
+      total_bs_teorico = total_usd * tasa_dia
 
       with st.container():
         col_c1, col_c2, col_c3, col_c4 = st.columns([1, 2, 2, 2])
@@ -1593,7 +1669,7 @@ elif st.session_state.rol_logueado == "admin":
         col_c1.markdown(f"**Apto {u_cod}**")
         col_c2.markdown(f"{u_prop}")
         col_c3.markdown(
-            f"Deuda: **${total_usd:,.2f} USD**<br>💱 Eq. Tasa Oficial: *Bs."
+            f"Deuda: **${total_usd:,.2f} USD**<br>💱 Eq. Tasa Día: *Bs."
             f" {total_bs_teorico:,.2f}*",
             unsafe_allow_html=True,
         )
@@ -1627,8 +1703,8 @@ elif st.session_state.rol_logueado == "admin":
 
             if abs(diferencia_bs) < 5.0:
               st.success(
-                  "✅ El monto en Bs cubre exactamente la deuda con la tasa"
-                  " ingresada."
+                  "✅ El monto en Bs cubre exactamente la deuda con la tasa de"
+                  " esta fecha."
               )
             elif monto_reportado_bs > total_bs_teorico:
               st.info(
