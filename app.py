@@ -600,7 +600,6 @@ if not st.session_state.usuario_logueado:
     # ... tu formulario de login ...
     # ... tus validaciones de base de datos ...
 
-# 2. Pones el ELSE justo aquí abajo 👇
 else:
     # Barra lateral opcional para salir
     with st.sidebar:
