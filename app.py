@@ -828,7 +828,7 @@ elif st.session_state.rol_logueado == "admin":
 
   st.write("---")
 
-  t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+  t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
       "📊 Gastos Comunes",
       "🛠️ Gastos No Comunes",
       "⭐ Cuotas Extras",
@@ -837,6 +837,7 @@ elif st.session_state.rol_logueado == "admin":
       "🏢 Alícuotas y Unidades",
       "🚨 Morosidad y Recibos",
       "⚙️ Datos Edificio",
+      "💱 Conciliación de Pagos en Bolívares (Tasa BCV)"
   ])
 
   with t1:
@@ -1507,3 +1508,126 @@ elif st.session_state.rol_logueado == "admin":
           st.rerun()
         except Exception as e:
           st.error(f"Error actualizando configuración: {e}")
+    with t9:
+      st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa BCV)")
+      st.markdown(
+      "Este módulo permite calcular el equivalente en bolívares de la deuda"
+      " según la tasa oficial del BCV y verificar los pagos reportados por"
+      " los propietarios."
+      )
+
+  # 1. Controles de Periodo y Tasa BCV
+  col_p1, col_p2 = st.columns(2)
+  with col_p1:
+    mes_conciliacion = st.text_input(
+        "Periodo a Conciliar (AAAA-MM):",
+        value=obtener_mes_anterior(),
+        key="input_mes_conciliacion",
+    )
+  with col_p2:
+    tasa_bcv = st.number_input(
+        "Tasa BCV del Día (Bs / USD):",
+        min_value=1.0,
+        value=36.50,
+        step=0.1,
+        format="%.2f",
+        key="input_tasa_bcv_dia",
+    )
+
+  try:
+    with engine.connect() as conn:
+      # Obtener el total de gastos comunes aprobados para ese mes
+      gastos_mes_df = pd.read_sql(
+          text(
+              "SELECT monto FROM gastos WHERE mes_anio = :m AND (estatus ="
+              " 'Aprobado' OR estatus = 'APROBADO')"
+          ),
+          conn,
+          params={"m": mes_conciliacion},
+      )
+      total_gastos_comunes = (
+          gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
+      )
+
+      # Obtener unidades
+      unidades_df = pd.read_sql(
+          text(
+              "SELECT unidad, alicuota, propietario FROM unidades ORDER BY"
+              " unidad ASC"
+          ),
+          conn,
+      )
+
+    st.markdown("---")
+    st.markdown(
+        f"📊 **Resumen del Periodo:** Gasto Común Total: **${total_gastos_comunes:,.2f} USD** | Tasa BCV: **Bs. {tasa_bcv:,.2f}**"
+    )
+    st.markdown("---")
+
+    # 2. Listado y Conciliación por Apartamento
+    for _, u_row in unidades_df.iterrows():
+      u_cod = u_row["unidad"]
+      u_prop = u_row["propietario"]
+      u_alic = float(u_row["alicuota"])
+      u_alic_decimal = u_alic / 100.0
+
+      # Cálculo de deuda en USD y su equivalente exacto en Bolívares
+      cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
+
+      # Buscar si tiene cargos individuales adicionales en el mes
+      with engine.connect() as conn:
+        cargos_apt = (
+            conn.execute(
+                text(
+                    "SELECT SUM(monto) FROM cargos_individuales WHERE"
+                    " apartamento = :u AND mes_anio = :m"
+                ),
+                {"u": u_cod, "m": mes_conciliacion},
+            ).scalar()
+            or 0.0
+        )
+
+      total_usd = cuota_comun_apt + float(cargos_apt)
+      total_bs = total_usd * tasa_bcv
+
+      with st.container():
+        col_c1, col_c2, col_c3, col_c4 = st.columns([1, 2, 2, 2])
+
+        col_c1.markdown(f"**Apto {u_cod}**")
+        col_c2.markdown(f"{u_prop}")
+        col_c3.markdown(
+            f"Deuda: **${total_usd:,.2f} USD**<br>💱 *Bs. {total_bs:,.2f}*",
+            unsafe_allow_html=True,
+        )
+
+        with col_c4:
+          # Estado de conciliación interactivo para el administrador
+          estatus_actual = st.selectbox(
+              f"Estatus Apto {u_cod}",
+              ["🟡 Pendiente", "🟢 Conciliado (Aprobado)"],
+              key=f"select_conciliacion_{u_cod}",
+          )
+
+        # Campo opcional para registrar o ver la referencia bancaria del pago en Bs
+        with st.expander(f"📝 Ver detalles de pago en Bs - Apt {u_cod}"):
+          ref_pago = st.text_input(
+              f"Nro. Referencia Bancaria / Banco (Apt {u_cod}):",
+              key=f"ref_pago_{u_cod}",
+          )
+          monto_reportado_bs = st.number_input(
+              f"Monto reportado en Bs por el propietario:",
+              min_value=0.0,
+              value=total_bs,
+              step=1.0,
+              key=f"monto_bs_{u_cod}",
+          )
+
+          if monto_reportado_bs >= total_bs:
+            st.success("✅ El monto en Bs cubre la cuota correspondiente.")
+          else:
+            st.warning("⚠️ El monto reportado es menor a la deuda calculada.")
+
+        st.markdown("---")
+
+  except Exception as e:
+    st.error(f"Error cargando el módulo de conciliación: {e}")
