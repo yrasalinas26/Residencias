@@ -653,8 +653,7 @@ elif st.session_state.get("rol_logueado") == "admin":
     ])
 
 t_p1, t_p2, t_p3 = st.tabs(
-      ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
-  )
+      ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"] )
 
   with t_p1:
         st.subheader("📊 Mis Deudas y Recibos")
