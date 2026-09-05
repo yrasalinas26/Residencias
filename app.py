@@ -1511,10 +1511,11 @@ elif st.session_state.rol_logueado == "admin":
     with t9:
       st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa BCV)")
       st.markdown(
-      "Este módulo toma la tasa oficial registrada en la tabla `tasas_cambio` y"
-      " compara las transferencias en bolívares de los propietarios."
+      "Ingresa la tasa oficial del día e introduce los montos reportados en"
+      " bolívares para conciliar cada apartamento."
       )
 
+  # Controles superiores: Periodo y Tasa Manual del Día
   col_t1, col_t2 = st.columns(2)
   with col_t1:
     mes_conciliacion = st.text_input(
@@ -1523,41 +1524,18 @@ elif st.session_state.rol_logueado == "admin":
         key="input_mes_conciliacion",
     )
   with col_t2:
-    tasa_bcv_manual = st.number_input(
-        "Tasa BCV de Respaldo (Bs / USD):",
+    tasa_bcv = st.number_input(
+        "Tasa BCV del Día (Bs / USD):",
         min_value=1.0,
         value=36.50,
         step=0.01,
         format="%.2f",
-        key="input_tasa_bcv_manual",
+        key="input_tasa_bcv_manual_directa",
     )
 
   try:
-    tasa_bcv = tasa_bcv_manual  # Valor por defecto inicial
-
+    # Carga de Gastos y Unidades de forma limpia
     with engine.connect() as conn:
-      # Consulta directa a tu tabla 'tasas_cambio'
-      try:
-        tasa_db = conn.execute(
-            text(
-                "SELECT tasa FROM tasas_cambio WHERE mes_anio = :m LIMIT 1"
-            ),
-            {"m": mes_conciliacion},
-        ).scalar()
-        if tasa_db:
-          tasa_bcv = float(tasa_db)
-          st.toast(
-              f"✅ Tasa cargada exitosamente desde 'tasas_cambio': Bs."
-              f" {tasa_bcv:,.2f}",
-              icon="💱",
-          )
-      except Exception as ex:
-        st.warning(
-            "⚠️ No se pudo leer la tasa automática para este periodo. Usando la"
-            f" tasa manual. Detalle: {ex}"
-        )
-
-      # Obtener gastos aprobados del mes
       gastos_mes_df = pd.read_sql(
           text(
               "SELECT monto FROM gastos WHERE mes_anio = :m AND (estatus ="
@@ -1570,7 +1548,6 @@ elif st.session_state.rol_logueado == "admin":
           gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
       )
 
-      # Obtener unidades
       unidades_df = pd.read_sql(
           text(
               "SELECT unidad, alicuota, propietario FROM unidades ORDER BY"
@@ -1582,7 +1559,7 @@ elif st.session_state.rol_logueado == "admin":
     st.markdown("---")
     st.markdown(
         f"📊 **Gasto Común Total:** ${total_gastos_comunes:,.2f} USD | 💱 **Tasa"
-        f" BCV Activa:** Bs. {tasa_bcv:,.2f}"
+        f" Activa:** Bs. {tasa_bcv:,.2f}"
     )
     st.markdown("---")
 
@@ -1651,7 +1628,7 @@ elif st.session_state.rol_logueado == "admin":
             if abs(diferencia_bs) < 5.0:
               st.success(
                   "✅ El monto en Bs cubre exactamente la deuda con la tasa"
-                  " oficial."
+                  " ingresada."
               )
             elif monto_reportado_bs > total_bs_teorico:
               st.info(
@@ -1661,7 +1638,7 @@ elif st.session_state.rol_logueado == "admin":
             else:
               st.warning(
                   f"⚠️ El monto reportado es menor a la cuota. Faltan Bs."
-                  f" {abs(diferencia_bs):,.2f} según la tasa oficial."
+                  f" {abs(diferencia_bs):,.2f} según la tasa."
               )
 
         st.markdown("---")
