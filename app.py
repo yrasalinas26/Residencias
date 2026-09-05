@@ -1440,7 +1440,9 @@ elif st.session_state.rol_logueado == "admin":
         g_concepto = (
             g["concepto"] if "concepto" in g else g.get("CONCEPTO", "Gasto")
         )
-        g_monto_total = float(g["monto"] if "monto" in g else g.get("MONTO", 0.0))
+        g_monto_total = float(
+            g["monto"] if "monto" in g else g.get("MONTO", 0.0)
+        )
         texto_ws += f"• {g_concepto}: ${g_monto_total:,.2f}\n"
 
       texto_ws += (
