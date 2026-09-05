@@ -714,7 +714,7 @@ elif st.session_state.rol_logueado == "propietario":
             
             with engine.connect() as conn:
                 query_mis_pagos = text("""
-                    SELECT fecha_pago, monto_pagado, moneda, tasa_bcv, metodo_pago, referencia, estatus 
+                    SELECT fecha_de_realizacion_de_pago, monto_pagado, moneda, tasa_bcv, metodo_pago, referencia, estatus 
                     FROM pagos 
                     WHERE apartamento = :u 
                     ORDER BY fecha_pago DESC
