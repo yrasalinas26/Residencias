@@ -708,14 +708,14 @@ elif st.session_state.rol_logueado == "propietario":
                     "📲 Compartir por WhatsApp", link_ws, use_container_width=True
                 )
 
-            # --- NUEVA SECCIÓN: HISTORIAL DETALLADO DE PAGOS DEL PROPIETARIO ---
+            # --- HISTORIAL DETALLADO DE PAGOS DEL PROPIETARIO ---
             st.write("---")
             st.subheader("📋 Historial y Detalles de Mis Pagos")
             
             with engine.connect() as conn:
                 query_mis_pagos = text("""
-                    SELECT fecha_de_pago, monto_pagado, moneda, tasa_bcv, metodo_pago, referencia, estatus 
-                    FROM pagos 
+                    SELECT fecha_pago, mes_anio, metodo_pago, moneda, monto_original, referencia, estatus 
+                    FROM pagos_reportados 
                     WHERE apartamento = :u 
                     ORDER BY fecha_pago DESC
                 """)
@@ -723,12 +723,12 @@ elif st.session_state.rol_logueado == "propietario":
 
             if not mis_pagos_df.empty:
                 mis_pagos_display = mis_pagos_df.rename(columns={
-                    "fecha_pago": "Fecha",
-                    "monto_pagado": "Monto Pagado",
+                    "fecha_pago": "Fecha de Realización",
+                    "mes_anio": "Periodo (AAAA-MM)",
+                    "metodo_pago": "Método de Pago",
                     "moneda": "Moneda",
-                    "tasa_bcv": "Tasa BCV",
-                    "metodo_pago": "Método",
-                    "referencia": "Referencia",
+                    "monto_original": "Monto Pagado",
+                    "referencia": "Referencia / Comprobante",
                     "estatus": "Estatus"
                 })
                 st.dataframe(mis_pagos_display, use_container_width=True, hide_index=True)
@@ -742,7 +742,7 @@ elif st.session_state.rol_logueado == "propietario":
                     key="btn_dl_mis_pagos"
                 )
             else:
-                st.info("No tienes pagos reportados o registrados en el sistema todavía.")
+                st.info("No tienes pagos reportados en el sistema todavía.")
 
         except Exception as e:
             st.error(f"Error consultando estado de cuenta o pagos: {e}")
