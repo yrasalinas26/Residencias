@@ -838,7 +838,7 @@ st.stop()
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRADOR (Si está logueado y es admin)
 # -----------------------------------------------------------------------------
-elif st.session_state.get("rol_logueado")=="admin":
+if st.session_state.get("rol_logueado")=="admin":
     with st.sidebar:
         st.write(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
         st.write(f"🔑 Rol: **admin**")
