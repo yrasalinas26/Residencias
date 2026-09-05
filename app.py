@@ -1511,32 +1511,36 @@ elif st.session_state.rol_logueado == "admin":
     with t9:
       st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa BCV)")
       st.markdown(
-      "Este módulo permite calcular el equivalente en bolívares de la deuda"
-      " según la tasa oficial del BCV y verificar los pagos reportados por"
-      " los propietarios."
+      "Este módulo toma la tasa oficial registrada en el sistema para el periodo"
+      " y compara las transferencias en bolívares de los propietarios."
       )
 
-  # 1. Controles de Periodo y Tasa BCV
-  col_p1, col_p2 = st.columns(2)
-  with col_p1:
-    mes_conciliacion = st.text_input(
-        "Periodo a Conciliar (AAAA-MM):",
-        value=obtener_mes_anterior(),
-        key="input_mes_conciliacion",
-    )
-  with col_p2:
-    tasa_bcv = st.number_input(
-        "Tasa BCV del Día (Bs / USD):",
-        min_value=1.0,
-        value=36.50,
-        step=0.1,
-        format="%.2f",
-        key="input_tasa_bcv_dia",
-    )
+  # 1. Selector de Periodo
+  mes_conciliacion = st.text_input(
+      "Periodo a Conciliar (AAAA-MM):",
+      value=obtener_mes_anterior(),
+      key="input_mes_conciliacion",
+  )
 
   try:
     with engine.connect() as conn:
-      # Obtener el total de gastos comunes aprobados para ese mes
+      # Buscar la tasa de cambio registrada en la base de datos para este periodo o mes
+      # (Ajusta el nombre de la tabla o columna si en tu app se llama diferente, ej: 'tasas_bcv' o 'configuracion')
+      tasa_query = conn.execute(
+          text(
+              "SELECT tasa FROM tasas_cambio WHERE mes_anio = :m LIMIT 1"
+          ),  # O la estructura que uses para guardar las tasas
+          {"m": mes_conciliacion},
+      ).scalar()
+
+      # Si no encuentra una tasa específica para el mes, intentamos buscar la última o usamos un respaldo
+      if not tasa_query:
+        # Intento alternativo buscando en una tabla general o configuración si aplica
+        tasa_query = 36.50  # Valor predeterminado por seguridad si no existe registro previo
+
+      tasa_bcv = float(tasa_query)
+
+      # Obtener gastos y unidades
       gastos_mes_df = pd.read_sql(
           text(
               "SELECT monto FROM gastos WHERE mes_anio = :m AND (estatus ="
@@ -1549,7 +1553,6 @@ elif st.session_state.rol_logueado == "admin":
           gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
       )
 
-      # Obtener unidades
       unidades_df = pd.read_sql(
           text(
               "SELECT unidad, alicuota, propietario FROM unidades ORDER BY"
@@ -1560,7 +1563,8 @@ elif st.session_state.rol_logueado == "admin":
 
     st.markdown("---")
     st.markdown(
-        f"📊 **Resumen del Periodo:** Gasto Común Total: **${total_gastos_comunes:,.2f} USD** | Tasa BCV: **Bs. {tasa_bcv:,.2f}**"
+        f"📊 **Gasto Común Total:** ${total_gastos_comunes:,.2f} USD | 💱 **Tasa"
+        f" BCV del Sistema (Periodo {mes_conciliacion}):** Bs. {tasa_bcv:,.2f}"
     )
     st.markdown("---")
 
@@ -1571,10 +1575,8 @@ elif st.session_state.rol_logueado == "admin":
       u_alic = float(u_row["alicuota"])
       u_alic_decimal = u_alic / 100.0
 
-      # Cálculo de deuda en USD y su equivalente exacto en Bolívares
       cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
 
-      # Buscar si tiene cargos individuales adicionales en el mes
       with engine.connect() as conn:
         cargos_apt = (
             conn.execute(
@@ -1588,7 +1590,7 @@ elif st.session_state.rol_logueado == "admin":
         )
 
       total_usd = cuota_comun_apt + float(cargos_apt)
-      total_bs = total_usd * tasa_bcv
+      total_bs_teorico = total_usd * tasa_bcv
 
       with st.container():
         col_c1, col_c2, col_c3, col_c4 = st.columns([1, 2, 2, 2])
@@ -1596,38 +1598,58 @@ elif st.session_state.rol_logueado == "admin":
         col_c1.markdown(f"**Apto {u_cod}**")
         col_c2.markdown(f"{u_prop}")
         col_c3.markdown(
-            f"Deuda: **${total_usd:,.2f} USD**<br>💱 *Bs. {total_bs:,.2f}*",
+            f"Deuda: **${total_usd:,.2f} USD**<br>💱 Eq. Tasa Oficial: *Bs."
+            f" {total_bs_teorico:,.2f}*",
             unsafe_allow_html=True,
         )
 
         with col_c4:
-          # Estado de conciliación interactivo para el administrador
           estatus_actual = st.selectbox(
               f"Estatus Apto {u_cod}",
               ["🟡 Pendiente", "🟢 Conciliado (Aprobado)"],
               key=f"select_conciliacion_{u_cod}",
           )
 
-        # Campo opcional para registrar o ver la referencia bancaria del pago en Bs
-        with st.expander(f"📝 Ver detalles de pago en Bs - Apt {u_cod}"):
+        with st.expander(
+            f"📝 Registrar / Verificar Pago en Bs - Apt {u_cod}"
+        ):
           ref_pago = st.text_input(
-              f"Nro. Referencia Bancaria / Banco (Apt {u_cod}):",
+              f"Nro. Referencia / Banco (Apt {u_cod}):",
               key=f"ref_pago_{u_cod}",
           )
+
           monto_reportado_bs = st.number_input(
-              f"Monto reportado en Bs por el propietario:",
+              f"Monto real pagado en Bs (según comprobante):",
               min_value=0.0,
-              value=total_bs,
+              value=total_bs_teorico,
               step=1.0,
+              format="%.2f",
               key=f"monto_bs_{u_cod}",
           )
 
-          if monto_reportado_bs >= total_bs:
-            st.success("✅ El monto en Bs cubre la cuota correspondiente.")
-          else:
-            st.warning("⚠️ El monto reportado es menor a la deuda calculada.")
+          if total_usd > 0 and monto_reportado_bs > 0:
+            diferencia_bs = monto_reportado_bs - total_bs_teorico
+
+            if abs(diferencia_bs) < 5.0:
+              st.success(
+                  "✅ El monto en Bs cubre exactamente la deuda con la tasa"
+                  " oficial registrada."
+              )
+            elif monto_reportado_bs > total_bs_teorico:
+              st.info(
+                  f"🟢 El propietario pagó de más por un monto de Bs."
+                  f" {diferencia_bs:,.2f}"
+              )
+            else:
+              st.warning(
+                  f"⚠️ El monto reportado es menor a la cuota. Faltan Bs."
+                  f" {abs(diferencia_bs):,.2f} según la tasa oficial."
+              )
 
         st.markdown("---")
 
   except Exception as e:
-    st.error(f"Error cargando el módulo de conciliación: {e}")
+    st.error(
+        f"Error en la conciliación (verifica que la tabla de tasas exista o"
+        f" esté accesible): {e}"
+    )
