@@ -1313,14 +1313,15 @@ elif st.session_state.rol_logueado == "admin":
       "Periodo del Recibo (AAAA-MM):",
       value=obtener_mes_anterior(),
       key="input_mes_recibo_gen",
-        )
+      )
 
   try:
     with engine.connect() as conn:
+      # Consulta robusta asegurando nombres de columnas
       gastos_mes_df = pd.read_sql(
           text(
               "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
-              " estatus = 'Aprobado'"
+              " (estatus = 'Aprobado' OR estatus = 'APROBADO')"
           ),
           conn,
           params={"m": mes_recibo_gral},
@@ -1335,6 +1336,18 @@ elif st.session_state.rol_logueado == "admin":
               " ORDER BY unidad ASC"
           ),
           conn,
+      )
+
+    # Diagnóstico visual rápido en pantalla para verificar que los gastos se leyeron
+    if gastos_mes_df.empty:
+      st.warning(
+          f"⚠️ No se encontraron gastos aprobados para el periodo"
+          f" {mes_recibo_gral}. Por eso el desglose sale vacío."
+      )
+    else:
+      st.success(
+          f"✅ Se cargaron {len(gastos_mes_df)} gastos comunes para el periodo"
+          f" {mes_recibo_gral}."
       )
 
     st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
@@ -1372,10 +1385,19 @@ elif st.session_state.rol_logueado == "admin":
 
         if not gastos_mes_df.empty:
           for _, g_row in gastos_mes_df.iterrows():
-            g_concepto = g_row["concepto"]
-            g_monto_total = float(g_row["monto"])
+            # Asegurar manejo flexible de nombres de columnas por si vienen en mayúsculas/minúsculas
+            g_concepto = (
+                g_row["concepto"]
+                if "concepto" in g_row
+                else g_row.get("CONCEPTO", "Gasto")
+            )
+            g_monto_total = float(
+                g_row["monto"] if "monto" in g_row else g_row.get("MONTO", 0.0)
+            )
             g_monto_apto = g_monto_total * u_alic_decimal
             msg_ind += f"• {g_concepto}: ${g_monto_apto:,.2f}\n"
+        else:
+          msg_ind += "• (Sin gastos comunes registrados para este mes)\n"
 
         msg_ind += f"----------------------------------------\n"
         msg_ind += f"• Subtotal Cuota Común: ${cuota_comun_apt:,.2f}\n"
@@ -1414,7 +1436,11 @@ elif st.session_state.rol_logueado == "admin":
       texto_ws += f"  *Gastos Comunes del Edificio:*\n"
 
       for _, g in gastos_mes_df.iterrows():
-        texto_ws += f"• {g['concepto']}: ${float(g['monto']):,.2f}\n"
+        g_concepto = (
+            g["concepto"] if "concepto" in g else g.get("CONCEPTO", "Gasto")
+        )
+        g_monto_total = float(g["monto"] if "monto" in g else g.get("MONTO", 0.0))
+        texto_ws += f"• {g_concepto}: ${g_monto_total:,.2f}\n"
 
       texto_ws += (
           f"----------------------------------------\n"
@@ -1434,7 +1460,6 @@ elif st.session_state.rol_logueado == "admin":
           "🙏 Por favor realizar sus pagos correspondientes y reportarlos en"
           " la plataforma. ¡Gracias!"
       )
-      # ----------------------------------------------------
 
       st.text_area(
           "Vista Previa Recibo General:",
