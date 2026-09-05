@@ -548,91 +548,110 @@ def cerrar_sesion():
 tasa_del_dia_auto = verificar_y_actualizar_tasa_hoy(engine)
 
 # -----------------------------------------------------------------------------
-# 1. PORTAL DE ACCESO
+# 1. PORTAL DE ACCESO (Si NO está logueado)
 # -----------------------------------------------------------------------------
-if not st.session_state.usuario_logueado:
-  st.markdown(
-      "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
-      unsafe_allow_html=True,
-  )
-  st.markdown(
-      "<p style='text-align: center; color: gray;'>Ingresa tus credenciales"
-      " para continuar.</p>",
-      unsafe_allow_html=True,
-  )
-
-  if error_conexion:
-    st.error(f"⚠️ Error de conexión: {error_conexion}")
-
-  with st.form("form_login"):
-    usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
-    clave_input = st.text_input("Contraseña", type="password").strip()
-    bot_login = st.form_submit_button(
-        "Ingresar", type="primary", use_container_width=True
+if not st.session_state.get("usuario_logueado"):
+    st.markdown(
+        "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p style='text-align: center; color: gray;'>Ingresa tus credenciales para continuar.</p>",
+        unsafe_allow_html=True,
     )
 
-    if bot_login:
-      if not usuario_input or not clave_input:
-        st.error("Por favor completa los campos.")
-      elif not engine:
-        st.error("Base de datos no disponible.")
-      else:
-        try:
-          with engine.connect() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT usuario, clave, rol FROM usuarios WHERE"
-                    " LOWER(usuario) = LOWER(:u)"
-                ),
-                {"u": usuario_input},
-            ).fetchone()
+    if 'error_conexion' in locals() and error_conexion:
+        st.error(f"⚠️ Error de conexión: {error_conexion}")
 
-          if row and row[1] == clave_input:
-            st.session_state.usuario_logueado = row[0]
-            st.session_state.rol_logueado = row[2]
-            st.rerun()
-          else:
-            st.error("❌ Credenciales incorrectas.")
-        except Exception as e:
-          st.error(f"Error al ingresar: {e}")
-if not st.session_state.usuario_logueado:
-    st.markdown("<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>", unsafe_allow_html=True)
-    # ... tu formulario de login ...
-    # ... tus validaciones de base de datos ...
+    with st.form("form_login"):
+        usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
+        clave_input = st.text_input("Contraseña", type="password").strip()
+        bot_login = st.form_submit_button(
+            "Ingresar", type="primary", use_container_width=True
+        )
 
-else:
-    # Barra lateral opcional para salir
-    with st.sidebar:
-        st.write(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
-        if st.button("🚪 Cerrar Sesión"):
+        if bot_login:
+            if not usuario_input or not clave_input:
+                st.error("Por favor completa los campos.")
+            elif 'engine' not in locals() or not engine:
+                st.error("Base de datos no disponible.")
+            else:
+                try:
+                    with engine.connect() as conn:
+                        row = conn.execute(
+                            text(
+                                "SELECT usuario, clave, rol FROM usuarios WHERE LOWER(usuario) = LOWER(:u)"
+                            ),
+                            {"u": usuario_input},
+                        ).fetchone()
+
+                    if row and row[1] == clave_input:
+                        st.session_state.usuario_logueado = row[0]
+                        st.session_state.rol_logueado = row[2]
+                        st.rerun()
+                    else:
+                        st.error("❌ Credenciales incorrectas.")
+                except Exception as e:
+                    st.error(f"Error al ingresar: {e}")
+
+# -----------------------------------------------------------------------------
+# 2. VISTA DE PROPIETARIOS (Si está logueado y es propietario)
+# -----------------------------------------------------------------------------
+elif st.session_state.get("rol_logueado") == "propietario":
+    user_actual = st.session_state.usuario_logueado
+    datos_ed = obtener_datos_edificio()
+    df_u = obtener_unidades_df()
+    row_u = df_u[df_u["unidad"] == user_actual]
+    prop_nombre = (
+        row_u["propietario"].values[0] if not row_u.empty else "Propietario"
+    )
+    prop_tel = row_u["telefono"].values[0] if not row_u.empty else ""
+    pct_user = float(row_u["alicuota"].values[0]) if not row_u.empty else 6.0
+
+    col_head, col_out = st.columns([3, 1])
+    with col_head:
+        st.title(f"🏢 {datos_ed['nombre']} - Unidad {user_actual}")
+        st.caption(f"Propietario: {prop_nombre} | Alícuota: {pct_user}%")
+    with col_out:
+        st.write("")
+        if st.button("🚪 Cerrar Sesión", use_container_width=True):
             st.session_state.usuario_logueado = None
             st.session_state.rol_logueado = None
             st.rerun()
 
-# -----------------------------------------------------------------------------
-# 2. VISTA DE PROPIETARIOS
-# -----------------------------------------------------------------------------
-elif st.session_state.rol_logueado == "propietario":
-  user_actual = st.session_state.usuario_logueado
-  datos_ed = obtener_datos_edificio()
-  df_u = obtener_unidades_df()
-  row_u = df_u[df_u["unidad"] == user_actual]
-  prop_nombre = (
-      row_u["propietario"].values[0] if not row_u.empty else "Propietario"
-  )
-  prop_tel = row_u["telefono"].values[0] if not row_u.empty else ""
-  pct_user = float(row_u["alicuota"].values[0]) if not row_u.empty else 6.0
+    st.write("---")
 
-  col_head, col_out = st.columns([3, 1])
-  with col_head:
-    st.title(f"🏢 {datos_ed['nombre']} - Unidad {user_actual}")
-    st.caption(f"Propietario: {prop_nombre} | Alícuota: {pct_user}%")
-  with col_out:
-    st.write("")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
-      cerrar_sesion()
+    t_p1, t_p2, t_p3 = st.tabs(
+        ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
+    )
 
-  st.write("---")
+    with t_p1:
+        st.subheader("📊 Mis Deudas y Recibos")
+        mes_vencido_defecto = obtener_mes_anterior()
+
+# -----------------------------------------------------------------------------
+# 3. VISTA DE ADMINISTRADOR (Si está logueado y es admin)
+# -----------------------------------------------------------------------------
+elif st.session_state.get("rol_logueado") == "admin":
+    with st.sidebar:
+        st.write(f"👤 Usuario: **{st.session_state.usuario_logueado}**")
+        st.write(f"🔑 Rol: **admin**")
+        if st.button("🚪 Cerrar Sesión", type="secondary"):
+            st.session_state.usuario_logueado = None
+            st.session_state.rol_logueado = None
+            st.rerun()
+
+    # Tus 8 pestañas de administración
+    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+        "📊 Gastos Comunes",
+        "🛠️ Gastos No Comunes",
+        "⭐ Cuotas Extras",
+        "💱 Tasas de Cambio",
+        "✅ Validar Pagos",
+        "🏢 Alícuotas y Unidades",
+        "🚨 Morosidad y Recibos",
+        "⚙️ Datos Edificio",
+    ])
 
   t_p1, t_p2, t_p3 = st.tabs(
       ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
