@@ -1539,7 +1539,7 @@ elif st.session_state.rol_logueado == "admin":
       # Buscar si ya existe una tasa guardada para este día exacto
       res_tasa = conn.execute(
           text(
-              "SELECT tasa FROM tasas_cambio WHERE fecha = :f LIMIT"
+              "SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT"
               " 1"  # Ajusta 'tasas_cambio' o 'fecha' si tus nombres difieren
           ),
           {"f": fecha_pago_input},
@@ -1571,7 +1571,7 @@ elif st.session_state.rol_logueado == "admin":
             # Upsert o inserción de la tasa diaria
             conn.execute(
                 text(
-                    "INSERT INTO tasas_cambio (fecha, mes_anio, tasa) VALUES"
+                    "INSERT INTO tasa_cambio (fecha, mes_anio, tasa) VALUES"
                     " (:f, :m, :t) ON CONFLICT (fecha) DO UPDATE SET tasa ="
                     " EXCLUDED.tasa"
                 ),
