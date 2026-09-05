@@ -869,7 +869,7 @@ elif st.session_state.rol_logueado == "admin":
     st.caption(f"{datos_ed['nombre']} | RIF: {datos_ed['rif']}")
   with col_out:
     st.write("")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+    elif st.button("🚪 Cerrar Sesión", use_container_width=True):
       cerrar_sesion()
 
   st.write("---")
