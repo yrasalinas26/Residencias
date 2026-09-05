@@ -1386,7 +1386,6 @@ elif st.session_state.rol_logueado == "admin":
 
         if not gastos_mes_df.empty:
           for _, g_row in gastos_mes_df.iterrows():
-            # Asegurar manejo flexible de nombres de columnas por si vienen en mayúsculas/minúsculas
             g_concepto = (
                 g_row["concepto"]
                 if "concepto" in g_row
@@ -1431,7 +1430,6 @@ elif st.session_state.rol_logueado == "admin":
     st.markdown("### 📢 Recibo General para Grupo / Difusión")
 
     if not gastos_mes_df.empty:
-      # --- CONSTRUCCIÓN DEL RECIBO GENERAL CON ALÍCUOTAS ---
       texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
       texto_ws += f"📄 *RESUMEN DE GASTOS Y COBRANZA - {mes_recibo_gral}*\n\n"
       texto_ws += f"  *Gastos Comunes del Edificio:*\n"
