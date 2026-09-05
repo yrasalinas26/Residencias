@@ -307,7 +307,6 @@ def inicializar_tablas():
 
 inicializar_tablas()
 
-
 # -----------------------------------------------------------------------------
 # FUNCIONES AUTOMÁTICAS DE TASA Y AUXILIARES
 # -----------------------------------------------------------------------------
@@ -653,7 +652,7 @@ elif st.session_state.get("rol_logueado") == "admin":
         "⚙️ Datos Edificio",
     ])
 
-  t_p1, t_p2, t_p3 = st.tabs(
+t_p1, t_p2, t_p3 = st.tabs(
       ["📄 Estado de Cuenta", "💳 Reportar Pago", "📋 Mis Pagos Reportados"]
   )
 
