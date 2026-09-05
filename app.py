@@ -1442,7 +1442,6 @@ with t7:
 
     except Exception as e:
       st.error(f"Error generando los recibos: {e}")
-
   with t8:
     st.subheader("⚙️ Configuración General del Edificio")
     datos_actuales = obtener_datos_edificio()
