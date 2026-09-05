@@ -1319,7 +1319,7 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
-  with t7:
+with t7:
     st.subheader("🚨 Recibos y Envíos a WhatsApp")
     mes_recibo_gral = st.text_input(
         "Periodo del Recibo (AAAA-MM):",
@@ -1375,6 +1375,22 @@ elif st.session_state.rol_logueado == "admin":
         with st.expander(
             f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"
         ):
+          
+          # --- NUEVO: MOSTRAR DESGLOSE DE GASTOS PROPORCIONALES ---
+          st.markdown(f"##### 📊 Desglose de Gastos Comunes (Alícuota: {u_alic}%)")
+          if not gastos_mes_df.empty:
+              df_desglose = gastos_mes_df.copy()
+              # Calculamos la parte proporcional de cada gasto para este apartamento
+              df_desglose["Monto Proporcional"] = df_desglose["monto"] * (u_alic / 100.0)
+              df_desglose = df_desglose.rename(columns={
+                  "concepto": "Concepto de Gasto", 
+                  "monto": "Total Gasto Edificio", 
+                  "Monto Proporcional": f"Apto {u_cod}"
+              })
+              st.dataframe(df_desglose, use_container_width=True, hide_index=True)
+          else:
+              st.info("No hay gastos comunes aprobados para este periodo.")
+
           msg_ind = f"🏢 *{datos_ed['nombre']}*\n"
           msg_ind += f"📄 *AVISO DE COBRO - {mes_recibo_gral}*\n"
           msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
@@ -1404,6 +1420,9 @@ elif st.session_state.rol_logueado == "admin":
               enlace_wa_apt,
               use_container_width=True,
           )
+
+    except Exception as e:
+      st.error(f"Error al generar los recibos: {e}")
 
       st.write("---")
       st.markdown("### 📢 Recibo General para Grupo / Difusión")
