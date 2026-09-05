@@ -1403,144 +1403,149 @@ with t6:
 
 # ... aquí termina el código de tus pestañas anteriores (t1 a t6) ...
 
-    with t7:
-        st.subheader("🚨 Recibos y Envíos a WhatsApp")
-        mes_recibo_gral = st.text_input(
-            "Periodo del Recibo (AAAA-MM):",
-            value=obtener_mes_anterior(),
-            key="input_mes_recibo_gen",
-        )
+with t7:
+    st.subheader("🚨 Recibos y Envíos a WhatsApp")
+    mes_recibo_gral = st.text_input(
+        "Periodo del Recibo (AAAA-MM):",
+        value=obtener_mes_anterior(),
+        key="input_mes_recibo_gen",
+    )
 
-        try:
+    try:
+        with engine.connect() as conn:
+            gastos_mes_df = pd.read_sql(
+                text(
+                    "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
+                    " estatus = 'Aprobado'"
+                ),
+                conn,
+                params={"m": mes_recibo_gral},
+            )
+            total_gastos_comunes = (
+                gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
+            )
+
+            unidades_df = pd.read_sql(
+                text(
+                    "SELECT unidad, alicuota, propietario, telefono FROM unidades"
+                    " ORDER BY unidad ASC"
+                ),
+                conn,
+            )
+
+        st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
+        for _, u_row in unidades_df.iterrows():
+            u_cod = u_row["unidad"]
+            u_prop = u_row["propietario"]
+            u_tel = u_row["telefono"]
+            u_alic = float(u_row["alicuota"])
+
+            cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
+
             with engine.connect() as conn:
-                gastos_mes_df = pd.read_sql(
-                    text(
-                        "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
-                        " estatus = 'Aprobado'"
-                    ),
-                    conn,
-                    params={"m": mes_recibo_gral},
-                )
-                total_gastos_comunes = (
-                    gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
-                )
-
-                unidades_df = pd.read_sql(
-                    text(
-                        "SELECT unidad, alicuota, propietario, telefono FROM unidades"
-                        " ORDER BY unidad ASC"
-                    ),
-                    conn,
+                cargos_apt = (
+                    conn.execute(
+                        text(
+                            "SELECT SUM(monto) FROM cargos_individuales WHERE"
+                            " apartamento = :u AND mes_anio = :m"
+                        ),
+                        {"u": u_cod, "m": mes_recibo_gral},
+                    ).scalar()
+                    or 0.0
                 )
 
-            st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
-            for _, u_row in unidades_df.iterrows():
-                u_cod = u_row["unidad"]
-                u_prop = u_row["propietario"]
-                u_tel = u_row["telefono"]
-                u_alic = float(u_row["alicuota"])
+            total_apt = cuota_comun_apt + float(cargos_apt)
 
-                cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
-
-                with engine.connect() as conn:
-                    cargos_apt = (
-                        conn.execute(
-                            text(
-                                "SELECT SUM(monto) FROM cargos_individuales WHERE"
-                                " apartamento = :u AND mes_anio = :m"
-                            ),
-                            {"u": u_cod, "m": mes_recibo_gral},
-                        ).scalar()
-                        or 0.0
-                    )
-
-                total_apt = cuota_comun_apt + float(cargos_apt)
-
-                with st.expander(
-                    f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"
-                ):
-                    
-                    # --- DESGLOSE VISUAL EN PANTALLA ---
-                    st.markdown(f"##### 📊 Desglose de Gastos Comunes (Alícuota: {u_alic}%)")
-                    if not gastos_mes_df.empty:
-                        df_desglose = gastos_mes_df.copy()
-                        df_desglose["Monto Proporcional"] = df_desglose["monto"] * (u_alic / 100.0)
-                        df_desglose = df_desglose.rename(columns={
-                            "concepto": "Concepto de Gasto", 
-                            "monto": "Total Gasto Edificio", 
-                            "Monto Proporcional": f"Apto {u_cod}"
-                        })
-                        st.dataframe(df_desglose, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No hay gastos comunes aprobados para este periodo.")
-
-                    # --- CONSTRUCCIÓN DEL MENSAJE DE WHATSAPP CON DESGLOSE ---
-                    msg_ind = f"🏢 *{datos_ed['nombre']}*\n"
-                    msg_ind += f"📄 *AVISO DE COBRO - {mes_recibo_gral}*\n"
-                    msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
-                    msg_ind += f"Alícuota: {u_alic}%\n"
-                    msg_ind += f"----------------------------------------\n"
-                    msg_ind += f"📊 *Desglose de Gastos Comunes:*\n"
-                    
-                    if not gastos_mes_df.empty:
-                        for _, g in gastos_mes_df.iterrows():
-                            g_prop = float(g['monto']) * (u_alic / 100.0)
-                            msg_ind += f"• {g['concepto']}: ${g_prop:,.2f}\n"
-                    
-                    msg_ind += f"----------------------------------------\n"
-                    msg_ind += f"• Subtotal Cuota Común: ${cuota_comun_apt:,.2f}\n"
-                    
-                    if float(cargos_apt) > 0:
-                        msg_ind += f"• Cargos Extras / No Comunes: ${float(cargos_apt):,.2f}\n"
-                    
-                    msg_ind += f"----------------------------------------\n"
-                    msg_ind += f"💰 *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
-                    msg_ind += "Por favor realizar su pago y reportarlo en la plataforma. ¡Gracias!"
-
-                    st.text_area(
-                        f"Mensaje WhatsApp Apt {u_cod}:",
-                        msg_ind,
-                        height=200,
-                        key=f"txt_msg_{u_cod}",
-                    )
-                    enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
-                    st.link_button(
-                        f"📲 Enviar WhatsApp a Apt {u_cod} ({u_tel or 'Sin teléfono'})",
-                        enlace_wa_apt,
-                        use_container_width=True,
-                    )
-
-            st.write("---")
-            st.markdown("### 📢 Recibo General para Grupo / Difusión (Incluye Alícuotas)")
-            
-            if not gastos_mes_df.empty:
-                texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
-                texto_ws += f"📄 *RESUMEN DE GASTOS Y DISTRIBUCIÓN - {mes_recibo_gral}*\n\n"
+            with st.expander(
+                f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"
+            ):
                 
-                texto_ws += "*1. RELACIÓN DE GASTOS COMUNES:*\n"
-                for _, g in gastos_mes_df.iterrows():
-                    texto_ws += f"• {g['concepto']}: ${float(g['monto']):,.2f}\n"
-                texto_ws += f"💰 *TOTAL GASTOS:* *${float(total_gastos_comunes):,.2f}*\n\n"
-                
-                texto_ws += "*2. DISTRIBUCIÓN POR ALÍCUOTAS:*\n"
-                for _, u_row in unidades_df.iterrows():
-                    u_cod = u_row["unidad"]
-                    u_alic = float(u_row["alicuota"])
-                    cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
-                    texto_ws += f"• Apt {u_cod} ({u_alic}%): ${cuota_comun_apt:,.2f}\n"
+                # --- DESGLOSE VISUAL EN PANTALLA ---
+                st.markdown(f"##### 📊 Desglose de Gastos Comunes (Alícuota: {u_alic}%)")
+                if not gastos_mes_df.empty:
+                    df_desglose = gastos_mes_df.copy()
+                    df_desglose["Monto Proporcional"] = df_desglose["monto"] * (u_alic / 100.0)
+                    df_desglose = df_desglose.rename(columns={
+                        "concepto": "Concepto de Gasto", 
+                        "monto": "Total Gasto Edificio", 
+                        "Monto Proporcional": f"Apto {u_cod}"
+                    })
+                    st.dataframe(df_desglose, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No hay gastos comunes aprobados para este periodo.")
 
-                enlace_wa_general = (
-                    f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
-                )
+                # --- CONSTRUCCIÓN DEL MENSAJE DE WHATSAPP CON DESGLOSE ---
+                msg_ind = f"🏢 *{datos_ed['nombre']}*\n"
+                msg_ind += f"📄 *AVISO DE COBRO - {mes_recibo_gral}*\n"
+                msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
+                msg_ind += f"Alícuota: {u_alic}%\n"
+                msg_ind += f"----------------------------------------\n"
+                msg_ind += f"📊 *Desglose de Gastos Comunes:*\n"
                 
-                st.text_area("Vista previa mensaje general:", texto_ws, height=200, key="txt_general_prev")
+                if not gastos_mes_df.empty:
+                    for _, g in gastos_mes_df.iterrows():
+                        g_prop = float(g['monto']) * (u_alic / 100.0)
+                        msg_ind += f"• {g['concepto']}: ${g_prop:,.2f}\n"
+                
+                msg_ind += f"----------------------------------------\n"
+                msg_ind += f"• Subtotal Cuota Común: ${cuota_comun_apt:,.2f}\n"
+                
+                if float(cargos_apt) > 0:
+                    msg_ind += f"• Cargos Extras / No Comunes: ${float(cargos_apt):,.2f}\n"
+                
+                msg_ind += f"----------------------------------------\n"
+                msg_ind += f"💰 *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
+                msg_ind += "Por favor realizar su pago y reportarlo en la plataforma. ¡Gracias!"
+
+                st.text_area(
+                    f"Mensaje WhatsApp Apt {u_cod}:",
+                    msg_ind,
+                    height=200,
+                    key=f"txt_msg_{u_cod}",
+                )
+                enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
                 st.link_button(
-                    "📲 Abrir WhatsApp con el Recibo General y Alícuotas",
-                    enlace_wa_general,
+                    f"📲 Enviar WhatsApp a Apt {u_cod} ({u_tel or 'Sin teléfono'})",
+                    enlace_wa_apt,
                     use_container_width=True,
                 )
-            else:
-                st.info("No hay gastos registrados para generar el recibo general.")
 
-        except Exception as e:
-            st.error(f"Error generando los recibos: {e}")
+        st.write("---")
+        st.markdown("### 📢 Recibo General para Grupo / Difusión (Incluye Alícuotas)")
+        
+        if not gastos_mes_df.empty:
+            texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
+            texto_ws += f"📄 *RESUMEN DE GASTOS Y DISTRIBUCIÓN - {mes_recibo_gral}*\n\n"
+            
+            texto_ws += "*1. RELACIÓN DE GASTOS COMUNES:*\n"
+            for _, g in gastos_mes_df.iterrows():
+                texto_ws += f"• {g['concepto']}: ${float(g['monto']):,.2f}\n"
+            texto_ws += f"💰 *TOTAL GASTOS:* *${float(total_gastos_comunes):,.2f}*\n\n"
+            
+            texto_ws += "*2. DISTRIBUCIÓN POR ALÍCUOTAS:*\n"
+            for _, u_row in unidades_df.iterrows():
+                u_cod = u_row["unidad"]
+                u_alic = float(u_row["alicuota"])
+                cuota_comun_apt = float(total_gastos_comunes) * (u_alic / 100.0)
+                texto_ws += f"• Apt {u_cod} ({u_alic}%): ${cuota_comun_apt:,.2f}\n"
+
+            enlace_wa_general = (
+                f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
+            )
+            
+            st.text_area("Vista previa mensaje general:", texto_ws, height=200, key="txt_general_prev")
+            st.link_button(
+                "📲 Abrir WhatsApp con el Recibo General y Alícuotas",
+                enlace_wa_general,
+                use_container_width=True,
+            )
+        else:
+            st.info("No hay gastos registrados para generar el recibo general.")
+
+    except Exception as e:
+        st.error(f"Error generando los recibos: {e}")
+
+with t8:
+    st.subheader("⚙️ Configuración y Datos del Edificio")
+    # Aquí puedes colocar el contenido de la pestaña 8 de administración
+    st.info("Módulo de configuración general del edificio.")
