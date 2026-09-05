@@ -860,7 +860,7 @@ if st.session_state.get("rol_logueado")=="admin":
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRACIÓN
 # -----------------------------------------------------------------------------
-elif st.session_state.rol_logueado == "admin":
+if st.session_state.rol_logueado == "admin":
   datos_ed = obtener_datos_edificio()
 
   col_head, col_out = st.columns([3, 1])
@@ -869,7 +869,7 @@ elif st.session_state.rol_logueado == "admin":
     st.caption(f"{datos_ed['nombre']} | RIF: {datos_ed['rif']}")
   with col_out:
     st.write("")
-    elif st.button("🚪 Cerrar Sesión", use_container_width=True):
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
       cerrar_sesion()
 
   st.write("---")
