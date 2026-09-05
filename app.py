@@ -950,7 +950,7 @@ elif st.session_state.rol_logueado == "propietario":
             st.success(
                 f"✅ Pago reportado con éxito. Equivalente calculado:"
                 f" ${monto_en_usd:,.2f} USD (Tasa: {tasa_usada:,.4f}). Queda en"
-                " espera de verificación."/
+                " espera de verificación."
             )
             st.rerun()
           except Exception as e:
