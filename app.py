@@ -867,7 +867,7 @@ with t_p2:
           except Exception as e:
             st.error(f"Error al registrar pago: {e}")
 
-    with t_p3:
+with t_p3:
     st.subheader("📋 Historial de Mis Reportes")
     try:
       with engine.connect() as conn:
