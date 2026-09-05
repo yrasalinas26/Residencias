@@ -1545,41 +1545,9 @@ with t7:
         st.error(f"Error generando los recibos: {e}")
 
 with t8:
-    st.subheader("⚙️ Configuración y Datos del Edificio")
+    st.write("ESTO ES UNA PRUEBA")
     
-    try:
-        datos_actuales = obtener_datos_edificio()
-        
-        with st.form("form_datos_edificio"):
-            col_ed1, col_ed2 = st.columns(2)
-            with col_ed1:
-                nuevo_nombre = st.text_input("Nombre del Edificio / Condominio", value=datos_actuales.get("nombre", ""))
-                nuevo_rif = st.text_input("RIF", value=datos_actuales.get("rif", ""))
-            with col_ed2:
-                nuevo_direccion = st.text_input("Dirección", value=datos_actuales.get("direccion", ""))
-                nuevo_banco = st.text_input("Datos Bancarios / Pago Móvil", value=datos_actuales.get("banco", ""))
-                
-            btn_guardar_edificio = st.form_submit_button("Actualizar Datos del Edificio", type="primary")
-            
-            if btn_guardar_edificio:
-                with engine.connect() as conn:
-                    # Verifica si la tabla tiene un registro o usa una estructura de clave-valor / ID fijo
-                    conn.execute(
-                        text("""
-                            UPDATE edificio_config 
-                            SET nombre = :n, rif = :r, direccion = :d, banco = :b 
-                            WHERE id = 1
-                        """),
-                        {
-                            "n": nuevo_nombre,
-                            "r": nuevo_rif,
-                            "d": nuevo_direccion,
-                            "b": nuevo_banco
-                        }
-                    )
-                    conn.commit()
-                st.success("✅ Los datos del edificio han sido actualizados exitosamente.")
-                st.rerun()
-                
-    except Exception as e:
-        st.error(f"Error al cargar o actualizar la configuración del edificio: {e}")
+    # Comenta temporalmente todo lo demás poniendo un '#' al inicio de cada línea:
+    # try:
+    #     datos_actuales = obtener_datos_edificio()
+    # ...
