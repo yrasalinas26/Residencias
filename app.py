@@ -1008,6 +1008,7 @@ elif st.session_state.rol_logueado == "admin":
   ])
 with t7:
   renderizar_recibos()
+  
   with t1:
     st.subheader("➕ Cargar Nuevo Gasto Común")
     with st.form("form_gasto"):
