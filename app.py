@@ -691,54 +691,6 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
   doc.build(story)
   buffer.seek(0)
   return buffer
-# -----------------------------------------------------------------------------
-# 1. PORTAL DE ACCESO
-# -----------------------------------------------------------------------------
-if not st.session_state.usuario_logueado:
-  st.markdown(
-      "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
-      unsafe_allow_html=True,
-  )
-  st.markdown(
-      "<p style='text-align: center; color: gray;'>Ingresa tus credenciales"
-      " para continuar.</p>",
-      unsafe_allow_html=True,
-  )
-
-  if error_conexion:
-    st.error(f"⚠️ Error de conexión: {error_conexion}")
-
-  with st.form("form_login"):
-    usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
-    clave_input = st.text_input("Contraseña", type="password").strip()
-    bot_login = st.form_submit_button(
-        "Ingresar", type="primary", use_container_width=True
-    )
-
-    if bot_login:
-      if not usuario_input or not clave_input:
-        st.error("Por favor completa los campos.")
-      elif not engine:
-        st.error("Base de datos no disponible.")
-      else:
-        try:
-          with engine.connect() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT usuario, clave, rol FROM usuarios WHERE"
-                    " LOWER(usuario) = LOWER(:u)"
-                ),
-                {"u": usuario_input},
-            ).fetchone()
-
-          if row and row[1] == clave_input:
-            st.session_state.usuario_logueado = row[0]
-            st.session_state.rol_logueado = row[2]
-            st.rerun()
-          else:
-            st.error("❌ Credenciales incorrectas.")
-        except Exception as e:
-          st.error(f"Error al ingresar: {e}")
 
 # -----------------------------------------------------------------------------
 # 1. PORTAL DE ACCESO
