@@ -998,10 +998,6 @@ t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
     "⚙️ Datos Edificio",
     "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
 ])
-
-# Aquí mismo activamos la pestaña 7 usando la función que hicimos antes:
-with t7:
-  renderizar_recibos()
   
   with t1:
     st.subheader("➕ Cargar Nuevo Gasto Común")
