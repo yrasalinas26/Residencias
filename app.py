@@ -1000,47 +1000,47 @@ t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
     "⚙️ Datos Edificio",
     "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
 ])
-
-with t1: 
-  st.subheader("➕ Cargar Nuevo Gasto Común")
-  with st.form("form_gasto"):
-      col_g1, col_g2 = st.columns(2)
-      with col_g1:
-        mes = st.text_input(
-            "Mes / Año del Gasto (AAAA-MM)", value=obtener_mes_anterior()
-        )
-        concepto = st.text_input("Descripción del Gasto Común")
-      with col_g2:
-        proveedor = st.text_input("Proveedor", value="N/A")
-        monto = st.number_input("Monto Total ($)", min_value=0.01, step=0.01)
-
-      btn = st.form_submit_button(
-          "Cargar para Previsualizar/Aprobar", type="primary"
-      )
-
-      if btn and concepto:
-        try:
-          with engine.connect() as conn:
-            conn.execute(
-                text("""
-                                INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha, tipo, proveedor) 
-                                VALUES (:m, :m, :c, :mo, 'Pendiente', CURRENT_DATE, 'Comun', :p)
-                            """),
-                {
-                    "m": mes,
-                    "c": concepto,
-                    "mo": monto,
-                    "p": proveedor if proveedor.strip() else "N/A",
-                },
+with t1:
+    st.subheader("➕ Cargar Nuevo Gasto Común")
+    with st.form("form_gasto"):
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            mes = st.text_input(
+                "Mes / Año del Gasto (AAAA-MM)", value=obtener_mes_anterior()
             )
-            conn.commit()
-          st.success("Gasto guardado en estado pendiente de aprobación.")
-          st.rerun()
-        except Exception as e:
-          st.error(f"Error registrando gasto: {e}")
+            concepto = st.text_input("Descripción del Gasto Común")
+        with col_g2:
+            proveedor = st.text_input("Proveedor", value="N/A")
+            monto = st.number_input("Monto Total ($)", min_value=0.01, step=0.01)
 
-st.write("---")
-st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
+        btn = st.form_submit_button(
+            "Cargar para Previsualizar/Aprobar", type="primary"
+        )
+
+        if btn and concepto:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(
+                        text("""
+                            INSERT INTO gastos (periodo, mes_anio, concepto, monto, estatus, fecha, tipo, proveedor) 
+                            VALUES (:m, :m, :c, :mo, 'Pendiente', CURRENT_DATE, 'Comun', :p)
+                        """),
+                        {
+                            "m": mes,
+                            "c": concepto,
+                            "mo": monto,
+                            "p": proveedor if proveedor.strip() else "N/A",
+                        },
+                    )
+                    conn.commit()
+                st.success("Gasto guardado en estado pendiente de aprobación.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error registrando gasto: {e}")
+
+    st.write("---")
+    st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
+    
     mes_filtro = st.text_input(
         "Filtrar gastos por periodo (AAAA-MM):",
         value=obtener_mes_anterior(),
@@ -1048,73 +1048,68 @@ st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
     )
 
     try:
-      with engine.connect() as conn:
-        df_gastos_pendientes = pd.read_sql(
-            text(
-                "SELECT id, concepto, monto, estatus, mes_anio FROM gastos WHERE"
-                " mes_anio = :m ORDER BY id DESC"
-            ),
-            conn,
-            params={"m": mes_filtro},
-        )
-
-      if df_gastos_pendientes.empty:
-        st.info(f"No hay gastos registrados para el periodo {mes_filtro}.")
-      else:
-        for _, r_gasto in df_gastos_pendientes.iterrows():
-          c_detalles, c_acciones = st.columns([3, 2])
-          with c_detalles:
-            badge_estatus = (
-                "🟡 Pendiente"
-                if r_gasto["estatus"] == "Pendiente"
-                else "🟢 Aprobado"
-            )
-            st.markdown(
-                f"**Concepto:** {r_gasto['concepto']} | **Monto:**"
-                f" ${float(r_gasto['monto']):,.2f} | **Estatus:**"
-                f" {badge_estatus}"
+        with engine.connect() as conn:
+            df_gastos_pendientes = pd.read_sql(
+                text(
+                    "SELECT id, concepto, monto, estatus, mes_anio FROM gastos WHERE mes_anio = :m ORDER BY id DESC"
+                ),
+                conn,
+                params={"m": mes_filtro},
             )
 
-          with c_acciones:
-            btn_col1, btn_col2 = st.columns(2)
-            with btn_col1:
-              if r_gasto["estatus"] == "Pendiente":
-                if st.button(
-                    "✅ Aprobar",
-                    key=f"app_gasto_{r_gasto['id']}",
-                    type="primary",
-                ):
-                  with engine.connect() as conn:
-                    conn.execute(
-                        text(
-                            "UPDATE gastos SET estatus = 'Aprobado' WHERE id ="
-                            " :id"
-                        ),
-                        {"id": r_gasto["id"]},
+        if df_gastos_pendientes.empty:
+            st.info(f"No hay gastos registrados para el periodo {mes_filtro}.")
+        else:
+            for _, r_gasto in df_gastos_pendientes.iterrows():
+                c_detalles, c_acciones = st.columns([3, 2])
+                with c_detalles:
+                    badge_estatus = (
+                        "🟡 Pendiente"
+                        if r_gasto["estatus"] == "Pendiente"
+                        else "🟢 Aprobado"
                     )
-                    conn.commit()
-                  st.success("Gasto aprobado.")
-                  st.rerun()
-            with btn_col2:
-              if st.button(
-                  "❌ Eliminar",
-                  key=f"del_gasto_{r_gasto['id']}",
-                  type="secondary",
-              ):
-                with engine.connect() as conn:
-                  conn.execute(
-                      text("DELETE FROM gastos WHERE id = :id"),
-                      {"id": r_gasto["id"]},
-                  )
-                  conn.commit()
-                st.success("Gasto eliminado.")
-                st.rerun()
-          st.markdown(
-              "<hr style='margin: 5px 0;'>", unsafe_allow_html=True
-          )
+                    st.markdown(
+                        f"**Concepto:** {r_gasto['concepto']} | **Monto:** ${float(r_gasto['monto']):,.2f} | **Estatus:** {badge_estatus}"
+                    )
+
+                with c_acciones:
+                    btn_col1, btn_col2 = st.columns(2)
+                    with btn_col1:
+                        if r_gasto["estatus"] == "Pendiente":
+                            if st.button(
+                                "✅ Aprobar",
+                                key=f"app_gasto_{r_gasto['id']}",
+                                type="primary",
+                            ):
+                                with engine.connect() as conn:
+                                    conn.execute(
+                                        text("UPDATE gastos SET estatus = 'Aprobado' WHERE id = :id"),
+                                        {"id": r_gasto["id"]},
+                                    )
+                                    conn.commit()
+                                st.success("Gasto aprobado.")
+                                st.rerun()
+                    with btn_col2:
+                        if st.button(
+                            "❌ Eliminar",
+                            key=f"del_gasto_{r_gasto['id']}",
+                            type="secondary",
+                        ):
+                            with engine.connect() as conn:
+                                conn.execute(
+                                    text("DELETE FROM gastos WHERE id = :id"),
+                                    {"id": r_gasto["id"]},
+                                )
+                                conn.commit()
+                            st.success("Gasto eliminado.")
+                            st.rerun()
+                st.markdown(
+                    "<hr style='margin: 5px 0;'>", unsafe_allow_html=True
+                )
 
     except Exception as e:
-      st.error(f"Error consultando gastos: {e}")
+        st.error(f"Error consultando gastos: {e}")
+
 
 with t2:
     st.subheader("🛠️ Cargar Gasto No Común (Cargo Individual)")
