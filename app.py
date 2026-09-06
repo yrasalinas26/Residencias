@@ -972,10 +972,44 @@ if rol_actual == "admin":
         except Exception as e:
             st.error(f"Error al cargar pagos reportados: {e}")
 
-    with t6:
-        st.subheader("🏢 Configuración de Alícuotas y Unidades")
+with t6:
+        st.subheader("🏢 Configuración de Alícuotas, Unidades y Propietarios")
         st.dataframe(obtener_unidades_df(), use_container_width=True)
 
+        st.markdown("---")
+        st.markdown("### 🔑 Restablecer Contraseña de Residente")
+        st.info("Si un propietario olvidó su contraseña, puedes restablecerla a su valor por defecto (`1234`) seleccionando su unidad.")
+
+        try:
+            with engine.connect() as conn:
+                unidades_lista = pd.read_sql(
+                    text("SELECT unidad, propietario FROM unidades ORDER BY unidad ASC"),
+                    conn
+                )
+            
+            # Crear un diccionario o lista legible para el selectbox
+            opciones_unidades = [f"Apt {row['unidad']} - {row['propietario']}" for _, row in unidades_lista.iterrows()]
+            dict_unidades = {f"Apt {row['unidad']} - {row['propietario']}": row['unidad'] for _, row in unidades_lista.iterrows()}
+
+            with st.form("form_reset_clave"):
+                unidad_seleccionada = st.selectbox("Selecciona la Unidad / Propietario:", opciones_unidades)
+                btn_reset = st.form_submit_button("🔄 Restablecer Clave a '1234'", type="primary")
+
+                if btn_reset:
+                    apt_codigo = dict_unidades[unidad_seleccionada]
+                    try:
+                        with engine.connect() as conn:
+                            conn.execute(
+                                text("UPDATE usuarios SET clave = '1234' WHERE usuario = :u"),
+                                {"u": apt_codigo}
+                            )
+                            conn.commit()
+                        st.success(f"✅ La contraseña de la unidad **{apt_codigo}** ha sido restablecida exitosamente a **1234**.")
+                    except Exception as e:
+                        st.error(f"Error al restablecer la contraseña: {e}")
+
+        except Exception as e:
+            st.error(f"Error cargando la lista de unidades para restablecer claves: {e}")
     with t7:
         st.subheader("🚨 Morosidad y Recibos")
         renderizar_recibos()
