@@ -21,6 +21,7 @@ def renderizar_recibos():
 
   try:
     with engine.connect() as conn:
+      # Consulta robusta asegurando nombres de columnas
       gastos_mes_df = pd.read_sql(
           text(
               "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
@@ -41,6 +42,7 @@ def renderizar_recibos():
           conn,
       )
 
+    # Diagnóstico visual rápido en pantalla para verificar que los gastos se leyeron
     if gastos_mes_df.empty:
       st.warning(
           f"⚠️ No se encontraron gastos aprobados para el periodo"
@@ -77,6 +79,7 @@ def renderizar_recibos():
       total_apt = cuota_comun_apt + float(cargos_apt)
 
       with st.expander(f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"):
+        # --- MENSAJE INDIVIDUAL DESGLOSADO ---
         msg_ind = f"  *{datos_ed['nombre']}*\n"
         msg_ind += f"  *AVISO DE COBRO - {mes_recibo_gral}*\n"
         msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
