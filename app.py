@@ -693,8 +693,6 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
   doc.build(story)
   buffer.seek(0)
   return buffer
-
-
 # -----------------------------------------------------------------------------
 # 1. PORTAL DE ACCESO
 # -----------------------------------------------------------------------------
@@ -745,7 +743,7 @@ if not st.session_state.usuario_logueado:
           st.error(f"Error al ingresar: {e}")
 
 # -----------------------------------------------------------------------------
-# 2. CONTROL DE VISTAS SEGÚN EL ROL (Usuario Logueado)
+# 2. PANEL SEGÚN ROL (Usuario Logueado)
 # -----------------------------------------------------------------------------
 else:
   if st.session_state.rol_logueado == "admin":
@@ -777,26 +775,14 @@ else:
     with t7:
       renderizar_recibos()
 
-    # (Aquí puedes mantener el resto de las pestañas t1, t2, t3, etc. si ya las tienes)
-
   elif st.session_state.rol_logueado == "propietario":
-    # Vista específica para propietarios (puedes personalizarla luego)
     st.title("👤 Panel de Propietario")
     st.info(f"Bienvenido a tu portal, {st.session_state.usuario_logueado}")
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
       cerrar_sesion()
 
   else:
-    # Cualquier otro caso por seguridad
     st.warning("Rol no reconocido en el sistema.")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
-      cerrar_sesion()
-      
-
-    # (Aquí abajo puedes mantener el resto de las pestañas t1, t2, t3, etc. si ya las tienes armadas)
-
-  else:
-    st.info(f"Bienvenido, {st.session_state.usuario_logueado}")
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
       cerrar_sesion()
 
