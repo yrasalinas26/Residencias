@@ -795,21 +795,30 @@ else:
         st.session_state.pop("rol_logueado", None)
         st.rerun()
 # -----------------------------------------------------------------------------
-# 3. VISTA DE ADMINISTRACIÓN
-# -----------------------------------------------------------------------------
-st.write("---")
+# CONTROL DE VISTAS SEGÚN EL ROL DEL USUARIO
+# =============================================================================
 
-t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
-    "📊 Gastos Comunes",
-    "🛠️ Gastos No Comunes",
-    "⭐ Cuotas Extras",
-    "💱 Tasas de Cambio",
-    "✅ Validar Pagos",
-    "🏢 Alícuotas y Unidades",
-    "🚨 Morosidad y Recibos",
-    "⚙️ Datos Edificio",
-    "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
-])
+rol_actual = st.session_state.get("rol_logueado", "propietario")
+usuario_actual = st.session_state.get("usuario_logueado", "")
+
+if rol_actual == "admin":
+    # -------------------------------------------------------------------------
+    # VISTA DE ADMINISTRACIÓN (Tus 9 pestañas)
+    # -------------------------------------------------------------------------
+    st.write("---")
+    st.markdown("### 👑 Panel de Control de Administración")
+
+    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
+        "📊 Gastos Comunes",
+        "🛠️ Gastos No Comunes",
+        "⭐ Cuotas Extras",
+        "💱 Tasas de Cambio",
+        "✅ Validar Pagos",
+        "🏢 Alícuotas y Unidades",
+        "🚨 Morosidad y Recibos",
+        "⚙️ Datos Edificio",
+        "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
+    ])
 with t1:
     st.subheader("➕ Cargar Nuevo Gasto Común")
     with st.form("form_gasto"):
