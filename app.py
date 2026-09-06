@@ -1363,18 +1363,17 @@ else:
             st.error(f"Error cargando la conciliación del propietario: {e}")
 
                         with st.expander(f"Reporte #{mp['id']} - {mp['mes_anio']} - ${float(mp['monto_usd']):,.2f} USD ({badge_mp})"):
-                            st.markdown(f"""
-                            - **Tipo de Pago:** {mp['tipo_pago']}
-                            - **Monto Original:** {float(mp['monto_original']):,.2f} {mp['moneda']}
-                            - **Equivalente en USD:** ${float(mp['monto_usd']):,.2f}
-                            - **Método:** {mp['metodo_pago']} | **Referencia:** {mp['referencia']}
-                            - **Fecha del Pago:** {mp['fecha_pago']}
-                            - **Estatus Actual:** **{mp['estatus']}**
-                            """)
+            st.markdown(f"""
+            - **Tipo de Pago:** {mp['tipo_pago']}
+            - **Monto Original:** {float(mp['monto_original']):,.2f} {mp['moneda']}
+            - **Equivalente en USD:** ${float(mp['monto_usd']):,.2f}
+            - **Método:** {mp['metodo_pago']} | **Referencia:** {mp['referencia']}
+            - **Fecha del Pago:** {mp['fecha_pago']}
+            - **Estatus Actual:** **{mp['estatus']}**
+            """)
 
-        except Exception as e:
-            st.error(f"Error cargando la conciliación del propietario: {e}")
-
+    except Exception as e:
+        st.error(f"Error cargando la conciliación del propietario: {e}")
     with t_p4:
         st.subheader("📞 Información de Contacto y Avisos de la Comunidad")
         datos_ed_p = obtener_datos_edificio()
