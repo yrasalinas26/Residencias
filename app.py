@@ -1308,70 +1308,79 @@ with t7:
     except Exception as e:
       st.error(f"Error cargando cuotas extraordinarias: {e}")
 
-  with t4:
-    st.subheader(
-        "💱 Actualización Automática y Registro de Tasas de Cambio (BCV)"
-    )
-    st.info(
-        f"ℹ️ La tasa actual obtenida automáticamente hoy es:"
-        f" **{tasa_del_dia_auto:,.4f} VES/USD**."
-    )
+    with t4:
+      st.subheader("💱 Registro Manual de Tasas de Cambio (BCV)")
+        
+        # 1. Consultar la última tasa ingresada en la base de datos para usarla como referencia
+        ultima_tasa_manual = 1.0
+        try:
+            with engine.connect() as conn:
+                res = conn.execute(
+                    text("SELECT tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 1")
+                ).scalar()
+                if res is not None:
+                    ultima_tasa_manual = float(res)
+        except Exception:
+            pass # Si la tabla está vacía o hay error, se queda en 1.0 o un valor base
 
-    with st.form("form_tasa"):
-      c_t1, c_t2 = st.columns(2)
-      with c_t1:
-        fecha_tasa = st.date_input("Fecha de la Tasa", datetime.now())
-      with c_t2:
-        valor_tasa = st.number_input(
-            "Valor del Dólar (VES / USD)",
-            value=float(tasa_del_dia_auto),
-            min_value=0.01,
-            step=0.0001,
-            format="%.4f",
+        st.info(
+            f"ℹ️ La última tasa registrada en el sistema es: "
+            f"**{ultima_tasa_manual:,.4f} VES/USD**."
         )
 
-      btn_tasa = st.form_submit_button(
-          "Guardar / Forzar Tasa para esta Fecha", type="primary"
-      )
+        with st.form("form_tasa"):
+            c_t1, c_t2 = st.columns(2)
+            with c_t1:
+                fecha_tasa = st.date_input("Fecha de la Tasa", datetime.now())
+            with c_t2:
+                valor_tasa = st.number_input(
+                    "Valor del Dólar (VES / USD)",
+                    value=ultima_tasa_manual,  # Se rellena automáticamente con la última tasa guardada
+                    min_value=0.01,
+                    step=0.0001,
+                    format="%.4f",
+                )
 
-      if btn_tasa:
-        try:
-          with engine.connect() as conn:
-            conn.execute(
-                text("""
+            btn_tasa = st.form_submit_button(
+                "Guardar / Forzar Tasa para esta Fecha", type="primary"
+            )
+
+            if btn_tasa:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("""
                                 INSERT INTO tasa_cambio (fecha, tasa)
                                 VALUES (:f, :t)
                                 ON CONFLICT (fecha) DO UPDATE SET tasa = EXCLUDED.tasa
                             """),
-                {"f": fecha_tasa, "t": valor_tasa},
-            )
-            conn.commit()
-          st.success(
-              f"✅ Tasa registrada correctamente para el {fecha_tasa}:"
-              f" {valor_tasa:,.4f} VES/USD."
-          )
-          st.rerun()
+                            {"f": fecha_tasa, "t": valor_tasa},
+                        )
+                        conn.commit()
+                    st.success(
+                        f"✅ Tasa registrada correctamente para el {fecha_tasa}: "
+                        f"{valor_tasa:,.4f} VES/USD."
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error guardando la tasa: {e}")
+
+        st.write("---")
+        st.subheader("📋 Historial de Tasas Registradas en Base de Datos")
+        try:
+            with engine.connect() as conn:
+                df_tasas = pd.read_sql(
+                    text(
+                        "SELECT fecha, tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 30"
+                    ),
+                    conn,
+                )
+            if df_tasas.empty:
+                st.info("No hay tasas de cambio registradas todavía.")
+            else:
+                st.dataframe(df_tasas, use_container_width=True)
         except Exception as e:
-          st.error(f"Error guardando la tasa: {e}")
-
-    st.write("---")
-    st.subheader("📋 Historial de Tasas Registradas en Base de Datos")
-    try:
-      with engine.connect() as conn:
-        df_tasas = pd.read_sql(
-            text(
-                "SELECT fecha, tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT"
-                " 30"
-            ),
-            conn,
-        )
-      if df_tasas.empty:
-        st.info("No hay tasas de cambio registradas todavía.")
-      else:
-        st.dataframe(df_tasas, use_container_width=True)
-    except Exception as e:
-      st.error(f"Error cargando tasas: {e}")
-
+            st.error(f"Error cargando tasas: {e}")
   with t5:
     st.subheader("✅ Conciliación de Pagos Reportados")
     try:
