@@ -1082,9 +1082,10 @@ else:
     # -------------------------------------------------------------------------
     st.markdown(f"### 🏠 Portal del Propietario - Unidad {usuario_actual}")
 
-    t_p1, t_p2, t_p3 = st.tabs([
+    t_p1, t_p2, t_p3, t_p4 = st.tabs([
         "📄 Mis Recibos y Estado de Cuenta",
         "💳 Reportar Pago",
+        "📊 Mis Pagos y Conciliación",
         "📞 Contacto y Avisos"
     ])
 
@@ -1206,6 +1207,81 @@ else:
                         st.error(f"Error al reportar pago: {e}")
 
     with t_p3:
+        st.subheader("📊 Historial y Conciliación de Mis Pagos")
+        st.info("Revisa el estatus de tus reportes de pago y compara el total abonado frente a tus deudas registradas por periodo.")
+
+        periodo_concil_prop = st.text_input("Periodo a conciliar (AAAA-MM):", value=obtener_mes_anterior(), key="periodo_conciliacion_prop")
+
+        try:
+            with engine.connect() as conn:
+                # 1. Calcular deuda total del propietario para el periodo (Cuota común + cargos individuales)
+                u_row_c = conn.execute(
+                    text("SELECT alicuota FROM unidades WHERE unidad = :u"),
+                    {"u": usuario_actual}
+                ).fetchone()
+                
+                u_alic_c = float(u_row_c[0]) / 100.0 if u_row_c else 0.0
+
+                g_tot_c = conn.execute(
+                    text("SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    {"m": periodo_concil_prop}
+                ).scalar() or 0.0
+
+                c_ind_c = conn.execute(
+                    text("SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :apt AND mes_anio = :m"),
+                    {"apt": usuario_actual, "m": periodo_concil_prop}
+                ).scalar() or 0.0
+
+                deuda_total_periodo = (g_tot_c * u_alic_c) + c_ind_c
+
+                # 2. Calcular pagos aprobados del propietario para el periodo
+                pagos_aprobados_sum = conn.execute(
+                    text("SELECT SUM(monto_usd) FROM pagos_reportados WHERE apartamento = :apt AND mes_anio = :m AND estatus = 'Aprobado'"),
+                    {"apt": usuario_actual, "m": periodo_concil_prop}
+                ).scalar() or 0.0
+
+                balance_pendiente = deuda_total_periodo - pagos_aprobados_sum
+
+                # Métricas visuales
+                col_mc1, col_mc2, col_mc3 = st.columns(3)
+                col_mc1.metric("Deuda del Periodo", f"${deuda_total_periodo:,.2f}")
+                col_mc2.metric("Pagos Validados", f"${pagos_aprobados_sum:,.2f}")
+                col_mc3.metric("Saldo Pendiente", f"${balance_pendiente:,.2f}", delta_color="inverse" if balance_pendiente > 0 else "off")
+
+                st.markdown("---")
+                st.subheader("📋 Historial de Reportes de Pago Realizados")
+                
+                df_mis_pagos = pd.read_sql(
+                    text("SELECT id, tipo_pago, mes_anio, monto_original, moneda, monto_usd, metodo_pago, referencia, fecha_pago, estatus FROM pagos_reportados WHERE apartamento = :apt ORDER BY id DESC"),
+                    conn,
+                    params={"apt": usuario_actual}
+                )
+
+                if df_mis_pagos.empty:
+                    st.info("No has registrado reportes de pago en la plataforma.")
+                else:
+                    for _, mp in df_mis_pagos.iterrows():
+                        if mp["estatus"] == "Aprobado":
+                            badge_mp = "🟢 Aprobado"
+                        elif mp["estatus"] == "Pendiente":
+                            badge_mp = "🟡 Pendiente de Validación"
+                        else:
+                            badge_mp = "🔴 Rechazado"
+
+                        with st.expander(f"Reporte #{mp['id']} - {mp['mes_anio']} - ${float(mp['monto_usd']):,.2f} USD ({badge_mp})"):
+                            st.markdown(f"""
+                            - **Tipo de Pago:** {mp['tipo_pago']}
+                            - **Monto Original:** {float(mp['monto_original']):,.2f} {mp['moneda']}
+                            - **Equivalente en USD:** ${float(mp['monto_usd']):,.2f}
+                            - **Método:** {mp['metodo_pago']} | **Referencia:** {mp['referencia']}
+                            - **Fecha del Pago:** {mp['fecha_pago']}
+                            - **Estatus Actual:** **{mp['estatus']}**
+                            """)
+
+        except Exception as e:
+            st.error(f"Error cargando la conciliación del propietario: {e}")
+
+    with t_p4:
         st.subheader("📞 Información de Contacto y Avisos de la Comunidad")
         datos_ed_p = obtener_datos_edificio()
         st.markdown(f"""
