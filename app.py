@@ -481,9 +481,7 @@ def inicializar_tablas():
   except Exception:
     pass
 
-
 inicializar_tablas()
-
 
 # -----------------------------------------------------------------------------
 # FUNCIONES AUTOMÁTICAS DE TASA Y AUXILIARES
@@ -743,48 +741,102 @@ if not st.session_state.usuario_logueado:
           st.error(f"Error al ingresar: {e}")
 
 # -----------------------------------------------------------------------------
-# 2. PANEL SEGÚN ROL (Usuario Logueado)
+# 1. PORTAL DE ACCESO
+# -----------------------------------------------------------------------------
+if not st.session_state.usuario_logueado:
+  st.markdown(
+      "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
+      unsafe_allow_html=True,
+  )
+  st.markdown(
+      "<p style='text-align: center; color: gray;'>Ingresa tus credenciales"
+      " para continuar.</p>",
+      unsafe_allow_html=True,
+  )
+
+  if error_conexion:
+    st.error(f"⚠️ Error de conexión: {error_conexion}")
+
+  with st.form("form_login"):
+    usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
+    clave_input = st.text_input("Contraseña", type="password").strip()
+    bot_login = st.form_submit_button(
+        "Ingresar", type="primary", use_container_width=True
+    )
+
+    if bot_login:
+      if not usuario_input or not clave_input:
+        st.error("Por favor completa los campos.")
+      elif not engine:
+        st.error("Base de datos no disponible.")
+      else:
+        try:
+          with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT usuario, clave, rol FROM usuarios WHERE"
+                    " LOWER(usuario) = LOWER(:u)"
+                ),
+                {"u": usuario_input},
+            ).fetchone()
+
+          if row and row[1] == clave_input:
+            st.session_state.usuario_logueado = row[0]
+            st.session_state.rol_logueado = row[2]
+            st.rerun()
+          else:
+            st.error("❌ Credenciales incorrectas.")
+        except Exception as e:
+          st.error(f"Error al ingresar: {e}")
+
+# -----------------------------------------------------------------------------
+# 2. PANEL DE ADMINISTRACIÓN (Si es Admin)
+# -----------------------------------------------------------------------------
+elif st.session_state.rol_logueado == "admin":
+  datos_ed = obtener_datos_edificio()
+
+  col_head, col_out = st.columns([3, 1])
+  with col_head:
+    st.title("⚙️ Módulo de Administración")
+    st.caption(f"{datos_ed['nombre']} | RIF: {datos_ed['rif']}")
+  with col_out:
+    st.write("")
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+      cerrar_sesion()
+
+  st.write("---")
+
+  t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
+      "📊 Gastos Comunes",
+      "🛠️ Gastos No Comunes",
+      "⭐ Cuotas Extras",
+      "💱 Tasas de Cambio",
+      "✅ Validar Pagos",
+      "🏢 Alícuotas y Unidades",
+      "🚨 Morosidad y Recibos",
+      "⚙️ Datos Edificio",
+      "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
+  ])
+
+  with t7:
+    renderizar_recibos()
+
+# -----------------------------------------------------------------------------
+# 3. PANEL DE PROPIETARIO (Si es Propietario)
+# -----------------------------------------------------------------------------
+elif st.session_state.rol_logueado == "propietario":
+  st.title("👤 Panel de Propietario")
+  st.info(f"Bienvenido a tu portal, {st.session_state.usuario_logueado}")
+  if st.button("🚪 Cerrar Sesión", use_container_width=True):
+    cerrar_sesion()
+
+# -----------------------------------------------------------------------------
+# 4. CASO POR DEFECTO
 # -----------------------------------------------------------------------------
 else:
-  if st.session_state.rol_logueado == "admin":
-    datos_ed = obtener_datos_edificio()
-
-    col_head, col_out = st.columns([3, 1])
-    with col_head:
-      st.title("⚙️ Módulo de Administración")
-      st.caption(f"{datos_ed['nombre']} | RIF: {datos_ed['rif']}")
-    with col_out:
-      st.write("")
-      if st.button("🚪 Cerrar Sesión", use_container_width=True):
-        cerrar_sesion()
-
-    st.write("---")
-
-    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
-        "📊 Gastos Comunes",
-        "🛠️ Gastos No Comunes",
-        "⭐ Cuotas Extras",
-        "💱 Tasas de Cambio",
-        "✅ Validar Pagos",
-        "🏢 Alícuotas y Unidades",
-        "🚨 Morosidad y Recibos",
-        "⚙️ Datos Edificio",
-        "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
-    ])
-
-    with t7:
-      renderizar_recibos()
-
-  elif st.session_state.rol_logueado == "propietario":
-    st.title("👤 Panel de Propietario")
-    st.info(f"Bienvenido a tu portal, {st.session_state.usuario_logueado}")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
-      cerrar_sesion()
-
-  else:
-    st.warning("Rol no reconocido en el sistema.")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
-      cerrar_sesion()
+  st.warning("Rol no reconocido en el sistema.")
+  if st.button("🚪 Cerrar Sesión", use_container_width=True):
+    cerrar_sesion()
 
 # -----------------------------------------------------------------------------
 # 2. VISTA DE PROPIETARIOS
