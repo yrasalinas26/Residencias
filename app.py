@@ -1289,23 +1289,19 @@ else:
 
         try:
             with engine.connect() as conn:
-                # 1. Consultar la alícuota de la unidad
                 u_row_c = conn.execute(
                     text("SELECT alicuota FROM unidades WHERE unidad = :u"),
                     {"u": usuario_actual}
                 ).fetchone()
                 
-                # Convertir explícitamente a float para evitar conflictos de tipos
                 u_alic_c = float(u_row_c[0]) / 100.0 if u_row_c and u_row_c[0] is not None else 0.0
 
-                # 2. Consultar suma de gastos aprobados y asegurar conversión a float
                 g_tot_c_raw = conn.execute(
                     text("SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
                     {"m": periodo_concil_prop}
                 ).scalar()
                 g_tot_c = float(g_tot_c_raw) if g_tot_c_raw is not None else 0.0
 
-                # 3. Consultar suma de cargos individuales y asegurar conversión a float
                 c_ind_c_raw = conn.execute(
                     text("SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :apt AND mes_anio = :m"),
                     {"apt": usuario_actual, "m": periodo_concil_prop}
@@ -1314,7 +1310,6 @@ else:
 
                 deuda_total_periodo = (g_tot_c * u_alic_c) + c_ind_c
 
-                # 4. Calcular pagos aprobados del propietario para el periodo y asegurar conversión a float
                 p_aprob_raw = conn.execute(
                     text("SELECT SUM(monto_usd) FROM pagos_reportados WHERE apartamento = :apt AND mes_anio = :m AND estatus = 'Aprobado'"),
                     {"apt": usuario_actual, "m": periodo_concil_prop}
@@ -1323,7 +1318,6 @@ else:
 
                 balance_pendiente = deuda_total_periodo - pagos_aprobados_sum
 
-                # Métricas visuales
                 col_mc1, col_mc2, col_mc3 = st.columns(3)
                 col_mc1.metric("Deuda del Periodo", f"${deuda_total_periodo:,.2f}")
                 col_mc2.metric("Pagos Validados", f"${pagos_aprobados_sum:,.2f}")
@@ -1361,11 +1355,16 @@ else:
 
         except Exception as e:
             st.error(f"Error cargando la conciliación del propietario: {e}")
+
     with t_p4:
         st.subheader("📞 Información de Contacto y Avisos de la Comunidad")
         datos_ed_p = obtener_datos_edificio()
         st.markdown(f"""
         - **Edificio:** {datos_ed_p['nombre']}
+        - **RIF:** {datos_ed_p['rif']}
+        - **Dirección:** {datos_ed_p['direccion']}
+        """)
+        st.info("Ante cualquier duda con tus pagos o reporte de averías en áreas comunes, comunícate directamente con la administración del edificio.")
         - **RIF:** {datos_ed_p['rif']}
         - **Dirección:** {datos_ed_p['direccion']}
         """)
