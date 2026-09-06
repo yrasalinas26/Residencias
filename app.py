@@ -1483,8 +1483,7 @@ elif st.session_state.rol_logueado == "admin":
       value=obtener_mes_anterior(),
       key="input_mes_recibo_gen",
       )
-
-      try:
+ try:
       with engine.connect() as conn:
         # Consulta robusta asegurando nombres de columnas
         gastos_mes_df = pd.read_sql(
