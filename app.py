@@ -13,16 +13,16 @@ import streamlit as st
 
 
 def renderizar_recibos(sufijo="1"):
-  # Obtenemos los datos del edificio dentro de la misma función para evitar errores de alcance
-  datos_ed = obtener_datos_edificio()
+    # Obtenemos los datos del edificio dentro de la misma función
+    datos_ed = obtener_datos_edificio()
 
-  st.subheader("🚨 Recibos y Envíos a WhatsApp")
-  mes_recibo_gral = st.text_input(
-      "Periodo del Recibo (AAAA-MM):",
-      value=obtener_mes_anterior(),
-      key=f"input_mes_recibo_gen_admin_{sufijo}",  # <--- Clave dinámica
-  )
-
+    st.subheader("🚨 Recibos y Envíos a WhatsApp")
+    
+    # 💡 Quitamos el 'key=' para que Streamlit lo maneje automáticamente sin duplicados
+    mes_recibo_gral = st.text_input(
+        "Periodo del Recibo (AAAA-MM):",
+        value=obtener_mes_anterior(),
+    )
   try:
     with engine.connect() as conn:
       # 1. Consulta de gastos comunes aprobados
