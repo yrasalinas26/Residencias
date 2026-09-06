@@ -692,7 +692,6 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
   buffer.seek(0)
   return buffer
 
-
 # -----------------------------------------------------------------------------
 # CONTROL DE VISTAS PRINCIPAL (Único bloque de autenticación y ruteo)
 # -----------------------------------------------------------------------------
@@ -745,31 +744,13 @@ if not st.session_state.get("usuario_logueado"):
     # 🛑 DETENER AQUÍ: Si no ha iniciado sesión, la app no sigue leyendo hacia abajo
     st.stop()
 
+
 # =============================================================================
 # A PARTIR DE AQUÍ EL USUARIO YA ESTÁ LOGUEADO (ADMIN O PROPIETARIO)
 # =============================================================================
 
 # 2. PANEL DE ADMINISTRACIÓN
 if st.session_state.get("rol_logueado") == "admin":
-    # Todo tu código del panel de administrador...
-    pass
-
-# 3. PANEL DE PROPIETARIO
-elif st.session_state.get("rol_logueado") == "propietario":
-    # Todo tu código del panel de propietario...
-    pass
-
-# 4. CASO POR DEFECTO (Por seguridad)
-else:
-    st.warning("Rol no reconocido en el sistema.")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
-        # Asegúrate de tener tu función de cerrar sesión o limpiar el estado aquí
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
-
-# 2. PANEL DE ADMINISTRACIÓN
-elif st.session_state.get("rol_logueado") == "admin":
     datos_ed = obtener_datos_edificio()
 
     col_head, col_out = st.columns([3, 1])
@@ -797,6 +778,9 @@ elif st.session_state.get("rol_logueado") == "admin":
 
     with t7:
         renderizar_recibos()
+    
+    # (Aquí continúan el resto de tus pestañas de admin si las tienes debajo...)
+
 
 # 3. PANEL DE PROPIETARIO
 elif st.session_state.get("rol_logueado") == "propietario":
@@ -1012,6 +996,7 @@ elif st.session_state.get("rol_logueado") == "propietario":
                 st.dataframe(df_mis_pagos, use_container_width=True)
         except Exception as e:
             st.error(f"Error cargando el historial: {e}")
+
 
 # 4. CASO POR DEFECTO
 else:
