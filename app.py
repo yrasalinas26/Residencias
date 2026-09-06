@@ -692,101 +692,13 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
   buffer.seek(0)
   return buffer
 
+
 # -----------------------------------------------------------------------------
+# CONTROL DE VISTAS PRINCIPAL (Único bloque de autenticación y ruteo)
+# -----------------------------------------------------------------------------
+
 # 1. PORTAL DE ACCESO
-# -----------------------------------------------------------------------------
 if not st.session_state.get("usuario_logueado"):
-  st.markdown(
-      "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
-      unsafe_allow_html=True,
-  )
-  st.markdown(
-      "<p style='text-align: center; color: gray;'>Ingresa tus credenciales"
-      " para continuar.</p>",
-      unsafe_allow_html=True,
-  )
-
-  if error_conexion:
-    st.error(f"⚠️ Error de conexión: {error_conexion}")
-
-  with st.form("form_login"):
-    usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
-    clave_input = st.text_input("Contraseña", type="password").strip()
-    bot_login = st.form_submit_button(
-        "Ingresar", type="primary", use_container_width=True
-    )
-
-    if bot_login:
-      if not usuario_input or not clave_input:
-        st.error("Por favor completa los campos.")
-      elif not engine:
-        st.error("Base de datos no disponible.")
-      else:
-        try:
-          with engine.connect() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT usuario, clave, rol FROM usuarios WHERE"
-                    " LOWER(usuario) = LOWER(:u)"
-                ),
-                {"u": usuario_input},
-            ).fetchone()
-
-          if row and row[1] == clave_input:
-            st.session_state.usuario_logueado = row[0]
-            st.session_state.rol_logueado = row[2]
-            st.rerun()
-          else:
-            st.error("❌ Credenciales incorrectas.")
-        except Exception as e:
-          st.error(f"Error al ingresar: {e}")
-
-# -----------------------------------------------------------------------------
-# 2. PANEL DE ADMINISTRACIÓN (Si es Admin)
-# -----------------------------------------------------------------------------
-elif st.session_state.rol_logueado == "admin":
-  datos_ed = obtener_datos_edificio()
-
-  col_head, col_out = st.columns([3, 1])
-  with col_head:
-    st.title("⚙️ Módulo de Administración")
-    st.caption(f"{datos_ed['nombre']} | RIF: {datos_ed['rif']}")
-  with col_out:
-    st.write("")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
-      cerrar_sesion()
-
-  st.write("---")
-
-  t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
-      "📊 Gastos Comunes",
-      "🛠️ Gastos No Comunes",
-      "⭐ Cuotas Extras",
-      "💱 Tasas de Cambio",
-      "✅ Validar Pagos",
-      "🏢 Alícuotas y Unidades",
-      "🚨 Morosidad y Recibos",
-      "⚙️ Datos Edificio",
-      "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
-  ])
-
-  with t7:
-    renderizar_recibos()
-
-# -----------------------------------------------------------------------------
-# 3. PANEL DE PROPIETARIO (Si es Propietario)
-# -----------------------------------------------------------------------------
-elif st.session_state.rol_logueado == "propietario":
-  st.title("👤 Panel de Propietario")
-  st.info(f"Bienvenido a tu portal, {st.session_state.usuario_logueado}")
-  if st.button("🚪 Cerrar Sesión", use_container_width=True):
-    cerrar_sesion()
-
-# -----------------------------------------------------------------------------
-# CONTROL DE VISTAS PRINCIPAL (Login / Admin / Propietario)
-# -----------------------------------------------------------------------------
-if not st.session_state.usuario_logueado:
-    # 1. PORTAL DE ACCESO
     st.markdown(
         "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
         unsafe_allow_html=True,
@@ -796,7 +708,7 @@ if not st.session_state.usuario_logueado:
         unsafe_allow_html=True,
     )
 
-    if error_conexion:
+    if "error_conexion" in locals() and error_conexion:
         st.error(f"⚠️ Error de conexión: {error_conexion}")
 
     with st.form("form_login"):
@@ -809,7 +721,7 @@ if not st.session_state.usuario_logueado:
         if bot_login:
             if not usuario_input or not clave_input:
                 st.error("Por favor completa los campos.")
-            elif not engine:
+            elif "engine" not in locals() or not engine:
                 st.error("Base de datos no disponible.")
             else:
                 try:
@@ -830,8 +742,8 @@ if not st.session_state.usuario_logueado:
                 except Exception as e:
                     st.error(f"Error al ingresar: {e}")
 
-elif st.session_state.rol_logueado == "admin":
-    # 2. PANEL DE ADMINISTRACIÓN
+# 2. PANEL DE ADMINISTRACIÓN
+elif st.session_state.get("rol_logueado") == "admin":
     datos_ed = obtener_datos_edificio()
 
     col_head, col_out = st.columns([3, 1])
@@ -860,8 +772,8 @@ elif st.session_state.rol_logueado == "admin":
     with t7:
         renderizar_recibos()
 
-elif st.session_state.rol_logueado == "propietario":
-    # 3. VISTA DE PROPIETARIOS
+# 3. PANEL DE PROPIETARIO
+elif st.session_state.get("rol_logueado") == "propietario":
     user_actual = st.session_state.usuario_logueado
     datos_ed = obtener_datos_edificio()
     df_u = obtener_unidades_df()
@@ -1075,8 +987,8 @@ elif st.session_state.rol_logueado == "propietario":
         except Exception as e:
             st.error(f"Error cargando el historial: {e}")
 
+# 4. CASO POR DEFECTO
 else:
-    # 4. CASO POR DEFECTO
     st.warning("Rol no reconocido en el sistema.")
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
         cerrar_sesion()
