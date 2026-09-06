@@ -1151,7 +1151,6 @@ if rol_actual == "admin":
 
         except Exception as e:
 
-else:
     # -------------------------------------------------------------------------
     # PANEL DEL PROPIETARIO (AUTENTICADO CON SU UNIDAD)
     # -------------------------------------------------------------------------
