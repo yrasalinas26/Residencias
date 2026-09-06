@@ -705,20 +705,14 @@ def renderizar_recibos():
         st.error(f"Error generando recibos: {e}")
 
 
-# -----------------------------------------------------------------------------
-# CONTROL DE VISTAS PRINCIPAL (Único bloque de autenticación y ruteo)
-# -----------------------------------------------------------------------------
+# =============================================================================
+# CONTROL DE VISTAS PRINCIPAL
+# =============================================================================
 
 # 1. PORTAL DE ACCESO / CONTROL DE SESIÓN
 if not st.session_state.get("usuario_logueado"):
-    st.markdown(
-        "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<p style='text-align: center; color: gray;'>Ingresa tus credenciales para continuar.</p>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>Ingresa tus credenciales para continuar.</p>", unsafe_allow_html=True)
 
     if "error_conexion" in locals() and error_conexion:
         st.error(f"⚠️ Error de conexión: {error_conexion}")
@@ -726,9 +720,7 @@ if not st.session_state.get("usuario_logueado"):
     with st.form("form_login"):
         usuario_input = st.text_input("Usuario (ej. 1A, PH o admin)").strip()
         clave_input = st.text_input("Contraseña", type="password").strip()
-        bot_login = st.form_submit_button(
-            "Ingresar", type="primary", use_container_width=True
-        )
+        bot_login = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
 
         if bot_login:
             if not usuario_input or not clave_input:
@@ -739,9 +731,7 @@ if not st.session_state.get("usuario_logueado"):
                 try:
                     with engine.connect() as conn:
                         row = conn.execute(
-                            text(
-                                "SELECT usuario, clave, rol FROM usuarios WHERE LOWER(usuario) = LOWER(:u)"
-                            ),
+                            text("SELECT usuario, clave, rol FROM usuarios WHERE LOWER(usuario) = LOWER(:u)"),
                             {"u": usuario_input},
                         ).fetchone()
 
@@ -754,53 +744,30 @@ if not st.session_state.get("usuario_logueado"):
                 except Exception as e:
                     st.error(f"Error al ingresar: {e}")
 
-    # 🛑 DETENER AQUÍ: Si no ha iniciado sesión, la app se detiene aquí
+    # 🛑 DETENER AQUÍ SI NO HA INICIADO SESIÓN
     st.stop()
 
-else:
-    # SI YA INICIÓ SESIÓN: Mostramos la barra lateral con su información y el menú dinámico
-    rol_actual = st.session_state.get("rol_logueado", "propietario")
-    usuario_actual = st.session_state.get("usuario_logueado", "")
-
-    st.sidebar.markdown(f"👤 **Usuario:** {usuario_actual}")
-    st.sidebar.markdown(f"🔑 **Rol:** {rol_actual.capitalize()}")
-    st.sidebar.markdown("---")
-
-    # Definimos el menú según el tipo de usuario (Admin vs Propietario)
-    if rol_actual == "admin":
-        menu = st.sidebar.selectbox(
-            "Menú de Administración",
-            [
-                "🏠 Dashboard",
-                "💰 Gastos",
-                "📊 Alícuotas y Unidades",
-                "📑 Recibos y WhatsApp",
-                "📥 Pagos Reportados",
-                "⚙️ Configuración",
-            ],
-        )
-    else:
-        menu = st.sidebar.selectbox(
-            "Mi Panel",
-            [
-                "📄 Mis Recibos y Estado de Cuenta",
-                "💳 Reportar Pago",
-                "📋 Conciliaciones y Pagos Aprobados",
-            ],
-        )
-
-    st.sidebar.markdown("---")
-    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
-        st.session_state.pop("usuario_logueado", None)
-        st.session_state.pop("rol_logueado", None)
-        st.rerun()
-# -----------------------------------------------------------------------------
-# CONTROL DE VISTAS SEGÚN EL ROL DEL USUARIO
 # =============================================================================
-
+# ZONA DE USUARIOS AUTENTICADOS (De aquí en adelante ya inició sesión)
+# =============================================================================
 rol_actual = st.session_state.get("rol_logueado", "propietario")
 usuario_actual = st.session_state.get("usuario_logueado", "")
 
+# Configuración de la barra lateral común
+st.sidebar.markdown(f"👤 **Usuario:** {usuario_actual}")
+st.sidebar.markdown(f"🔑 **Rol:** {rol_actual.capitalize()}")
+st.sidebar.markdown("---")
+
+if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+    st.session_state.pop("usuario_logueado", None)
+    st.session_state.pop("rol_logueado", None)
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# =============================================================================
+# RUTEO SEGÚN EL ROL
+# =============================================================================
 if rol_actual == "admin":
     # -------------------------------------------------------------------------
     # VISTA DE ADMINISTRACIÓN (Tus 9 pestañas)
