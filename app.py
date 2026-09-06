@@ -21,7 +21,7 @@ def renderizar_recibos():
 
   try:
     with engine.connect() as conn:
-      # Consulta robusta asegurando nombres de columnas
+      # 1. Consulta de gastos comunes aprobados
       gastos_mes_df = pd.read_sql(
           text(
               "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
@@ -34,6 +34,7 @@ def renderizar_recibos():
           gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
       )
 
+      # 2. Consulta de unidades
       unidades_df = pd.read_sql(
           text(
               "SELECT unidad, alicuota, propietario, telefono FROM unidades"
@@ -41,6 +42,23 @@ def renderizar_recibos():
           ),
           conn,
       )
+
+      # 3. CONSULTA ÚNICA OPTIMIZADA: Traer todos los cargos individuales del mes de un solo golpe
+      cargos_df = pd.read_sql(
+          text(
+              "SELECT apartamento, SUM(monto) as total_cargos FROM"
+              " cargos_individuales WHERE mes_anio = :m GROUP BY apartamento"
+          ),
+          conn,
+          params={"m": mes_recibo_gral},
+      )
+
+    # Convertir los cargos a un diccionario rápido { "1A": 25.0, "PH": 50.0, ... }
+    cargos_dict = (
+        dict(zip(cargos_df["apartamento"], cargos_df["total_cargos"]))
+        if not cargos_df.empty
+        else {}
+    )
 
     # Diagnóstico visual rápido en pantalla
     if gastos_mes_df.empty:
@@ -64,19 +82,9 @@ def renderizar_recibos():
 
       cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
 
-      with engine.connect() as conn:
-        cargos_apt = (
-            conn.execute(
-                text(
-                    "SELECT SUM(monto) FROM cargos_individuales WHERE"
-                    " apartamento = :u AND mes_anio = :m"
-                ),
-                {"u": u_cod, "m": mes_recibo_gral},
-            ).scalar()
-            or 0.0
-        )
-
-      total_apt = cuota_comun_apt + float(cargos_apt)
+      # Obtenemos el cargo del diccionario local (sin llamadas extra a la BD)
+      cargos_apt = float(cargos_dict.get(u_cod, 0.0))
+      total_apt = cuota_comun_apt + cargos_apt
 
       with st.expander(f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"):
         # --- MENSAJE INDIVIDUAL DESGLOSADO ---
@@ -105,10 +113,8 @@ def renderizar_recibos():
         msg_ind += f"----------------------------------------\n"
         msg_ind += f"• Subtotal Cuota Común: ${cuota_comun_apt:,.2f}\n"
 
-        if float(cargos_apt) > 0:
-          msg_ind += (
-              f"• Cargos Extras / No Comunes: ${float(cargos_apt):,.2f}\n"
-          )
+        if cargos_apt > 0:
+          msg_ind += f"• Cargos Extras / No Comunes: ${cargos_apt:,.2f}\n"
 
         msg_ind += f"----------------------------------------\n"
         msg_ind += f"  *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
