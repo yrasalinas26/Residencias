@@ -1308,10 +1308,9 @@ with t7:
     except Exception as e:
       st.error(f"Error cargando cuotas extraordinarias: {e}")
 
-    with t4:
-      st.subheader("💱 Registro Manual de Tasas de Cambio (BCV)")
+ with t4:
+        st.subheader("💱 Registro Manual de Tasas de Cambio (BCV)")
         
-        # 1. Consultar la última tasa ingresada en la base de datos para usarla como referencia
         ultima_tasa_manual = 1.0
         try:
             with engine.connect() as conn:
@@ -1321,7 +1320,7 @@ with t7:
                 if res is not None:
                     ultima_tasa_manual = float(res)
         except Exception:
-            pass # Si la tabla está vacía o hay error, se queda en 1.0 o un valor base
+            pass
 
         st.info(
             f"ℹ️ La última tasa registrada en el sistema es: "
@@ -1335,7 +1334,7 @@ with t7:
             with c_t2:
                 valor_tasa = st.number_input(
                     "Valor del Dólar (VES / USD)",
-                    value=ultima_tasa_manual,  # Se rellena automáticamente con la última tasa guardada
+                    value=ultima_tasa_manual,
                     min_value=0.01,
                     step=0.0001,
                     format="%.4f",
