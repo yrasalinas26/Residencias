@@ -1484,17 +1484,17 @@ elif st.session_state.rol_logueado == "admin":
       key="input_mes_recibo_gen",
       )
 
-     try:
-       with engine.connect() as conn:
-       # Consulta robusta asegurando nombres de columnas
-       gastos_mes_df = pd.read_sql(
-          text(
-              "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
-              " (estatus = 'Aprobado' OR estatus = 'APROBADO')"
-              ),
-          conn,
-          params={"m": mes_recibo_gral},
-      )
+      try:
+      with engine.connect() as conn:
+        # Consulta robusta asegurando nombres de columnas
+        gastos_mes_df = pd.read_sql(
+            text(
+                "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
+                " (estatus = 'Aprobado' OR estatus = 'APROBADO')"
+            ),
+            conn,
+            params={"m": mes_recibo_gral},
+        )
       total_gastos_comunes = (
           gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
       )
