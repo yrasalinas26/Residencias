@@ -1010,18 +1010,18 @@ with t6:
 
         except Exception as e:
             st.error(f"Error cargando la lista de unidades para restablecer claves: {e}")
-    with t7:
+with t7:
         st.subheader("🚨 Morosidad y Recibos")
         renderizar_recibos()
 
-    with t8:
+with t8:
         st.subheader("⚙️ Datos del Edificio")
         edificio = obtener_datos_edificio()
         st.write(f"**Nombre:** {edificio['nombre']}")
         st.write(f"**RIF:** {edificio['rif']}")
         st.write(f"**Dirección:** {edificio['direccion']}")
 
-    with t9:
+with t9:
         st.subheader("💱 Conciliación de Pagos en Bolívares")
         st.info("Módulo para conciliar pagos calculando la tasa BCV correspondiente al día de la transacción.")
 
