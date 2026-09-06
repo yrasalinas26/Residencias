@@ -696,23 +696,6 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
 
 
 # -----------------------------------------------------------------------------
-# CONTROL DE SESIÓN
-# -----------------------------------------------------------------------------
-if "usuario_logueado" not in st.session_state:
-  st.session_state.usuario_logueado = None
-if "rol_logueado" not in st.session_state:
-  st.session_state.rol_logueado = None
-
-
-def cerrar_sesion():
-  st.session_state.usuario_logueado = None
-  st.session_state.rol_logueado = None
-  st.rerun()
-
-
-tasa_del_dia_auto = verificar_y_actualizar_tasa_hoy(engine)
-
-# -----------------------------------------------------------------------------
 # 1. PORTAL DE ACCESO
 # -----------------------------------------------------------------------------
 if not st.session_state.usuario_logueado:
@@ -760,6 +743,46 @@ if not st.session_state.usuario_logueado:
             st.error("❌ Credenciales incorrectas.")
         except Exception as e:
           st.error(f"Error al ingresar: {e}")
+
+# -----------------------------------------------------------------------------
+# 2. PANEL DE ADMINISTRACIÓN Y PESTAÑAS (Se muestra al iniciar sesión)
+# -----------------------------------------------------------------------------
+else:
+  if st.session_state.rol_logueado == "admin":
+    datos_ed = obtener_datos_edificio()
+
+    col_head, col_out = st.columns([3, 1])
+    with col_head:
+      st.title("⚙️ Módulo de Administración")
+      st.caption(f"{datos_ed['nombre']} | RIF: {datos_ed['rif']}")
+    with col_out:
+      st.write("")
+      if st.button("🚪 Cerrar Sesión", use_container_width=True):
+        cerrar_sesion()
+
+    st.write("---")
+
+    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
+        "📊 Gastos Comunes",
+        "🛠️ Gastos No Comunes",
+        "⭐ Cuotas Extras",
+        "💱 Tasas de Cambio",
+        "✅ Validar Pagos",
+        "🏢 Alícuotas y Unidades",
+        "🚨 Morosidad y Recibos",
+        "⚙️ Datos Edificio",
+        "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
+    ])
+
+    with t7:
+      renderizar_recibos()
+
+    # (Aquí abajo puedes mantener el resto de las pestañas t1, t2, t3, etc. si ya las tienes armadas)
+
+  else:
+    st.info(f"Bienvenido, {st.session_state.usuario_logueado}")
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+      cerrar_sesion()
 
 # -----------------------------------------------------------------------------
 # 2. VISTA DE PROPIETARIOS
