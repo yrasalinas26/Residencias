@@ -754,34 +754,42 @@ if not st.session_state.get("usuario_logueado"):
                 except Exception as e:
                     st.error(f"Error al ingresar: {e}")
 
-    # 🛑 DETENER AQUÍ: Si no ha iniciado sesión, la app no sigue leyendo hacia abajo
+    # 🛑 DETENER AQUÍ: Si no ha iniciado sesión, la app se detiene aquí
     st.stop()
 
 else:
-    # SI YA INICIÓ SESIÓN: Mostramos la barra lateral con su información y el botón de salir
-    st.sidebar.markdown(
-        f"👤 **Usuario:** {st.session_state['usuario_logueado']}"
-    )
-    st.sidebar.markdown(
-        f"🔑 **Rol:** {st.session_state.get('rol_logueado', '')}"
-    )
+    # SI YA INICIÓ SESIÓN: Mostramos la barra lateral con su información y el menú dinámico
+    rol_actual = st.session_state.get("rol_logueado", "propietario")
+    usuario_actual = st.session_state.get("usuario_logueado", "")
 
-    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
-        st.session_state.pop("usuario_logueado", None)
-        st.session_state.pop("rol_logueado", None)
-        st.rerun()
-    # 🛑 DETENER AQUÍ: Si no ha iniciado sesión, la app no sigue leyendo hacia abajo
-    st.stop()
+    st.sidebar.markdown(f"👤 **Usuario:** {usuario_actual}")
+    st.sidebar.markdown(f"🔑 **Rol:** {rol_actual.capitalize()}")
+    st.sidebar.markdown("---")
 
-else:
-    # SI YA INICIÓ SESIÓN: Mostramos la barra lateral con su información y el botón de salir
-    st.sidebar.markdown(
-        f"👤 **Usuario:** {st.session_state['usuario_logueado']}"
-    )
-    st.sidebar.markdown(
-        f"🔑 **Rol:** {st.session_state.get('rol_logueado', '')}"
-    )
+    # Definimos el menú según el tipo de usuario (Admin vs Propietario)
+    if rol_actual == "admin":
+        menu = st.sidebar.selectbox(
+            "Menú de Administración",
+            [
+                "🏠 Dashboard",
+                "💰 Gastos",
+                "📊 Alícuotas y Unidades",
+                "📑 Recibos y WhatsApp",
+                "📥 Pagos Reportados",
+                "⚙️ Configuración",
+            ],
+        )
+    else:
+        menu = st.sidebar.selectbox(
+            "Mi Panel",
+            [
+                "📄 Mis Recibos y Estado de Cuenta",
+                "💳 Reportar Pago",
+                "📋 Conciliaciones y Pagos Aprobados",
+            ],
+        )
 
+    st.sidebar.markdown("---")
     if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
         st.session_state.pop("usuario_logueado", None)
         st.session_state.pop("rol_logueado", None)
