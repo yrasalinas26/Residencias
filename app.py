@@ -1506,157 +1506,145 @@ with t8:
                 st.error(f"Error actualizando configuración: {e}")
 
 with t9:
-      st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa Diaria)")
-      st.markdown(
-      "Selecciona la fecha del pago del propietario para aplicar la tasa"
-      " exacta registrada en la base de datos."
-      )
-
-  # 1. Controles superiores: Periodo a conciliar y Fecha del Pago/Tasa
-  col_d1, col_d2 = st.columns(2)
-  with col_d1:
-    mes_conciliacion = st.text_input(
-        "Periodo a Conciliar (AAAA-MM):",
-        value=obtener_mes_anterior(),
-        key="input_mes_conciliacion",
-    )
-  with col_d2:
-    fecha_pago_input = st.date_input(
-        "Fecha de la Transferencia / Tasa:",
-        value=datetime.now(),
-        key="input_fecha_tasa_conciliacion",
-    )
-
-  # 2. Consultar la tasa exacta para esa fecha en tu tabla 'tasa_cambio'
-  tasa_dia = 36.50  # Valor por defecto por si no hay tasa registrada aún para ese día
-  try:
-    with engine.connect() as conn:
-      res_tasa = conn.execute(
-          text("SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT 1"),
-          {"f": fecha_pago_input},
-      ).scalar()
-      if res_tasa:
-        tasa_dia = float(res_tasa)
-  except Exception as e_tasa:
-    st.warning(
-        f"No se pudo cargar la tasa para esta fecha (usando valor por"
-        f" defecto): {e_tasa}"
-    )
-
-  try:
-    # 3. Carga de Gastos y Unidades desde PostgreSQL
-    with engine.connect() as conn:
-      gastos_mes_df = pd.read_sql(
-          text(
-              "SELECT monto FROM gastos WHERE mes_anio = :m AND (estatus ="
-              " 'Aprobado' OR estatus = 'APROBADO')"
-          ),
-          conn,
-          params={"m": mes_conciliacion},
-      )
-      total_gastos_comunes = (
-          gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
-      )
-
-      unidades_df = pd.read_sql(
-          text(
-              "SELECT unidad, alicuota, propietario FROM unidades ORDER BY"
-              " unidad ASC"
-          ),
-          conn,
-      )
-
-    st.markdown("---")
+    st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa Diaria)")
     st.markdown(
-        f"📊 **Gasto Común Total ({mes_conciliacion}):**"
-        f" ${total_gastos_comunes:,.2f} USD | 💱 **Tasa Activa para el"
-        f" {fecha_pago_input}:** Bs. {tasa_dia:,.4f}"
+        "Selecciona la fecha del pago del propietario para aplicar la tasa exacta registrada en la base de datos."
     )
-    st.markdown(
-        "*(Si necesitas cambiar o registrar esta tasa, recuerda que puedes"
-        " hacerlo en la pestaña **t4**)*"
-    )
-    st.markdown("---")
 
-    # 4. Listado y Conciliación por Apartamento
-    for _, u_row in unidades_df.iterrows():
-      u_cod = u_row["unidad"]
-      u_prop = u_row["propietario"]
-      u_alic = float(u_row["alicuota"])
-      u_alic_decimal = u_alic / 100.0
+    # 1. Controles superiores: Periodo a conciliar y Fecha del Pago/Tasa
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        mes_conciliacion = st.text_input(
+            "Periodo a Conciliar (AAAA-MM):",
+            value=obtener_mes_anterior(),
+            key="input_mes_conciliacion",
+        )
+    with col_d2:
+        fecha_pago_input = st.date_input(
+            "Fecha de la Transferencia / Tasa:",
+            value=datetime.now(),
+            key="input_fecha_tasa_conciliacion",
+        )
 
-      cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
-
-      with engine.connect() as conn:
-        cargos_apt = (
-            conn.execute(
-                text(
-                    "SELECT SUM(monto) FROM cargos_individuales WHERE"
-                    " apartamento = :u AND mes_anio = :m"
-                ),
-                {"u": u_cod, "m": mes_conciliacion},
+    # 2. Consultar la tasa exacta para esa fecha en tu tabla 'tasa_cambio'
+    tasa_dia = 36.50  # Valor por defecto por si no hay tasa registrada aún para ese día
+    try:
+        with engine.connect() as conn:
+            res_tasa = conn.execute(
+                text("SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT 1"),
+                {"f": fecha_pago_input},
             ).scalar()
-            or 0.0
+            if res_tasa:
+                tasa_dia = float(res_tasa)
+    except Exception as e_tasa:
+        st.warning(
+            f"No se pudo cargar la tasa para esta fecha (usando valor por defecto): {e_tasa}"
         )
 
-      total_usd = cuota_comun_apt + float(cargos_apt)
-      total_bs_teorico = total_usd * tasa_dia
+    try:
+        # 3. Carga de Gastos y Unidades desde PostgreSQL
+        with engine.connect() as conn:
+            gastos_mes_df = pd.read_sql(
+                text(
+                    "SELECT monto FROM gastos WHERE mes_anio = :m AND (estatus = 'Aprobado' OR estatus = 'APROBADO')"
+                ),
+                conn,
+                params={"m": mes_conciliacion},
+            )
+            total_gastos_comunes = (
+                gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
+            )
 
-      with st.container():
-        col_c1, col_c2, col_c3, col_c4 = st.columns([1, 2, 2, 2])
-
-        col_c1.markdown(f"**Apto {u_cod}**")
-        col_c2.markdown(f"{u_prop}")
-        col_c3.markdown(
-            f"Deuda: **${total_usd:,.2f} USD**<br>💱 Eq. Tasa Día: *Bs."
-            f" {total_bs_teorico:,.2f}*",
-            unsafe_allow_html=True,
-        )
-
-        with col_c4:
-          estatus_actual = st.selectbox(
-              f"Estatus Apto {u_cod}",
-              ["🟡 Pendiente", "🟢 Conciliado (Aprobado)"],
-              key=f"select_conciliacion_{u_cod}",
-          )
-
-        with st.expander(
-            f"📝 Registrar / Verificar Pago en Bs - Apt {u_cod}"
-        ):
-          ref_pago = st.text_input(
-              f"Nro. Referencia / Banco (Apt {u_cod}):",
-              key=f"ref_pago_{u_cod}",
-          )
-
-          monto_reportado_bs = st.number_input(
-              f"Monto real pagado en Bs (según comprobante):",
-              min_value=0.0,
-              value=total_bs_teorico,
-              step=1.0,
-              format="%.2f",
-              key=f"monto_bs_{u_cod}",
-          )
-
-          if total_usd > 0 and monto_reportado_bs > 0:
-            diferencia_bs = monto_reportado_bs - total_bs_teorico
-
-            if abs(diferencia_bs) < 5.0:
-              st.success(
-                  "✅ El monto en Bs cubre exactamente la deuda con la tasa de"
-                  " esta fecha."
-              )
-            elif monto_reportado_bs > total_bs_teorico:
-              st.info(
-                  f"🟢 El propietario pagó de más por un monto de Bs."
-                  f" {diferencia_bs:,.2f}"
-              )
-            else:
-              st.warning(
-                  f"⚠️ El monto reportado es menor a la cuota. Faltan Bs."
-                  f" {abs(diferencia_bs):,.2f} según la tasa."
-              )
+            unidades_df = pd.read_sql(
+                text(
+                    "SELECT unidad, alicuota, propietario FROM unidades ORDER BY unidad ASC"
+                ),
+                conn,
+            )
 
         st.markdown("---")
+        st.markdown(
+            f"📊 **Gasto Común Total ({mes_conciliacion}):** ${total_gastos_comunes:,.2f} USD | 💱 **Tasa Activa para el {fecha_pago_input}:** Bs. {tasa_dia:,.4f}"
+        )
+        st.markdown(
+            "*(Si necesitas cambiar o registrar esta tasa, recuerda que puedes hacerlo en la pestaña **t4**)*"
+        )
+        st.markdown("---")
 
-  except Exception as e:
-    st.error(f"Error en el módulo de conciliación: {e}")
+        # 4. Listado y Conciliación por Apartamento
+        for _, u_row in unidades_df.iterrows():
+            u_cod = u_row["unidad"]
+            u_prop = u_row["propietario"]
+            u_alic = float(u_row["alicuota"])
+            u_alic_decimal = u_alic / 100.0
+
+            cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
+
+            with engine.connect() as conn:
+                cargos_apt = (
+                    conn.execute(
+                        text(
+                            "SELECT SUM(monto) FROM cargos_individuales WHERE apartamento = :u AND mes_anio = :m"
+                        ),
+                        {"u": u_cod, "m": mes_conciliacion},
+                    ).scalar()
+                    or 0.0
+                )
+
+            total_usd = cuota_comun_apt + float(cargos_apt)
+            total_bs_teorico = total_usd * tasa_dia
+
+            with st.container():
+                col_c1, col_c2, col_c3, col_c4 = st.columns([1, 2, 2, 2])
+
+                col_c1.markdown(f"**Apto {u_cod}**")
+                col_c2.markdown(f"{u_prop}")
+                col_c3.markdown(
+                    f"Deuda: **${total_usd:,.2f} USD**<br>💱 Eq. Tasa Día: *Bs. {total_bs_teorico:,.2f}*",
+                    unsafe_allow_html=True,
+                )
+
+                with col_c4:
+                    estatus_actual = st.selectbox(
+                        f"Estatus Apto {u_cod}",
+                        ["🟡 Pendiente", "🟢 Conciliado (Aprobado)"],
+                        key=f"select_conciliacion_{u_cod}",
+                    )
+
+                with st.expander(
+                    f"📝 Registrar / Verificar Pago en Bs - Apt {u_cod}"
+                ):
+                    ref_pago = st.text_input(
+                        f"Nro. Referencia / Banco (Apt {u_cod}):",
+                        key=f"ref_pago_{u_cod}",
+                    )
+
+                    monto_reportado_bs = st.number_input(
+                        f"Monto real pagado en Bs (según comprobante):",
+                        min_value=0.0,
+                        value=total_bs_teorico,
+                        step=1.0,
+                        format="%.2f",
+                        key=f"monto_bs_{u_cod}",
+                    )
+
+                    if total_usd > 0 and monto_reportado_bs > 0:
+                        diferencia_bs = monto_reportado_bs - total_bs_teorico
+
+                        if abs(diferencia_bs) < 5.0:
+                            st.success(
+                                "✅ El monto en Bs cubre exactamente la deuda con la tasa de esta fecha."
+                            )
+                        elif monto_reportado_bs > total_bs_teorico:
+                            st.info(
+                                f"🟢 El propietario pagó de más por un monto de Bs. {diferencia_bs:,.2f}"
+                            )
+                        else:
+                            st.warning(
+                                f"⚠️ El monto reportado es menor a la cuota. Faltan Bs. {abs(diferencia_bs):,.2f} según la tasa."
+                            )
+
+            st.markdown("---")
+
+    except Exception as e:
+        st.error(f"Error en el módulo de conciliación: {e}")
