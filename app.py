@@ -11,7 +11,7 @@ import requests
 from sqlalchemy import create_engine, text
 import streamlit as st
 
-ef renderizar_recibos():
+def renderizar_recibos():
     # Obtenemos los datos del edificio dentro de la misma función para evitar errores de alcance
     datos_ed = obtener_datos_edificio()
 
