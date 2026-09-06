@@ -1475,25 +1475,26 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
-    with t7:
-      st.error("ESTO ES UNA PRUEBA DE LA PESTAÑA 7")
-      st.subheader("🚨 Recibos y Envíos a WhatsApp")
-      mes_recibo_gral = st.text_input(
+   with t7:
+  st.error("ESTO ES UNA PRUEBA DE LA PESTAÑA 7")
+  st.subheader("🚨 Recibos y Envíos a WhatsApp")
+  mes_recibo_gral = st.text_input(
       "Periodo del Recibo (AAAA-MM):",
       value=obtener_mes_anterior(),
       key="input_mes_recibo_gen",
-      )
+  )
+
   try:
-      with engine.connect() as conn:
-        # Consulta robusta asegurando nombres de columnas
-        gastos_mes_df = pd.read_sql(
-            text(
-                "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
-                " (estatus = 'Aprobado' OR estatus = 'APROBADO')"
-            ),
-            conn,
-            params={"m": mes_recibo_gral},
-        )
+    with engine.connect() as conn:
+      # Consulta robusta asegurando nombres de columnas
+      gastos_mes_df = pd.read_sql(
+          text(
+              "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
+              " (estatus = 'Aprobado' OR estatus = 'APROBADO')"
+          ),
+          conn,
+          params={"m": mes_recibo_gral},
+      )
       total_gastos_comunes = (
           gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
       )
@@ -1507,24 +1508,24 @@ elif st.session_state.rol_logueado == "admin":
       )
 
     # Diagnóstico visual rápido en pantalla para verificar que los gastos se leyeron
-      if gastos_mes_df.empty:
-       st.warning(
+    if gastos_mes_df.empty:
+      st.warning(
           f"⚠️ No se encontraron gastos aprobados para el periodo"
           f" {mes_recibo_gral}. Por eso el desglose sale vacío."
       )
-      else:
-        st.success(
+    else:
+      st.success(
           f"✅ Se cargaron {len(gastos_mes_df)} gastos comunes para el periodo"
           f" {mes_recibo_gral}."
       )
 
-     st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
-     for _, u_row in unidades_df.iterrows():
-       u_cod = u_row["unidad"]
-       u_prop = u_row["propietario"]
-       u_tel = u_row["telefono"]
-       u_alic = float(u_row["alicuota"])
-       u_alic_decimal = u_alic / 100.0
+    st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
+    for _, u_row in unidades_df.iterrows():
+      u_cod = u_row["unidad"]
+      u_prop = u_row["propietario"]
+      u_tel = u_row["telefono"]
+      u_alic = float(u_row["alicuota"])
+      u_alic_decimal = u_alic / 100.0
 
       cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
 
