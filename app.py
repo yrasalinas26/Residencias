@@ -981,31 +981,19 @@ elif st.session_state.rol_logueado == "propietario":
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRACIÓN
 # -----------------------------------------------------------------------------
-elif st.session_state.rol_logueado == "admin":
-  datos_ed = obtener_datos_edificio()
+t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
+    "📊 Gastos Comunes",
+    "🛠️ Gastos No Comunes",
+    "⭐ Cuotas Extras",
+    "💱 Tasas de Cambio",
+    "✅ Validar Pagos",
+    "🏢 Alícuotas y Unidades",
+    "🚨 Morosidad y Recibos",
+    "⚙️ Datos Edificio",
+    "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
+])
 
-  col_head, col_out = st.columns([3, 1])
-  with col_head:
-    st.title("⚙️ Módulo de Administración")
-    st.caption(f"{datos_ed['nombre']} | RIF: {datos_ed['rif']}")
-  with col_out:
-    st.write("")
-    if st.button("🚪 Cerrar Sesión", use_container_width=True):
-      cerrar_sesion()
-
-  st.write("---")
-
-  t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
-      "📊 Gastos Comunes",
-      "🛠️ Gastos No Comunes",
-      "⭐ Cuotas Extras",
-      "💱 Tasas de Cambio",
-      "✅ Validar Pagos",
-      "🏢 Alícuotas y Unidades",
-      "🚨 Morosidad y Recibos",
-      "⚙️ Datos Edificio",
-      "💱 Conciliación de Pagos en Bolívares (Tasa BCV)"
-  ])
+# Aquí mismo activamos la pestaña 7 usando la función que hicimos antes:
 with t7:
   renderizar_recibos()
   
