@@ -1039,7 +1039,7 @@ with t1:
         except Exception as e:
           st.error(f"Error registrando gasto: {e}")
 
-    st.write("---")
+st.write("---")
     st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
     mes_filtro = st.text_input(
         "Filtrar gastos por periodo (AAAA-MM):",
