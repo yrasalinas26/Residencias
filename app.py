@@ -697,7 +697,7 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
 # CONTROL DE VISTAS PRINCIPAL (Único bloque de autenticación y ruteo)
 # -----------------------------------------------------------------------------
 
-# 1. PORTAL DE ACCESO
+# 1. PORTAL DE ACCESO (Si no está logueado, muestra esto y DETIENE la ejecución)
 if not st.session_state.get("usuario_logueado"):
     st.markdown(
         "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
@@ -741,6 +741,32 @@ if not st.session_state.get("usuario_logueado"):
                         st.error("❌ Credenciales incorrectas.")
                 except Exception as e:
                     st.error(f"Error al ingresar: {e}")
+
+    # 🛑 DETENER AQUÍ: Si no ha iniciado sesión, la app no sigue leyendo hacia abajo
+    st.stop()
+
+# =============================================================================
+# A PARTIR DE AQUÍ EL USUARIO YA ESTÁ LOGUEADO (ADMIN O PROPIETARIO)
+# =============================================================================
+
+# 2. PANEL DE ADMINISTRACIÓN
+if st.session_state.get("rol_logueado") == "admin":
+    # Todo tu código del panel de administrador...
+    pass
+
+# 3. PANEL DE PROPIETARIO
+elif st.session_state.get("rol_logueado") == "propietario":
+    # Todo tu código del panel de propietario...
+    pass
+
+# 4. CASO POR DEFECTO (Por seguridad)
+else:
+    st.warning("Rol no reconocido en el sistema.")
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+        # Asegúrate de tener tu función de cerrar sesión o limpiar el estado aquí
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
 
 # 2. PANEL DE ADMINISTRACIÓN
 elif st.session_state.get("rol_logueado") == "admin":
