@@ -10,8 +10,8 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 import requests
 from sqlalchemy import create_engine, text
 import streamlit as st
-
 def renderizar_recibos():
+  st.error("ESTO ES UNA PRUEBA DE LA PESTAÑA 7")
   st.subheader("🚨 Recibos y Envíos a WhatsApp")
   mes_recibo_gral = st.text_input(
       "Periodo del Recibo (AAAA-MM):",
