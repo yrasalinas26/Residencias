@@ -1006,7 +1006,8 @@ elif st.session_state.rol_logueado == "admin":
       "⚙️ Datos Edificio",
       "💱 Conciliación de Pagos en Bolívares (Tasa BCV)"
   ])
-
+with t7:
+  renderizar_recibos()
   with t1:
     st.subheader("➕ Cargar Nuevo Gasto Común")
     with st.form("form_gasto"):
