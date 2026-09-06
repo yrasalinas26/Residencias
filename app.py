@@ -818,8 +818,93 @@ if rol_actual == "admin":
         st.info("Utiliza esta sección para registrar cargos asignados directamente a apartamentos específicos.")
         
     with t3:
-        st.subheader("⭐ Cuotas Extraordinarias")
-        st.info("Administra aquí las cuotas extraordinarias del edificio.")
+        st.subheader("⭐ Gestión y Registro de Cuotas Extraordinarias")
+        
+        # Formulario para crear una nueva cuota extraordinaria
+        with st.form("form_cuota_extra"):
+            col_ce1, col_ce2 = st.columns(2)
+            with col_ce1:
+                concepto_ce = st.text_input("Concepto de la Cuota Extraordinaria")
+            with col_ce2:
+                monto_ce = st.number_input("Monto Total ($)", min_value=0.01, step=0.01)
+            
+            btn_crear_ce = st.form_submit_button("Crear Cuota Extraordinaria", type="primary")
+            
+            if btn_crear_ce:
+                if not concepto_ce.strip():
+                    st.error("Debes ingresar un concepto para la cuota extraordinaria.")
+                else:
+                    try:
+                        with engine.connect() as conn:
+                            conn.execute(
+                                text("""
+                                    INSERT INTO cuotas_extraordinarias (concepto, monto_total, fecha_emision, estatus)
+                                    VALUES (:c, :m, CURRENT_DATE, 'Pendiente')
+                                """),
+                                {"c": concepto_ce, "m": monto_ce}
+                            )
+                            conn.commit()
+                        st.success("✅ Cuota extraordinaria creada exitosamente en estado pendiente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al registrar la cuota extraordinaria: {e}")
+
+        st.write("---")
+        st.subheader("📋 Listado y Control de Cuotas Extraordinarias")
+
+        try:
+            with engine.connect() as conn:
+                df_cuotas_admin = pd.read_sql(
+                    text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"),
+                    conn
+                )
+
+            if df_cuotas_admin.empty:
+                st.info("No hay cuotas extraordinarias registradas.")
+            else:
+                for _, r_ce in df_cuotas_admin.iterrows():
+                    c_det, c_act = st.columns([3, 2])
+                    with c_det:
+                        badge_ce = "🟡 Pendiente" if r_ce["estatus"] == "Pendiente" else "🟢 Aprobada"
+                        st.markdown(
+                            f"**Concepto:** {r_ce['concepto']} | **Monto:** ${float(r_ce['monto_total']):,.2f} | **Fecha:** {r_ce['fecha_emision']} | **Estatus:** {badge_ce}"
+                        )
+                    with c_act:
+                        bc1, bc2, bc3 = st.columns(3)
+                        with bc1:
+                            if r_ce["estatus"] == "Pendiente":
+                                if st.button("✅ Aprobar", key=f"aprob_ce_{r_ce['id']}"):
+                                    with engine.connect() as conn:
+                                        conn.execute(
+                                            text("UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id"),
+                                            {"id": r_ce["id"]}
+                                        )
+                                        conn.commit()
+                                    st.success("Cuota aprobada.")
+                                    st.rerun()
+                        with bc2:
+                            if r_ce["estatus"] == "Aprobada":
+                                if st.button("↩️ Pendiente", key=f"pend_ce_{r_ce['id']}"):
+                                    with engine.connect() as conn:
+                                        conn.execute(
+                                            text("UPDATE cuotas_extraordinarias SET estatus = 'Pendiente' WHERE id = :id"),
+                                            {"id": r_ce["id"]}
+                                        )
+                                        conn.commit()
+                                    st.success("Cuota marcada como pendiente.")
+                                    st.rerun()
+                        with bc3:
+                            if st.button("❌ Eliminar", key=f"del_ce_{r_ce['id']}"):
+                                with engine.connect() as conn:
+                                    conn.execute(
+                                        text("DELETE FROM cuotas_extraordinarias WHERE id = :id"),
+                                        {"id": r_ce["id"]}
+                                    )
+                                    conn.commit()
+                                st.success("Cuota eliminada.")
+                                st.rerun()
+        except Exception as e:
+            st.error(f"Error cargando las cuotas extraordinarias: {e}")
 
     with t4:
         st.subheader("💱 Tasas de Cambio")
