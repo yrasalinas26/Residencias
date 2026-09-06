@@ -1055,6 +1055,102 @@ if rol_actual == "admin":
         except Exception as e:
             st.error(f"Error en conciliación: {e}")
 
+        # -------------------------------------------------------------------------
+        # GESTIÓN Y VALIDACIÓN DE PAGOS REPORTADOS (INMEDIATO ABAJO DE T9)
+        # -------------------------------------------------------------------------
+        st.markdown("---")
+        st.subheader("🔍 Gestión y Validación de Pagos Reportados")
+        st.info("Revisa los pagos enviados por los propietarios. Puedes aprobarlos, rechazarlos o eliminarlos si contienen errores para que el propietario pueda volver a reportarlos.")
+
+        try:
+            with engine.connect() as conn:
+                df_pagos_admin = pd.read_sql(
+                    text("""
+                        SELECT id, apartamento, tipo_pago, mes_anio, monto_original, 
+                               moneda, tasa_aplicada, monto_usd, metodo_pago, 
+                               referencia, fecha_pago, estatus, fecha_reporte 
+                        FROM pagos_reportados 
+                        ORDER BY id DESC
+                    """),
+                    conn
+                )
+
+            if df_pagos_admin.empty:
+                st.info("No hay pagos reportados en el sistema.")
+            else:
+                filtro_estatus = st.selectbox(
+                    "Filtrar por estatus:", 
+                    ["Todos", "Pendiente", "Aprobado", "Rechazado"],
+                    key="filtro_estatus_admin"
+                )
+
+                df_filtrado = df_pagos_admin if filtro_estatus == "Todos" else df_pagos_admin[df_pagos_admin["estatus"] == filtro_estatus]
+
+                if df_filtrado.empty:
+                    st.warning(f"No hay pagos con el estatus '{filtro_estatus}'.")
+                else:
+                    for _, p in df_filtrado.iterrows():
+                        if p["estatus"] == "Aprobado":
+                            badge = "🟢 Aprobado"
+                        elif p["estatus"] == "Pendiente":
+                            badge = "🟡 Pendiente"
+                        else:
+                            badge = "🔴 Rechazado"
+
+                        with st.expander(f"ID #{p['id']} | Apto: {p['apartamento']} | Periodo: {p['mes_anio']} | ${float(p['monto_usd']):,.2f} USD ({badge})"):
+                            col_info1, col_info2 = st.columns(2)
+                            with col_info1:
+                                st.markdown(f"""
+                                - **Propietario / Apto:** Unidad {p['apartamento']}
+                                - **Tipo de Pago:** {p['tipo_pago']}
+                                - **Monto Original:** {float(p['monto_original']):,.2f} {p['moneda']}
+                                - **Tasa Aplicada:** {float(p['tasa_aplicada']):,.4f}
+                                - **Equivalente USD:** **${float(p['monto_usd']):,.2f}**
+                                """)
+                            with col_info2:
+                                st.markdown(f"""
+                                - **Método:** {p['metodo_pago']}
+                                - **Referencia:** `{p['referencia']}`
+                                - **Fecha del Pago:** {p['fecha_pago']}
+                                - **Reportado el:** {p['fecha_reporte']}
+                                """)
+
+                            col_b1, col_b2, col_b3 = st.columns(3)
+                            
+                            with col_b1:
+                                if p["estatus"] != "Aprobado":
+                                    if st.button("✅ Aprobar Pago", key=f"aprobar_{p['id']}"):
+                                        with engine.begin() as conn_w:
+                                            conn_w.execute(
+                                                text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :id"),
+                                                {"id": p['id']}
+                                            )
+                                        st.success(f"Pago #{p['id']} aprobado correctamente.")
+                                        st.rerun()
+
+                            with col_b2:
+                                if p["estatus"] != "Rechazado":
+                                    if st.button("❌ Rechazar", key=f"rechazar_{p['id']}"):
+                                        with engine.begin() as conn_w:
+                                            conn_w.execute(
+                                                text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"),
+                                                {"id": p['id']}
+                                            )
+                                        st.warning(f"Pago #{p['id']} marcado como rechazado.")
+                                        st.rerun()
+
+                            with col_b3:
+                                if st.button("🗑️ Eliminar Registro", key=f"eliminar_{p['id']}", type="secondary"):
+                                    with engine.begin() as conn_w:
+                                        conn_w.execute(
+                                            text("DELETE FROM pagos_reportados WHERE id = :id"),
+                                            {"id": p['id']}
+                                        )
+                                    st.error(f"Pago #{p['id']} eliminado del sistema. El propietario ya puede reportarlo de nuevo.")
+                                    st.rerun()
+
+        except Exception as e:
+
 else:
     # -------------------------------------------------------------------------
     # PANEL DEL PROPIETARIO (AUTENTICADO CON SU UNIDAD)
