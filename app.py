@@ -907,10 +907,56 @@ if rol_actual == "admin":
             st.error(f"Error cargando las cuotas extraordinarias: {e}")
 
     with t4:
-        st.subheader("💱 Tasas de Cambio")
+        st.subheader("💱 Gestión de Tasas de Cambio (BCV / Manual)")
+        
+        # Mostrar tasa de hoy obtenida automáticamente
         tasa_hoy = verificar_y_actualizar_tasa_hoy(engine)
-        st.metric("Tasa BCV Actual Registrada", f"{tasa_hoy:,.4f} VES/USD")
+        st.metric("Tasa BCV Automática para Hoy", f"{tasa_hoy:,.4f} VES/USD")
 
+        st.markdown("---")
+        st.markdown("### ➕ Registrar o Actualizar Tasa Manualmente")
+        
+        with st.form("form_registrar_tasa"):
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                fecha_tasa = st.date_input("Fecha de la Tasa", value=date.today())
+            with col_t2:
+                valor_tasa = st.number_input("Valor de la Tasa (VES por 1 USD)", min_value=0.01, value=float(tasa_hoy), step=0.01, format="%.4f")
+            
+            btn_guardar_tasa = st.form_submit_button("Guardar / Actualizar Tasa", type="primary")
+
+            if btn_guardar_tasa:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO tasa_cambio (fecha, tasa)
+                                VALUES (:f, :t)
+                                ON CONFLICT (fecha) DO UPDATE SET tasa = EXCLUDED.tasa
+                            """),
+                            {"f": fecha_tasa, "t": valor_tasa}
+                        )
+                        conn.commit()
+                    st.success(f"✅ Tasa de {valor_tasa:,.4f} para la fecha {fecha_tasa} guardada correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar la tasa de cambio: {e}")
+
+        st.markdown("---")
+        st.markdown("### 📋 Historial de Tasas Registradas en el Sistema")
+
+        try:
+            with engine.connect() as conn:
+                df_tasas = pd.read_sql(
+                    text("SELECT fecha, tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 30"),
+                    conn
+                )
+            if df_tasas.empty:
+                st.info("No hay tasas de cambio registradas.")
+            else:
+                st.dataframe(df_tasas, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error al cargar el historial de tasas: {e}")
     with t5:
         st.subheader("✅ Validación de Pagos Reportados")
         try:
