@@ -904,7 +904,7 @@ if rol_actual == "admin":
                                 st.success("Cuota eliminada.")
                                 st.rerun()
         except Exception as e:
-            st.error(f"Error cargando las cuotas extraordinarias: {e}")
+            st.error(f"Error cargando las cuotas extraordinarias: {e}"
 
     with t4:
         st.subheader("💱 Gestión de Tasas de Cambio (BCV / Manual)")
@@ -957,6 +957,7 @@ if rol_actual == "admin":
                 st.dataframe(df_tasas, use_container_width=True)
         except Exception as e:
             st.error(f"Error al cargar el historial de tasas: {e}")
+
     with t5:
         st.subheader("✅ Validación de Pagos Reportados")
         try:
@@ -972,7 +973,7 @@ if rol_actual == "admin":
         except Exception as e:
             st.error(f"Error al cargar pagos reportados: {e}")
 
-with t6:
+    with t6:
         st.subheader("🏢 Configuración de Alícuotas, Unidades y Propietarios")
         st.dataframe(obtener_unidades_df(), use_container_width=True)
 
@@ -1009,19 +1010,20 @@ with t6:
                         st.error(f"Error al restablecer la contraseña: {e}")
 
         except Exception as e:
-            st.error(f"Error cargando la lista de unidades para restablecer claves: {e}")
-with t7:
+            st.error(f"Error cargando la lista de unidades para restablecer claves: {e}"
+
+    with t7:
         st.subheader("🚨 Morosidad y Recibos")
         renderizar_recibos()
 
-with t8:
+    with t8:
         st.subheader("⚙️ Datos del Edificio")
         edificio = obtener_datos_edificio()
         st.write(f"**Nombre:** {edificio['nombre']}")
         st.write(f"**RIF:** {edificio['rif']}")
         st.write(f"**Dirección:** {edificio['direccion']}")
 
-with t9:
+    with t9:
         st.subheader("💱 Conciliación de Pagos en Bolívares")
         st.info("Módulo para conciliar pagos calculando la tasa BCV correspondiente al día de la transacción.")
 
