@@ -1518,13 +1518,13 @@ elif st.session_state.rol_logueado == "admin":
           f" {mes_recibo_gral}."
       )
 
-    st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
-    for _, u_row in unidades_df.iterrows():
-      u_cod = u_row["unidad"]
-      u_prop = u_row["propietario"]
-      u_tel = u_row["telefono"]
-      u_alic = float(u_row["alicuota"])
-      u_alic_decimal = u_alic / 100.0
+     st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
+     for _, u_row in unidades_df.iterrows():
+       u_cod = u_row["unidad"]
+       u_prop = u_row["propietario"]
+       u_tel = u_row["telefono"]
+       u_alic = float(u_row["alicuota"])
+       u_alic_decimal = u_alic / 100.0
 
       cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
 
