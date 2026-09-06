@@ -1475,7 +1475,7 @@ elif st.session_state.rol_logueado == "admin":
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
-   with t7:
+with t7:
   st.error("ESTO ES UNA PRUEBA DE LA PESTAÑA 7")
   st.subheader("🚨 Recibos y Envíos a WhatsApp")
   mes_recibo_gral = st.text_input(
