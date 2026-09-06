@@ -11,7 +11,8 @@ import requests
 from sqlalchemy import create_engine, text
 import streamlit as st
 
-def renderizar_recibos():
+
+def renderizar_recibos(sufijo="1"):
   # Obtenemos los datos del edificio dentro de la misma función para evitar errores de alcance
   datos_ed = obtener_datos_edificio()
 
@@ -19,8 +20,9 @@ def renderizar_recibos():
   mes_recibo_gral = st.text_input(
       "Periodo del Recibo (AAAA-MM):",
       value=obtener_mes_anterior(),
-      key="input_mes_recibo_gen_admin",  # <--- CAMBIA ESTA CLAVE AQUÍ
+      key=f"input_mes_recibo_gen_admin_{sufijo}",  # <--- Clave dinámica
   )
+
   try:
     with engine.connect() as conn:
       # 1. Consulta de gastos comunes aprobados
@@ -126,7 +128,7 @@ def renderizar_recibos():
             f"Mensaje WhatsApp Apt {u_cod}:",
             msg_ind,
             height=200,
-            key=f"txt_msg_{u_cod}",
+            key=f"txt_msg_{u_cod}_{sufijo}",  # <--- Clave dinámica
         )
         enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
         st.link_button(
@@ -175,7 +177,7 @@ def renderizar_recibos():
           "Vista Previa Recibo General:",
           texto_ws,
           height=220,
-          key="txt_msg_general_grupo",
+          key=f"txt_msg_general_grupo_{sufijo}",  # <--- Clave dinámica
       )
 
       enlace_wa_general = f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
