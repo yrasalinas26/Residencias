@@ -19,9 +19,8 @@ def renderizar_recibos():
   mes_recibo_gral = st.text_input(
       "Periodo del Recibo (AAAA-MM):",
       value=obtener_mes_anterior(),
-      key="input_mes_recibo_gen",
+      key="input_mes_recibo_gen_admin",  # <--- CAMBIA ESTA CLAVE AQUÍ
   )
-
   try:
     with engine.connect() as conn:
       # 1. Consulta de gastos comunes aprobados
