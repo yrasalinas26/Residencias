@@ -1512,8 +1512,8 @@ elif st.session_state.rol_logueado == "admin":
           f"⚠️ No se encontraron gastos aprobados para el periodo"
           f" {mes_recibo_gral}. Por eso el desglose sale vacío."
       )
-    else:
-      st.success(
+     else:
+       st.success(
           f"✅ Se cargaron {len(gastos_mes_df)} gastos comunes para el periodo"
           f" {mes_recibo_gral}."
       )
