@@ -1040,7 +1040,7 @@ with t1:
           st.error(f"Error registrando gasto: {e}")
 
 st.write("---")
-    st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
+st.subheader("🔍 Previsualizar y Aprobar Gastos Comunes")
     mes_filtro = st.text_input(
         "Filtrar gastos por periodo (AAAA-MM):",
         value=obtener_mes_anterior(),
