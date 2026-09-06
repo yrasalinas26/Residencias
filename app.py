@@ -1365,7 +1365,3 @@ else:
         - **Dirección:** {datos_ed_p['direccion']}
         """)
         st.info("Ante cualquier duda con tus pagos o reporte de averías en áreas comunes, comunícate directamente con la administración del edificio.")
-        - **RIF:** {datos_ed_p['rif']}
-        - **Dirección:** {datos_ed_p['direccion']}
-        """)
-        st.info("Ante cualquier duda con tus pagos o reporte de averías en áreas comunes, comunícate directamente con la administración del edificio.")
