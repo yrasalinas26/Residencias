@@ -1360,7 +1360,7 @@ else:
                             """)
 
         except Exception as e:
-            st.error(f"Error cargando la conciliación del propietario: {e}"
+            st.error(f"Error cargando la conciliación del propietario: {e}")
     with t_p4:
         st.subheader("📞 Información de Contacto y Avisos de la Comunidad")
         datos_ed_p = obtener_datos_edificio()
