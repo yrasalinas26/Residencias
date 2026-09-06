@@ -1152,7 +1152,7 @@ if rol_actual == "admin":
 except Exception as e:
             st.error(f"Error en la sección de pagos: {e}")
 
-  else:
+            else:
     # -------------------------------------------------------------------------
     # PANEL DEL PROPIETARIO (AUTENTICADO CON SU UNIDAD)
     # -------------------------------------------------------------------------
