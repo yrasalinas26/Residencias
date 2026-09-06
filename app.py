@@ -1476,34 +1476,34 @@ with t7:
         renderizar_recibos()
 
 with t8:
-      st.subheader("⚙️ Configuración General del Edificio")
-      datos_actuales = obtener_datos_edificio()
+    st.subheader("⚙️ Configuración General del Edificio")
+    datos_actuales = obtener_datos_edificio()
 
-  with st.form("form_config_edificio"):
-    nombre_ed = st.text_input(
-        "Nombre del Edificio / Residencias", value=datos_actuales["nombre"]
-    )
-    rif_ed = st.text_input("RIF", value=datos_actuales["rif"])
-    dir_ed = st.text_area("Dirección", value=datos_actuales["direccion"])
+    with st.form("form_config_edificio"):
+        nombre_ed = st.text_input(
+            "Nombre del Edificio / Residencias", value=datos_actuales["nombre"]
+        )
+        rif_ed = st.text_input("RIF", value=datos_actuales["rif"])
+        dir_ed = st.text_area("Dirección", value=datos_actuales["direccion"])
 
-    btn_act_ed = st.form_submit_button("Actualizar Datos", type="primary")
+        btn_act_ed = st.form_submit_button("Actualizar Datos", type="primary")
 
-    if btn_act_ed:
-      try:
-        with engine.connect() as conn:
-          conn.execute(
-              text("""
+        if btn_act_ed:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(
+                        text("""
                             UPDATE configuracion_edificio 
                             SET nombre = :n, rif = :r, direccion = :d 
                             WHERE id = 1
                         """),
-              {"n": nombre_ed, "r": rif_ed, "d": dir_ed},
-          )
-          conn.commit()
-        st.success("✅ Datos del edificio actualizados con éxito.")
-        st.rerun()
-      except Exception as e:
-        st.error(f"Error actualizando configuración: {e}")
+                        {"n": nombre_ed, "r": rif_ed, "d": dir_ed},
+                    )
+                    conn.commit()
+                st.success("✅ Datos del edificio actualizados con éxito.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error actualizando configuración: {e}")
 
 with t9:
       st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa Diaria)")
