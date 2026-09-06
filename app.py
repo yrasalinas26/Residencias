@@ -1308,7 +1308,7 @@ with t7:
     except Exception as e:
       st.error(f"Error cargando cuotas extraordinarias: {e}")
 
- with t4:
+    with t4:
         st.subheader("💱 Registro Manual de Tasas de Cambio (BCV)")
         
         ultima_tasa_manual = 1.0
