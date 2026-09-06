@@ -1475,6 +1475,8 @@ t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
+    with t7:
+        renderizar_recibos()
 
     with t8:
       st.subheader("⚙️ Configuración General del Edificio")
