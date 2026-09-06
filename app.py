@@ -695,7 +695,7 @@ def generar_pdf_recibo(apt, periodo, total_cuota, detalles_gastos, alicuota):
 # -----------------------------------------------------------------------------
 # 1. PORTAL DE ACCESO
 # -----------------------------------------------------------------------------
-if not st.session_state.usuario_logueado:
+if not st.session_state.get("usuario_logueado"):
   st.markdown(
       "<h2 style='text-align: center;'>🔒 Portal de Acceso</h2>",
       unsafe_allow_html=True,
