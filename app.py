@@ -1116,7 +1116,7 @@ st.write("---")
     except Exception as e:
       st.error(f"Error consultando gastos: {e}")
 
-  with t2:
+with t2:
     st.subheader("🛠️ Cargar Gasto No Común (Cargo Individual)")
     df_unidades_list = obtener_unidades_df()
 
@@ -1177,7 +1177,7 @@ st.write("---")
     except Exception as e:
       st.error(f"Error listando cargos: {e}")
 
-  with t3:
+with t3:
     st.subheader("⭐ Cargar Nueva Cuota Extraordinaria")
     with st.form("form_cuota_extra"):
       col_ce1, col_ce2 = st.columns(2)
@@ -1298,7 +1298,7 @@ st.write("---")
     except Exception as e:
       st.error(f"Error cargando cuotas extraordinarias: {e}")
 
-    with t4:
+with t4:
         st.subheader("💱 Registro Manual de Tasas de Cambio (BCV)")
         
         ultima_tasa_manual = 1.0
@@ -1370,7 +1370,7 @@ st.write("---")
                 st.dataframe(df_tasas, use_container_width=True)
         except Exception as e:
             st.error(f"Error cargando tasas: {e}")
-  with t5:
+with t5:
     st.subheader("✅ Conciliación de Pagos Reportados")
     try:
       with engine.connect() as conn:
@@ -1430,7 +1430,7 @@ st.write("---")
     except Exception as e:
       st.error(f"Error al cargar pagos reportados: {e}")
 
-  with t6:
+with t6:
     st.subheader("🏢 Configuración de Unidades y Alícuotas")
     try:
       df_unidades_act = obtener_unidades_df()
@@ -1477,10 +1477,10 @@ st.write("---")
     except Exception as e:
       st.error(f"Error gestionando unidades: {e}")
 
-    with t7:
+with t7:
         renderizar_recibos()
 
-    with t8:
+with t8:
       st.subheader("⚙️ Configuración General del Edificio")
       datos_actuales = obtener_datos_edificio()
 
@@ -1510,7 +1510,7 @@ st.write("---")
       except Exception as e:
         st.error(f"Error actualizando configuración: {e}")
 
-    with t9:
+with t9:
       st.subheader("💱 Conciliación de Pagos en Bolívares (Tasa Diaria)")
       st.markdown(
       "Selecciona la fecha del pago del propietario para aplicar la tasa"
