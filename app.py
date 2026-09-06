@@ -11,184 +11,164 @@ import requests
 from sqlalchemy import create_engine, text
 import streamlit as st
 
-
-def renderizar_recibos(sufijo="1"):
-    # Obtenemos los datos del edificio dentro de la misma función
+def renderizar_recibos():
+    # Obtenemos los datos del edificio dentro de la misma función para evitar errores de alcance
     datos_ed = obtener_datos_edificio()
 
     st.subheader("🚨 Recibos y Envíos a WhatsApp")
-    
-    # 💡 Quitamos el 'key=' para que Streamlit lo maneje automáticamente sin duplicados
     mes_recibo_gral = st.text_input(
         "Periodo del Recibo (AAAA-MM):",
         value=obtener_mes_anterior(),
     )
-  try:
-    with engine.connect() as conn:
-      # 1. Consulta de gastos comunes aprobados
-      gastos_mes_df = pd.read_sql(
-          text(
-              "SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND"
-              " (estatus = 'Aprobado' OR estatus = 'APROBADO')"
-          ),
-          conn,
-          params={"m": mes_recibo_gral},
-      )
-      total_gastos_comunes = (
-          gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
-      )
 
-      # 2. Consulta de unidades
-      unidades_df = pd.read_sql(
-          text(
-              "SELECT unidad, alicuota, propietario, telefono FROM unidades"
-              " ORDER BY unidad ASC"
-          ),
-          conn,
-      )
+    try:
+        with engine.connect() as conn:
+            # 1. Consulta de gastos comunes aprobados
+            gastos_mes_df = pd.read_sql(
+                text("SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND (estatus = 'Aprobado' OR estatus = 'APROBADO')"),
+                conn,
+                params={"m": mes_recibo_gral},
+            )
+            total_gastos_comunes = (
+                gastos_mes_df["monto"].sum() if not gastos_mes_df.empty else 0.0
+            )
 
-      # 3. Consulta única optimizada de cargos individuales
-      cargos_df = pd.read_sql(
-          text(
-              "SELECT apartamento, SUM(monto) as total_cargos FROM"
-              " cargos_individuales WHERE mes_anio = :m GROUP BY apartamento"
-          ),
-          conn,
-          params={"m": mes_recibo_gral},
-      )
+            # 2. Consulta de unidades
+            unidades_df = pd.read_sql(
+                text("SELECT unidad, alicuota, propietario, telefono FROM unidades ORDER BY unidad ASC"),
+                conn,
+            )
 
-    # Diccionario rápido de cargos
-    cargos_dict = (
-        dict(zip(cargos_df["apartamento"], cargos_df["total_cargos"]))
-        if not cargos_df.empty
-        else {}
-    )
+            # 3. Consulta única optimizada de cargos individuales
+            cargos_df = pd.read_sql(
+                text("SELECT apartamento, SUM(monto) as total_cargos FROM cargos_individuales WHERE mes_anio = :m GROUP BY apartamento"),
+                conn,
+                params={"m": mes_recibo_gral},
+            )
 
-    # Diagnóstico visual rápido en pantalla
-    if gastos_mes_df.empty:
-      st.warning(
-          f"⚠️ No se encontraron gastos aprobados para el periodo"
-          f" {mes_recibo_gral}. Por eso el desglose sale vacío."
-      )
-    else:
-      st.success(
-          f"✅ Se cargaron {len(gastos_mes_df)} gastos comunes para el periodo"
-          f" {mes_recibo_gral}."
-      )
+        # Diccionario rápido de cargos
+        cargos_dict = (
+            dict(zip(cargos_df["apartamento"], cargos_df["total_cargos"]))
+            if not cargos_df.empty
+            else {}
+        )
 
-    st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
-    for _, u_row in unidades_df.iterrows():
-      u_cod = u_row["unidad"]
-      u_prop = u_row["propietario"]
-      u_tel = u_row["telefono"]
-      u_alic = float(u_row["alicuota"])
-      u_alic_decimal = u_alic / 100.0
+        # Diagnóstico visual rápido en pantalla
+        if gastos_mes_df.empty:
+            st.warning(f"⚠️ No se encontraron gastos aprobados para el periodo {mes_recibo_gral}. Por eso el desglose sale vacío.")
+        else:
+            st.success(f"✅ Se cargaron {len(gastos_mes_df)} gastos comunes para el periodo {mes_recibo_gral}.")
 
-      cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
-      cargos_apt = float(cargos_dict.get(u_cod, 0.0))
-      total_apt = cuota_comun_apt + cargos_apt
+        st.markdown("### 👤 Recibos Individuales por Propietario (WhatsApp)")
+        for _, u_row in unidades_df.iterrows():
+            u_cod = u_row["unidad"]
+            u_prop = u_row["propietario"]
+            u_tel = u_row["telefono"]
+            u_alic = float(u_row["alicuota"])
+            u_alic_decimal = u_alic / 100.0
 
-      with st.expander(f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"):
-        # --- MENSAJE INDIVIDUAL DESGLOSADO ---
-        msg_ind = f"  *{datos_ed['nombre']}*\n"
-        msg_ind += f"  *AVISO DE COBRO - {mes_recibo_gral}*\n"
-        msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
-        msg_ind += f"Alícuota: {u_alic:.1f}%\n"
-        msg_ind += f"----------------------------------------\n"
-        msg_ind += f"  *Desglose de Gastos Comunes:*\n"
+            cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
+            cargos_apt = float(cargos_dict.get(u_cod, 0.0))
+            total_apt = cuota_comun_apt + cargos_apt
+
+            with st.expander(f"🔹 Apt {u_cod} - {u_prop} (Total: ${total_apt:,.2f})"):
+                # --- MENSAJE INDIVIDUAL DESGLOSADO ---
+                msg_ind = f"  *{datos_ed['nombre']}*\n"
+                msg_ind += f"  *AVISO DE COBRO - {mes_recibo_gral}*\n"
+                msg_ind += f"Estimado(a) *{u_prop}* (Unidad {u_cod})\n"
+                msg_ind += f"Alícuota: {u_alic:.1f}%\n"
+                msg_ind += f"----------------------------------------\n"
+                msg_ind += f"  *Desglose de Gastos Comunes:*\n"
+
+                if not gastos_mes_df.empty:
+                    for _, g_row in gastos_mes_df.iterrows():
+                        g_concepto = (
+                            g_row["concepto"]
+                            if "concepto" in g_row
+                            else g_row.get("CONCEPTO", "Gasto")
+                        )
+                        g_monto_total = float(
+                            g_row["monto"] if "monto" in g_row else g_row.get("MONTO", 0.0)
+                        )
+                        g_monto_apto = g_monto_total * u_alic_decimal
+                        msg_ind += f"• {g_concepto}: ${g_monto_apto:,.2f}\n"
+                else:
+                    msg_ind += "• (Sin gastos comunes registrados para este mes)\n"
+
+                msg_ind += f"----------------------------------------\n"
+                msg_ind += f"• Subtotal Cuota Común: ${cuota_comun_apt:,.2f}\n"
+
+                if cargos_apt > 0:
+                    msg_ind += f"• Cargos Extras / No Comunes: ${cargos_apt:,.2f}\n"
+
+                msg_ind += f"----------------------------------------\n"
+                msg_ind += f"  *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
+                msg_ind += "Por favor realizar su pago y reportarlo en la plataforma. ¡Gracias!"
+
+                st.text_area(
+                    f"Mensaje WhatsApp Apt {u_cod}:",
+                    msg_ind,
+                    height=200,
+                    key=f"txt_msg_{u_cod}",
+                )
+                enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
+                st.link_button(
+                    f"📲 Enviar WhatsApp a Apt {u_cod} ({u_tel or 'Sin teléfono'})",
+                    enlace_wa_apt,
+                    use_container_width=True,
+                )
+
+        st.write("---")
+        st.markdown("### 📢 Recibo General para Grupo / Difusión")
 
         if not gastos_mes_df.empty:
-          for _, g_row in gastos_mes_df.iterrows():
-            g_concepto = (
-                g_row["concepto"]
-                if "concepto" in g_row
-                else g_row.get("CONCEPTO", "Gasto")
+            texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
+            texto_ws += f"📄 *RESUMEN DE GASTOS Y COBRANZA - {mes_recibo_gral}*\n\n"
+            texto_ws += f"  *Gastos Comunes del Edificio:*\n"
+
+            for _, g in gastos_mes_df.iterrows():
+                g_concepto = (
+                    g["concepto"] if "concepto" in g else g.get("CONCEPTO", "Gasto")
+                )
+                g_monto_total = float(
+                    g["monto"] if "monto" in g else g.get("MONTO", 0.0)
+                )
+                texto_ws += f"• {g_concepto}: ${g_monto_total:,.2f}\n"
+
+            texto_ws += (
+                f"----------------------------------------\n"
+                f"💰 *TOTAL GASTOS COMUNES:* *${float(total_gastos_comunes):,.2f}*\n"
+                f"----------------------------------------\n"
+                f"  *Distribución por Apartamentos:*\n"
             )
-            g_monto_total = float(
-                g_row["monto"] if "monto" in g_row else g_row.get("MONTO", 0.0)
+
+            for _, u_row in unidades_df.iterrows():
+                u_cod = u_row["unidad"]
+                u_alic = float(u_row["alicuota"])
+                cuota_apt_gral = float(total_gastos_comunes) * (u_alic / 100.0)
+                texto_ws += f"• Apto {u_cod} ({u_alic:.1f}%): ${cuota_apt_gral:,.2f}\n"
+
+            texto_ws += (
+                f"----------------------------------------\n"
+                "🙏 Por favor realizar sus pagos correspondientes y reportarlos en la plataforma. ¡Gracias!"
             )
-            g_monto_apto = g_monto_total * u_alic_decimal
-            msg_ind += f"• {g_concepto}: ${g_monto_apto:,.2f}\n"
-        else:
-          msg_ind += "• (Sin gastos comunes registrados para este mes)\n"
 
-        msg_ind += f"----------------------------------------\n"
-        msg_ind += f"• Subtotal Cuota Común: ${cuota_comun_apt:,.2f}\n"
+            st.text_area(
+                "Vista Previa Recibo General:",
+                texto_ws,
+                height=220,
+                key="txt_msg_general_grupo",
+            )
 
-        if cargos_apt > 0:
-          msg_ind += f"• Cargos Extras / No Comunes: ${cargos_apt:,.2f}\n"
+            enlace_wa_general = f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
+            st.link_button(
+                "📲 Abrir WhatsApp con el Recibo General Completo",
+                enlace_wa_general,
+                use_container_width=True,
+            )
 
-        msg_ind += f"----------------------------------------\n"
-        msg_ind += f"  *TOTAL A PAGAR: ${total_apt:,.2f}*\n\n"
-        msg_ind += (
-            "Por favor realizar su pago y reportarlo en la plataforma. ¡Gracias!"
-        )
-
-        st.text_area(
-            f"Mensaje WhatsApp Apt {u_cod}:",
-            msg_ind,
-            height=200,
-            key=f"txt_msg_{u_cod}_{sufijo}",  # <--- Clave dinámica
-        )
-        enlace_wa_apt = generar_enlace_whatsapp(u_tel, msg_ind)
-        st.link_button(
-            f"📲 Enviar WhatsApp a Apt {u_cod} ({u_tel or 'Sin teléfono'})",
-            enlace_wa_apt,
-            use_container_width=True,
-        )
-
-    st.write("---")
-    st.markdown("### 📢 Recibo General para Grupo / Difusión")
-
-    if not gastos_mes_df.empty:
-      texto_ws = f"🏢 *{datos_ed['nombre']}*\n"
-      texto_ws += f"📄 *RESUMEN DE GASTOS Y COBRANZA - {mes_recibo_gral}*\n\n"
-      texto_ws += f"  *Gastos Comunes del Edificio:*\n"
-
-      for _, g in gastos_mes_df.iterrows():
-        g_concepto = (
-            g["concepto"] if "concepto" in g else g.get("CONCEPTO", "Gasto")
-        )
-        g_monto_total = float(
-            g["monto"] if "monto" in g else g.get("MONTO", 0.0)
-        )
-        texto_ws += f"• {g_concepto}: ${g_monto_total:,.2f}\n"
-
-      texto_ws += (
-          f"----------------------------------------\n"
-          f"💰 *TOTAL GASTOS COMUNES:* *${float(total_gastos_comunes):,.2f}*\n"
-          f"----------------------------------------\n"
-          f"  *Distribución por Apartamentos:*\n"
-      )
-
-      for _, u_row in unidades_df.iterrows():
-        u_cod = u_row["unidad"]
-        u_alic = float(u_row["alicuota"])
-        cuota_apt_gral = float(total_gastos_comunes) * (u_alic / 100.0)
-        texto_ws += f"• Apto {u_cod} ({u_alic:.1f}%): ${cuota_apt_gral:,.2f}\n"
-
-      texto_ws += (
-          f"----------------------------------------\n"
-          "🙏 Por favor realizar sus pagos correspondientes y reportarlos en"
-          " la plataforma. ¡Gracias!"
-      )
-
-      st.text_area(
-          "Vista Previa Recibo General:",
-          texto_ws,
-          height=220,
-          key=f"txt_msg_general_grupo_{sufijo}",  # <--- Clave dinámica
-      )
-
-      enlace_wa_general = f"https://wa.me/?text={urllib.parse.quote(texto_ws)}"
-      st.link_button(
-          "📲 Abrir WhatsApp con el Recibo General Completo",
-          enlace_wa_general,
-          use_container_width=True,
-      )
-
-  except Exception as e:
-    st.error(f"Error generando recibos: {e}")
+    except Exception as e:
+        st.error(f"Error generando recibos: {e}")
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DE PÁGINA E ICONO PERSONALIZADO
 # -----------------------------------------------------------------------------
