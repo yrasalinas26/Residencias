@@ -770,6 +770,22 @@ else:
         st.session_state.pop("usuario_logueado", None)
         st.session_state.pop("rol_logueado", None)
         st.rerun()
+    # 🛑 DETENER AQUÍ: Si no ha iniciado sesión, la app no sigue leyendo hacia abajo
+    st.stop()
+
+else:
+    # SI YA INICIÓ SESIÓN: Mostramos la barra lateral con su información y el botón de salir
+    st.sidebar.markdown(
+        f"👤 **Usuario:** {st.session_state['usuario_logueado']}"
+    )
+    st.sidebar.markdown(
+        f"🔑 **Rol:** {st.session_state.get('rol_logueado', '')}"
+    )
+
+    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+        st.session_state.pop("usuario_logueado", None)
+        st.session_state.pop("rol_logueado", None)
+        st.rerun()
 # -----------------------------------------------------------------------------
 # 3. VISTA DE ADMINISTRACIÓN
 # -----------------------------------------------------------------------------
