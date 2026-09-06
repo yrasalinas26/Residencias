@@ -12,6 +12,9 @@ from sqlalchemy import create_engine, text
 import streamlit as st
 
 def renderizar_recibos():
+  # Obtenemos los datos del edificio dentro de la misma función para evitar errores de alcance
+  datos_ed = obtener_datos_edificio()
+
   st.subheader("🚨 Recibos y Envíos a WhatsApp")
   mes_recibo_gral = st.text_input(
       "Periodo del Recibo (AAAA-MM):",
@@ -43,7 +46,7 @@ def renderizar_recibos():
           conn,
       )
 
-      # 3. CONSULTA ÚNICA OPTIMIZADA: Traer todos los cargos individuales del mes de un solo golpe
+      # 3. Consulta única optimizada de cargos individuales
       cargos_df = pd.read_sql(
           text(
               "SELECT apartamento, SUM(monto) as total_cargos FROM"
@@ -53,7 +56,7 @@ def renderizar_recibos():
           params={"m": mes_recibo_gral},
       )
 
-    # Convertir los cargos a un diccionario rápido { "1A": 25.0, "PH": 50.0, ... }
+    # Diccionario rápido de cargos
     cargos_dict = (
         dict(zip(cargos_df["apartamento"], cargos_df["total_cargos"]))
         if not cargos_df.empty
@@ -81,8 +84,6 @@ def renderizar_recibos():
       u_alic_decimal = u_alic / 100.0
 
       cuota_comun_apt = float(total_gastos_comunes) * u_alic_decimal
-
-      # Obtenemos el cargo del diccionario local (sin llamadas extra a la BD)
       cargos_apt = float(cargos_dict.get(u_cod, 0.0))
       total_apt = cuota_comun_apt + cargos_apt
 
