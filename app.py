@@ -1508,7 +1508,7 @@ elif st.session_state.rol_logueado == "admin":
 
     # Diagnóstico visual rápido en pantalla para verificar que los gastos se leyeron
       if gastos_mes_df.empty:
-      st.warning(
+       st.warning(
           f"⚠️ No se encontraron gastos aprobados para el periodo"
           f" {mes_recibo_gral}. Por eso el desglose sale vacío."
       )
