@@ -121,16 +121,10 @@ def inicializar_tablas():
 
             try:
                 conn.execute(
-                    text(
-                        "ALTER TABLE unidades ADD COLUMN IF NOT EXISTS propietario"
-                        " VARCHAR(100) DEFAULT 'Sin Asignar'"
-                    )
+                    text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS propietario VARCHAR(100) DEFAULT 'Sin Asignar'")
                 )
                 conn.execute(
-                    text(
-                        "ALTER TABLE unidades ADD COLUMN IF NOT EXISTS telefono"
-                        " VARCHAR(30) DEFAULT ''"
-                    )
+                    text("ALTER TABLE unidades ADD COLUMN IF NOT EXISTS telefono VARCHAR(30) DEFAULT ''")
                 )
             except Exception:
                 pass
@@ -140,8 +134,7 @@ def inicializar_tablas():
                 for u, a in UNIDADES_DEFECTO:
                     conn.execute(
                         text(
-                            "INSERT INTO unidades (unidad, alicuota, propietario,"
-                            " telefono) VALUES (:u, :a, 'Propietario', '')"
+                            "INSERT INTO unidades (unidad, alicuota, propietario, telefono) VALUES (:u, :a, 'Propietario', '')"
                         ),
                         {"u": u, "a": a},
                     )
@@ -162,8 +155,7 @@ def inicializar_tablas():
             ).fetchone():
                 conn.execute(
                     text(
-                        "INSERT INTO usuarios (usuario, clave, rol) VALUES ('admin',"
-                        " :p, 'admin')"
+                        "INSERT INTO usuarios (usuario, clave, rol) VALUES ('admin', :p, 'admin')"
                     ),
                     {"p": admin_pwd},
                 )
@@ -174,8 +166,7 @@ def inicializar_tablas():
                 ).fetchone():
                     conn.execute(
                         text(
-                            "INSERT INTO usuarios (usuario, clave, rol) VALUES (:u,"
-                            " '1234', 'propietario')"
+                            "INSERT INTO usuarios (usuario, clave, rol) VALUES (:u, '1234', 'propietario')"
                         ),
                         {"u": u},
                     )
@@ -207,22 +198,13 @@ def inicializar_tablas():
 
             try:
                 conn.execute(
-                    text(
-                        "ALTER TABLE gastos ADD COLUMN IF NOT EXISTS tipo VARCHAR(50)"
-                        " DEFAULT 'Comun'"
-                    )
+                    text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS tipo VARCHAR(50) DEFAULT 'Comun'")
                 )
                 conn.execute(
-                    text(
-                        "ALTER TABLE gastos ADD COLUMN IF NOT EXISTS proveedor"
-                        " VARCHAR(100) DEFAULT 'N/A'"
-                    )
+                    text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS proveedor VARCHAR(100) DEFAULT 'N/A'")
                 )
                 conn.execute(
-                    text(
-                        "ALTER TABLE gastos ADD COLUMN IF NOT EXISTS fecha DATE DEFAULT"
-                        " CURRENT_DATE"
-                    )
+                    text("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS fecha DATE DEFAULT CURRENT_DATE")
                 )
             except Exception:
                 pass
@@ -252,6 +234,7 @@ def inicializar_tablas():
             """)
             )
 
+            # Creación segura de la tabla pagos_reportados sin restricciones nulas conflictivas
             conn.execute(
                 text("""
                 CREATE TABLE IF NOT EXISTS pagos_reportados (
@@ -273,40 +256,36 @@ def inicializar_tablas():
             )
 
             try:
+                # Si la tabla ya existía con la columna antigua 'monto' obligatoria, se la quitamos para evitar el NotNullViolation
                 conn.execute(
-                    text(
-                        "ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS"
-                        " monto_original NUMERIC(12,2) DEFAULT 0"
-                    )
+                    text("ALTER TABLE pagos_reportados ALTER COLUMN monto DROP NOT NULL;")
+                )
+            except Exception:
+                pass
+
+            try:
+                conn.execute(
+                    text("ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS monto_original NUMERIC(12,2) DEFAULT 0")
                 )
                 conn.execute(
-                    text(
-                        "ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS moneda"
-                        " VARCHAR(10) DEFAULT 'USD'"
-                    )
+                    text("ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS moneda VARCHAR(10) DEFAULT 'USD'")
                 )
                 conn.execute(
-                    text(
-                        "ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS"
-                        " tasa_aplicada NUMERIC(12,4) DEFAULT 1.0"
-                    )
+                    text("ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS tasa_aplicada NUMERIC(12,4) DEFAULT 1.0")
                 )
                 conn.execute(
-                    text(
-                        "ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS"
-                        " monto_usd NUMERIC(12,2) DEFAULT 0"
-                    )
+                    text("ALTER TABLE pagos_reportados ADD COLUMN IF NOT EXISTS monto_usd NUMERIC(12,2) DEFAULT 0")
                 )
             except Exception:
                 pass
 
             conn.commit()
-    except Exception:
+    except Exception as e:
+        print(f"Error inicializando tablas: {e}")
         pass
 
 
 inicializar_tablas()
-
 
 # -----------------------------------------------------------------------------
 # FUNCIONES AUTOMÁTICAS DE TASA Y AUXILIARES
