@@ -997,9 +997,9 @@ t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
     "🚨 Morosidad y Recibos",
     "⚙️ Datos Edificio",
     "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
-])
+    ])
   
-   with t1:
+   with t1: 
      st.subheader("➕ Cargar Nuevo Gasto Común")
      with st.form("form_gasto"):
       col_g1, col_g2 = st.columns(2)
