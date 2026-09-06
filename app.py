@@ -999,9 +999,9 @@ t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
     "💱 Conciliación de Pagos en Bolívares (Tasa BCV)",
 ])
   
-  with t1:
-    st.subheader("➕ Cargar Nuevo Gasto Común")
-    with st.form("form_gasto"):
+   with t1:
+     st.subheader("➕ Cargar Nuevo Gasto Común")
+     with st.form("form_gasto"):
       col_g1, col_g2 = st.columns(2)
       with col_g1:
         mes = st.text_input(
