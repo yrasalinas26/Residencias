@@ -1004,49 +1004,98 @@ if rol_actual == "admin":
 
         st.markdown("---")
         
+       # =====================================================================
+        # 📄 CONSULTAR ESTADO DE CUENTA Y SALDO (CONCILIACIÓN INDIVIDUAL)
         # =====================================================================
-        # 📄 CONSULTAR ESTADO DE CUENTA
-        # =====================================================================
-        with st.expander("👤 Consultar y Generar Estado de Cuenta por Propietario"):
+        with st.expander("👤 Consultar Estado de Cuenta y Saldo por Propietario"):
             df_lista_units = obtener_unidades_df()
             lista_apartamentos = df_lista_units['unidad'].tolist() if not df_lista_units.empty else []
             
-            apto_seleccionado = st.selectbox("Seleccione el Apartamento / Propietario:", lista_apartamentos, key="select_edo_cta_admin")
+            apto_seleccionado = st.selectbox("Seleccione el Apartamento / Unidad:", lista_apartamentos, key="select_edo_cta_admin")
+            mes_evaluar = st.text_input("Mes a evaluar (AAAA-MM):", value=obtener_mes_anterior(), key="mes_eval_propietario")
             
-            if st.button("Generar Estado de Cuenta", key="btn_edo_cuenta"):
-                st.markdown(f"### 📄 Estado de Cuenta - Apartamento: {apto_seleccionado}")
+            if st.button("Generar Estado de Cuenta y Saldo", key="btn_edo_cuenta"):
+                st.markdown(f"### 📄 Estado de Cuenta - Unidad: {apto_seleccionado} ({mes_evaluar})")
                 st.markdown("---")
                 
                 try:
                     with engine.connect() as conn:
-                        query_pagos = text("""
-                            SELECT mes_anio, monto_usd, referencia, metodo_pago, estatus, fecha_pago 
+                        # 1. Obtener la alícuota del apartamento seleccionado
+                        res_unid = conn.execute(
+                            text("SELECT alicuota, propietario FROM unidades WHERE unidad = :u"),
+                            {"u": apto_seleccionado}
+                        ).fetchone()
+                        
+                        alicuota_pct = float(res_unid.alicuota) if res_unid and res_unid.alicuota else 0.0
+                        nombre_prop = res_unid.propietario if res_unid else "N/D"
+
+                        # 2. Obtener el total de gastos aprobados del mes en curso
+                        res_gastos = conn.execute(
+                            text("SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                            {"m": mes_evaluar}
+                        ).scalar()
+                        total_gastos_mes = float(res_gastos or 0.0)
+
+                        # 3. Calcular la cuota parte que le corresponde pagar según su alícuota
+                        cuota_correspondiente = total_gastos_mes * (alicuota_pct / 100.0)
+
+                        # 4. Obtener lo que el propietario pagó y fue aprobado en ese mes
+                        res_pagos = conn.execute(
+                            text("""
+                                SELECT SUM(monto_usd) FROM pagos_reportados 
+                                WHERE apartamento = :apto AND mes_anio = :m AND estatus = 'Aprobado'
+                            """),
+                            {"apto": apto_seleccionado, "m": mes_evaluar}
+                        ).scalar()
+                        total_pagado = float(res_pagos or 0.0)
+
+                        # 5. Calcular la diferencia (Saldo)
+                        # Positivo = Debe (pagó de menos)
+                        # Negativo = Saldo a favor (pagó de más)
+                        saldo_diferencia = cuota_correspondiente - total_pagado
+
+                        # 6. Consultar el detalle de los pagos de ese mes
+                        query_pagos_det = text("""
+                            SELECT referencia, metodo_pago, monto_usd, fecha_pago 
                             FROM pagos_reportados 
-                            WHERE apartamento = :apto AND estatus = 'Aprobado'
-                            ORDER BY id DESC
+                            WHERE apartamento = :apto AND mes_anio = :m AND estatus = 'Aprobado'
                         """)
-                        pagos_apto = conn.execute(query_pagos, {"apto": apto_seleccionado}).fetchall()
+                        pagos_detalles = conn.execute(query_pagos_det, {"apto": apto_seleccionado, "m": mes_evaluar}).fetchall()
+
+                    # Mostrar Resumen Financiero del Propietario
+                    st.markdown(f"**Propietario:** {nombre_prop} | **Alícuota:** {alicuota_pct}%")
                     
-                    st.subheader("💳 Pagos Registrados y Aprobados")
-                    if pagos_apto:
+                    col_s1, col_s2, col_s3 = st.columns(3)
+                    col_s1.metric("Cuota Correspondiente", f"${cuota_correspondiente:,.2f}")
+                    col_s2.metric("Total Pagado", f"${total_pagado:,.2f}")
+                    
+                    if saldo_diferencia > 0.01:
+                        col_s3.metric("Saldo Pendiente (Deuda)", f"${saldo_diferencia:,.2f}", delta_color="inverse")
+                    elif saldo_diferencia < -0.01:
+                        col_s3.metric("Saldo a Favor (Excedente)", f"${abs(saldo_diferencia):,.2f}", delta_color="normal")
+                    else:
+                        col_s3.metric("Saldo", "$0.00 (Al Día)")
+
+                    st.markdown("---")
+                    st.subheader("💳 Detalle de Pagos Aprobados en el Periodo")
+                    if pagos_detalles:
                         datos_tabla = [
                             {
-                                "Mes": p.mes_anio, 
-                                "Monto ($)": f"${float(p.monto_usd):,.2f}", 
                                 "Referencia": p.referencia, 
-                                "Método de Pago": p.metodo_pago, 
+                                "Método": p.metodo_pago, 
+                                "Monto ($)": f"${float(p.monto_usd):,.2f}", 
                                 "Fecha": p.fecha_pago
-                            } for p in pagos_apto
+                            } for p in pagos_detalles
                         ]
                         st.dataframe(datos_tabla, use_container_width=True)
                     else:
-                        st.info("No hay pagos aprobados registrados para este apartamento.")
+                        st.info("No hay pagos aprobados registrados para este apartamento en este mes.")
                     
                     st.markdown("---")
-                    st.caption("💡 **Tip para imprimir:** Puedes usar la función de impresión de tu navegador (`Ctrl + P` o `Cmd + P`) para guardar este estado de cuenta en formato PDF o enviárselo directamente al propietario.")
+                    st.caption("💡 **Tip para imprimir:** Presiona `Ctrl + P` (o `Cmd + P` en Mac) para guardar este estado de cuenta y entregarlo en físico o por WhatsApp.")
                     
                 except Exception as e:
-                    st.error(f"Error al generar el estado de cuenta: {e}")
+                    st.error(f"Error al generar el estado de cuenta y saldo: {e}")
 
         # =====================================================================
         # 🔐 RESTABLECER CONTRASEÑA DE PROPIETARIO
