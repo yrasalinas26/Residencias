@@ -1314,6 +1314,131 @@ if rol_actual == "admin":
                                     st.rerun()
         except Exception as e:
             st.error(f"Ocurrió un error: {e}")
+    # =====================================================================
+    # 📊 T10: REPORTE Y CIERRE ANUAL DE GESTIÓN
+    # =====================================================================
+    with t10:
+        st.subheader("📊 Cierre y Reporte Anual de Gestión")
+        st.info("Genera el balance consolidado del año, el desglose de gastos por proveedor y el estatus de morosidad de las 13 unidades.")
+        
+        # Selector de año (por defecto el año actual 2026)
+        col_y1, col_y2 = st.columns([1, 2])
+        with col_y1:
+            anio_evaluar = st.text_input("Ingrese el Año a Evaluar (AAAA):", value="2026", key="input_anio_cierre")
+        
+        with col_y2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            btn_generar_anual = st.button("🚀 Generar Reporte Anual de Gestión", type="primary", key="btn_generar_reporte_anual")
+
+        if btn_generar_anual:
+            if not anio_evaluar.strip() or len(anio_evaluar.strip()) != 4:
+                st.warning("Por favor ingrese un año válido en formato AAAA (ej. 2026).")
+            else:
+                try:
+                    with engine.connect() as conn:
+                        # 1. Obtener unidades y alícuotas
+                        df_unidades = pd.read_sql("SELECT unidad, propietario, alicuota FROM unidades", conn)
+                        
+                        # 2. Obtener gastos aprobados del año (filtrando por mes que empiece con el año ej. '2026-')
+                        query_gastos = text("""
+                            SELECT mes_anio, concepto, proveedor, monto, estatus 
+                            FROM gastos 
+                            WHERE estatus = 'Aprobado' AND mes_anio LIKE :anio
+                        """)
+                        df_gastos_anual = pd.read_sql(query_gastos, conn, params={"anio": f"{anio_evaluar}%"})
+
+                        # 3. Obtener pagos aprobados del año
+                        query_pagos = text("""
+                            SELECT mes_anio, apartamento, monto_usd, referencia, fecha_pago, estatus 
+                            FROM pagos_reportados 
+                            WHERE estatus = 'Aprobado' AND mes_anio LIKE :anio
+                        """)
+                        df_pagos_anual = pd.read_sql(query_pagos, conn, params={"anio": f"{anio_evaluar}%"})
+
+                    st.markdown("---")
+                    st.markdown(f"## 📁 BALANCE Y RENDICIÓN DE CUENTAS - AÑO **{anio_evaluar}**")
+                    
+                    # --- SECCIÓN 1: RESUMEN FINANCIERO GLOBAL ---
+                    total_gastos_anio = float(df_gastos_anual['monto'].sum()) if not df_gastos_anual.empty else 0.0
+                    total_ingresos_anio = float(df_pagos_anual['monto_usd'].sum()) if not df_pagos_anual.empty else 0.0
+                    balance_anual = total_ingresos_anio - total_gastos_anio
+
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1.metric("Total Gastos del Año", f"${total_gastos_anio:,.2f}")
+                    col_m2.metric("Total Ingresos Recaudados", f"${total_ingresos_anio:,.2f}")
+                    
+                    if balance_anual >= 0:
+                        col_m3.metric("Balance General Anual", f"${balance_anual:,.2f} (Superávit)", delta_color="normal")
+                    else:
+                        col_m3.metric("Balance General Anual", f"-${abs(balance_anual):,.2f} (Déficit)", delta_color="inverse")
+
+                    st.markdown("---")
+
+                    # --- SECCIÓN 2: GASTOS ACUMULADOS POR PROVEEDOR ---
+                    st.subheader("🛠️ Desglose de Gastos por Proveedor")
+                    if not df_gastos_anual.empty:
+                        # Agrupar por proveedor (si no tiene proveedor especificado, agrupar como 'General / No especificado')
+                        df_gastos_anual['proveedor'] = df_gastos_anual['proveedor'].fillna('No especificado')
+                        df_proveedores = df_gastos_anual.groupby('proveedor')['monto'].sum().reset_index()
+                        df_proveedores.columns = ['Proveedor / Concepto General', 'Total Pagado ($)']
+                        df_proveedores = df_proveedores.sort_values(by='Total Pagado ($)', ascending=False)
+                        
+                        st.dataframe(df_proveedores, use_container_width=True)
+                    else:
+                        st.info(f"No se registraron gastos aprobados para el año {anio_evaluar}.")
+
+                    st.markdown("---")
+
+                    # --- SECCIÓN 3: ESTADO DE CUENTA Y MOROSIDAD POR UNIDAD AL CIERRE DE AÑO ---
+                    st.subheader("👥 Estatus de Saldos y Morosidad por Unidad al Cierre del Año")
+                    
+                    if not df_unidades.empty and not df_gastos_anual.empty:
+                        # Calcular el total de gastos del año para calcular lo que debió aportar cada uno por su alícuota
+                        # O mejor aún, calcular mes a mes acumulado para respetar el arrastre exacto de todo el año
+                        meses_activos = sorted(df_gastos_anual['mes_anio'].unique())
+                        
+                        reporte_morosidad = []
+                        
+                        for _, u_row in df_unidades.iterrows():
+                            apto = u_row['unidad']
+                            prop = u_row['propietario']
+                            alic = float(u_row['alicuota'])
+                            
+                            saldo_unidad_acumulado = 0.0
+                            
+                            for m in meses_activos:
+                                # Gastos del mes m
+                                gasto_mes_val = float(df_gastos_anual[df_gastos_anual['mes_anio'] == m]['monto'].sum())
+                                cuota_parte = gasto_mes_val * (alic / 100.0)
+                                
+                                # Pagos de la unidad en el mes m
+                                pagos_unidad_mes = 0.0
+                                if not df_pagos_anual.empty:
+                                    p_filtrados = df_pagos_anual[(df_pagos_anual['apartamento'] == apto) & (df_pagos_anual['mes_anio'] == m)]
+                                    pagos_unidad_mes = float(p_filtrados['monto_usd'].sum())
+                                
+                                diferencia = pagos_unidad_mes - cuota_parte
+                                saldo_unidad_acumulado += diferencia
+                            
+                            estatus_str = f"🟢 Solvente / A Favor (+${saldo_unidad_acumulado:,.2f})" if saldo_unidad_acumulado >= 0 else f"🔴 Deudor Pendiente (-${abs(saldo_unidad_acumulado):,.2f})"
+                            
+                            reporte_morosidad.append({
+                                "Unidad": apto,
+                                "Propietario": prop,
+                                "Alícuota (%)": f"{alic}%",
+                                "Saldo Final Anual": estatus_str
+                            })
+                        
+                        df_morosidad_final = pd.DataFrame(reporte_morosidad)
+                        st.dataframe(df_morosidad_final, use_container_width=True)
+                    else:
+                        st.info("Faltan datos de unidades o gastos para calcular el estado de cuentas anual.")
+
+                    st.markdown("---")
+                    st.caption("💡 Este reporte anual consolida la gestión completa de las unidades para su presentación oficial ante la asamblea de propietarios.")
+
+                except Exception as e:
+                    st.error(f"Error generando el reporte anual de gestión: {e}")
 
 else:
     # -------------------------------------------------------------------------
