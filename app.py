@@ -686,7 +686,7 @@ if rol_actual == "admin":
         "🚨 Morosidad y Recibos",
         "⚙️ Datos Edificio",
         "💱 Conciliación de Pagos",
-        "📊 Reporte Y CIERRE ANUAL DE GESTIÓN, 
+        "📊 Reporte y Cierre anual de Gestion", 
     ])
     
     with t1:
