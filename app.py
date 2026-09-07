@@ -1399,8 +1399,9 @@ else:
                 tasa_sugerida = float(tasa_hoy_pago)
                 try:
                     with engine.connect() as conn_tasa:
+                        # Corregido de 'tasa_bcv' a 'tasa_cambio'
                         res_tasa_hist = conn_tasa.execute(
-                            text("SELECT tasa FROM tasa_bcv WHERE fecha = :f LIMIT 1"),
+                            text("SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT 1"),
                             {"f": fecha_pago}
                         ).scalar()
                         if res_tasa_hist:
