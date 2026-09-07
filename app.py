@@ -1020,7 +1020,7 @@ if rol_actual == "admin":
                 try:
                     with engine.connect() as conn:
                         query_pagos = text("""
-                            SELECT mes_anio, monto_usd, referencia, banco, estatus, fecha_pago 
+                            SELECT mes_anio, monto_usd, referencia, metodo_pago, estatus, fecha_pago 
                             FROM pagos_reportados 
                             WHERE apartamento = :apto AND estatus = 'Aprobado'
                             ORDER BY id DESC
@@ -1034,7 +1034,7 @@ if rol_actual == "admin":
                                 "Mes": p.mes_anio, 
                                 "Monto ($)": f"${float(p.monto_usd):,.2f}", 
                                 "Referencia": p.referencia, 
-                                "Banco": p.banco, 
+                                "Método de Pago": p.metodo_pago, 
                                 "Fecha": p.fecha_pago
                             } for p in pagos_apto
                         ]
