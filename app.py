@@ -1356,7 +1356,7 @@ else:
         except Exception as e:
             st.error(f"Error cargando tu estado de cuenta: {e}")
 
-    with t_p2:
+  with t_p2:
         st.subheader("💳 Registrar / Reportar un Pago")
         tasa_hoy_pago = verificar_y_actualizar_tasa_hoy(engine)
         st.info(f"💡 Tasa de referencia BCV actual: **{tasa_hoy_pago:,.4f} VES/USD**")
@@ -1368,11 +1368,28 @@ else:
                 mes_pago = st.text_input("Periodo que paga (AAAA-MM)", value=obtener_mes_anterior())
                 moneda = st.selectbox("Moneda de Pago", ["USD", "VES"])
                 monto_original = st.number_input("Monto Pagado en la Moneda Seleccionada", min_value=0.01, step=0.01)
+            
             with col_rp2:
-                tasa_aplicada = st.number_input("Tasa aplicada (si pagó en bolívares)", min_value=0.01, value=float(tasa_hoy_pago), step=0.01)
+                fecha_pago = st.date_input("Fecha en que realizó el pago", value=date.today())
+                
+                # Buscamos de forma inteligente la tasa histórica correspondiente a la fecha de pago
+                tasa_sugerida = float(tasa_hoy_pago)
+                try:
+                    with engine.connect() as conn_tasa:
+                        # Asumiendo que tu tabla de historial se llama 'tasa_bcv' o similar con columnas 'fecha' y 'tasa'
+                        # (Si el nombre de tu tabla o columnas difiere un poco, me avisas y lo adaptamos)
+                        res_tasa_hist = conn_tasa.execute(
+                            text("SELECT tasa FROM tasa_bcv WHERE fecha = :f LIMIT 1"),
+                            {"f": fecha_pago}
+                        ).scalar()
+                        if res_tasa_hist:
+                            tasa_sugerida = float(res_tasa_hist)
+                except Exception:
+                    pass # Si ocurre algún detalle, mantiene la tasa de hoy por seguridad
+
+                tasa_aplicada = st.number_input("Tasa aplicada (histórica del día)", min_value=0.01, value=tasa_sugerida, step=0.01)
                 metodo_pago = st.selectbox("Método de Pago", ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo USD", "Otro"])
                 referencia = st.text_input("Número de Referencia / Comprobante")
-                fecha_pago = st.date_input("Fecha en que realizó el pago", value=date.today())
 
             btn_enviar_pago = st.form_submit_button("Enviar Reporte de Pago", type="primary")
             if btn_enviar_pago:
@@ -1405,7 +1422,6 @@ else:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al reportar pago: {e}")
-
     with t_p3:
         st.subheader("📊 Historial y Conciliación de Mis Pagos")
         st.info("Revisa el estatus de tus reportes de pago y compara el total abonado frente a tus deudas registradas por periodo.")
