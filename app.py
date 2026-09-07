@@ -1148,11 +1148,10 @@ if rol_actual == "admin":
                                         )
                                     st.error(f"Pago #{p['id']} eliminado del sistema. El propietario ya puede reportarlo de nuevo.")
                                     st.rerun()
-
 except Exception as e:
-            st.error(f"Error en la sección de pagos: {e}")
+            st.error(f"Ocurrió un error: {e}")
 
-            else:
+else:
     # -------------------------------------------------------------------------
     # PANEL DEL PROPIETARIO (AUTENTICADO CON SU UNIDAD)
     # -------------------------------------------------------------------------
