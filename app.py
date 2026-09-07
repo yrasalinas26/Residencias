@@ -1003,8 +1003,11 @@ if rol_actual == "admin":
                     st.error(f"Error actualizando unidades: {e}")
 
         st.markdown("---")
+        
+        # =====================================================================
+        # 📄 CONSULTAR ESTADO DE CUENTA
+        # =====================================================================
         with st.expander("👤 Consultar y Generar Estado de Cuenta por Propietario"):
-            # Lista de apartamentos dinámica basada en la base de datos
             df_lista_units = obtener_unidades_df()
             lista_apartamentos = df_lista_units['unidad'].tolist() if not df_lista_units.empty else []
             
@@ -1045,6 +1048,34 @@ if rol_actual == "admin":
                 except Exception as e:
                     st.error(f"Error al generar el estado de cuenta: {e}")
 
+        # =====================================================================
+        # 🔐 RESTABLECER CONTRASEÑA DE PROPIETARIO
+        # =====================================================================
+        with st.expander("🔐 Restablecer Contraseña de Propietario"):
+            st.info("Asigna una nueva contraseña temporal a la unidad seleccionada en caso de pérdida u olvido.")
+            
+            df_pass_units = obtener_unidades_df()
+            lista_pass_units = df_pass_units['unidad'].tolist() if not df_pass_units.empty else []
+            
+            apto_pass = st.selectbox("Seleccione la Unidad para resetear clave:", lista_pass_units, key="select_pass_unit")
+            nueva_clave = st.text_input("Nueva Contraseña Temporal:", type="password", key="input_nueva_clave")
+            
+            if st.button("Actualizar Contraseña", key="btn_reset_pass", type="primary"):
+                if nueva_clave.strip():
+                    try:
+                        with engine.connect() as conn:
+                            # NOTA: Asegúrate de que el nombre de la columna en tu BD sea 'password' 
+                            # o cámbialo aquí si usas 'clave' o 'contrasena'.
+                            conn.execute(
+                                text("UPDATE unidades SET password = :p WHERE unidad = :u"),
+                                {"p": nueva_clave.strip(), "u": apto_pass}
+                            )
+                            conn.commit()
+                        st.success(f"¡Contraseña actualizada con éxito para la unidad {apto_pass}!")
+                    except Exception as e:
+                        st.error(f"Error al actualizar la contraseña: {e}")
+                else:
+                    st.warning("Por favor ingrese una contraseña válida.")
     with t7:
         renderizar_recibos()
 
