@@ -1049,8 +1049,6 @@ if rol_actual == "admin":
                 ).scalar() or 0.0
 
             col_c1, col_c2, col_c3 = st.columns(3)
-            col_c1.metric("Gastos Aprobados", f"${float(g_comun_sum):,.2f}")
-            col_c2.metric("Pagos Validados / Ingresos", f"${float(p_aprob_sum or 0.0):,.2f}")
             balance_val = float(p_aprob_sum or 0.0) - float(g_comun_sum or 0.0)
             col_c1.metric("Gastos Aprobados", f"${float(g_comun_sum or 0.0):,.2f}")
             col_c2.metric("Pagos Validados / Ingresos", f"${float(p_aprob_sum or 0.0):,.2f}")
