@@ -1050,8 +1050,12 @@ if rol_actual == "admin":
 
             col_c1, col_c2, col_c3 = st.columns(3)
             col_c1.metric("Gastos Aprobados", f"${float(g_comun_sum):,.2f}")
-            col_c2.metric("Pagos Validados / Ingresos", f"${float(p_aprob_sum):,.2f}")
-            col_c3.metric("Balance", f"${float(p_aprob_sum - g_comun_sum):,.2f}")
+            col_c2.metric("Pagos Validados / Ingresos", f"${float(p_aprob_sum or 0.0):,.2f}")
+            balance_val = float(p_aprob_sum or 0.0) - float(g_comun_sum or 0.0)
+            col_c1.metric("Gastos Aprobados", f"${float(g_comun_sum or 0.0):,.2f}")
+            col_c2.metric("Pagos Validados / Ingresos", f"${float(p_aprob_sum or 0.0):,.2f}")
+            col_c3.metric("Balance", f"${balance_val:,.2f}")  
+            
         except Exception as e:
             st.error(f"Error en conciliación: {e}")
 
