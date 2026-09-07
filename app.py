@@ -933,23 +933,47 @@ if rol_actual == "admin":
                     with st.expander(f"Pago #{p_row['id']} - Apt {p_row['apartamento']} - ${float(p_row['monto_usd']):,.2f} USD ({badge_p})"):
                         st.markdown(f"""
                         - **Tipo:** {p_row['tipo_pago']} ({p_row['mes_anio']})
-                        - **Monto Original:** {float(p_row['monto_original']):,.2f} {p_row['moneda']} (Tasa: {float(p_row['tasa_aplicada']):,.4f})
-                        - **Monto Calculado USD:** ${float(p_row['monto_usd']):,.2f}
+                        - **Monto Original:** {float(p_row['monto_original']):,.2f} {p_row['moneda']}
                         - **Método:** {p_row['metodo_pago']} | **Referencia:** {p_row['referencia']}
                         - **Fecha de Pago:** {p_row['fecha_pago']}
                         """)
 
+                        # Si está pendiente, permitimos validar o corregir la tasa si vino mal de antes
                         if p_row["estatus"] == "Pendiente":
+                            st.markdown("---")
+                            st.write("🔧 **Verificación y Ajuste de Tasa:**")
+                            
+                            # Inputs para verificar/corregir antes de aprobar
+                            tasa_actual_reg = float(p_row['tasa_aplicada'])
+                            monto_orig = float(p_row['monto_original'])
+                            moneda_pago = p_row['moneda']
+                            
+                            col_ed1, col_ed2 = st.columns(2)
+                            with col_ed1:
+                                nueva_tasa_aprob = st.number_input("Tasa a aplicar:", value=tasa_actual_reg, min_value=0.01, step=0.01, key=f"tasa_edit_{p_row['id']}")
+                            with col_ed2:
+                                # Recalcular USD en vivo según la tasa corregida
+                                nuevo_monto_usd = monto_orig / nueva_tasa_aprob if moneda_pago == "VES" else monto_orig
+                                st.metric("Monto Final en USD:", f"${nuevo_monto_usd:,.2f}")
+
                             col_pa1, col_pa2 = st.columns(2)
                             with col_pa1:
-                                if st.button("✅ Aprobar Pago", key=f"app_pago_{p_row['id']}"):
+                                if st.button("✅ Aprobar con esta Tasa", key=f"app_pago_{p_row['id']}"):
                                     with engine.connect() as conn:
                                         conn.execute(
-                                            text("UPDATE pagos_reportados SET estatus = 'Aprobado' WHERE id = :id"),
-                                            {"id": p_row['id']}
+                                            text("""
+                                                UPDATE pagos_reportados 
+                                                SET tasa_aplicada = :ta, monto_usd = :musd, estatus = 'Aprobado' 
+                                                WHERE id = :id
+                                            """),
+                                            {
+                                                "ta": nueva_tasa_aprob,
+                                                "musd": nuevo_monto_usd,
+                                                "id": p_row['id']
+                                            }
                                         )
                                         conn.commit()
-                                    st.success("Pago aprobado con éxito.")
+                                    st.success("¡Pago aprobado y actualizado con éxito!")
                                     st.rerun()
                             with col_pa2:
                                 if st.button("❌ Rechazar Pago", key=f"rec_pago_{p_row['id']}"):
