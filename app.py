@@ -1356,7 +1356,7 @@ else:
         except Exception as e:
             st.error(f"Error cargando tu estado de cuenta: {e}")
 
-  with t_p2:
+    with t_p2:
         st.subheader("💳 Registrar / Reportar un Pago")
         tasa_hoy_pago = verificar_y_actualizar_tasa_hoy(engine)
         st.info(f"💡 Tasa de referencia BCV actual: **{tasa_hoy_pago:,.4f} VES/USD**")
@@ -1372,12 +1372,9 @@ else:
             with col_rp2:
                 fecha_pago = st.date_input("Fecha en que realizó el pago", value=date.today())
                 
-                # Buscamos de forma inteligente la tasa histórica correspondiente a la fecha de pago
                 tasa_sugerida = float(tasa_hoy_pago)
                 try:
                     with engine.connect() as conn_tasa:
-                        # Asumiendo que tu tabla de historial se llama 'tasa_bcv' o similar con columnas 'fecha' y 'tasa'
-                        # (Si el nombre de tu tabla o columnas difiere un poco, me avisas y lo adaptamos)
                         res_tasa_hist = conn_tasa.execute(
                             text("SELECT tasa FROM tasa_bcv WHERE fecha = :f LIMIT 1"),
                             {"f": fecha_pago}
@@ -1385,7 +1382,7 @@ else:
                         if res_tasa_hist:
                             tasa_sugerida = float(res_tasa_hist)
                 except Exception:
-                    pass # Si ocurre algún detalle, mantiene la tasa de hoy por seguridad
+                    pass
 
                 tasa_aplicada = st.number_input("Tasa aplicada (histórica del día)", min_value=0.01, value=tasa_sugerida, step=0.01)
                 metodo_pago = st.selectbox("Método de Pago", ["Transferencia Bancaria", "Pago Móvil", "Zelle", "Efectivo USD", "Otro"])
