@@ -676,7 +676,7 @@ if rol_actual == "admin":
     # -------------------------------------------------------------------------
     st.markdown("### 👑 Panel de Control de Administración")
 
-    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 = st.tabs([
         "📊 Gastos Comunes",
         "🛠️ Gastos No Comunes",
         "⭐ Cuotas Extras",
@@ -686,6 +686,7 @@ if rol_actual == "admin":
         "🚨 Morosidad y Recibos",
         "⚙️ Datos Edificio",
         "💱 Conciliación de Pagos",
+        "📊 Reporte Y CIERRE ANUAL DE GESTIÓN, 
     ])
     
     with t1:
@@ -1314,9 +1315,7 @@ if rol_actual == "admin":
                                     st.rerun()
         except Exception as e:
             st.error(f"Ocurrió un error: {e}")
-    # =====================================================================
-    # 📊 T10: REPORTE Y CIERRE ANUAL DE GESTIÓN
-    # =====================================================================
+   
     with t10:
         st.subheader("📊 Cierre y Reporte Anual de Gestión")
         st.info("Genera el balance consolidado del año, el desglose de gastos por proveedor y el estatus de morosidad de las 13 unidades.")
