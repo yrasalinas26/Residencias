@@ -1001,6 +1001,52 @@ if rol_actual == "admin":
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error actualizando unidades: {e}")
+                   with st.expander("👤 Consultar y Generar Estado de Cuenta por Propietario"):
+        # Lista de apartamentos basada en tu estructura de alícuotas
+        lista_apartamentos = [
+            "1A", "1B", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", 
+            "2 (12%)", "7 (12%)", "PH (16%)"
+        ] # O puedes extraerlos directamente de tu base de datos de usuarios/apartamentos
+        
+        apto_seleccionado = st.selectbox("Seleccione el Apartamento / Propietario:", lista_apartamentos)
+        
+        if st.button("Generar Estado de Cuenta", key="btn_edo_cuenta"):
+            st.markdown(f"### 📄 Estado de Cuenta - Apartamento: {apto_seleccionado}")
+            st.markdown("---")
+            
+            try:
+                with engine.connect() as conn:
+                    # Aquí consultas los pagos y deudas específicos de ese apartamento
+                    # Ejemplo genérico adaptado a tus tablas:
+                    query_pagos = text("""
+                        SELECT mes_anio, monto_usd, referencia, banco, estatus, fecha_reporte 
+                        FROM pagos_reportados 
+                        WHERE apartamento = :apto AND estatus = 'Aprobado'
+                    """)
+                    pagos_apto = conn.execute(query_pagos, {"apto": apto_seleccionado}).fetchall()
+                
+                st.subheader("💳 Pagos Registrados y Aprobados")
+                if pagos_apto:
+                    # Mostramos los datos en una tablita limpia
+                    datos_tabla = [
+                        {
+                            "Mes": p.mes_anio, 
+                            "Monto ($)": f"${float(p.monto_usd):,.2f}", 
+                            "Referencia": p.referencia, 
+                            "Banco": p.banco, 
+                            "Fecha": p.fecha_reporte
+                        } for p in pagos_apto
+                    ]
+                    st.dataframe(datos_tabla, use_container_width=True)
+                else:
+                    st.info("No hay pagos aprobados registrados para este apartamento.")
+                
+                # Botón de impresión o aviso para exportar
+                st.markdown("---")
+                st.caption("💡 **Tip para imprimir:** Puedes usar la función de impresión de tu navegador (`Ctrl + P` o `Cmd + P`) para guardar este estado de cuenta en formato PDF o enviárselo directamente al propietario.")
+                
+            except Exception as e:
+                st.error(f"Error al generar el estado de cuenta: {e}") 
 
     with t7:
         renderizar_recibos()
