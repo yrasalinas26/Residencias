@@ -826,7 +826,7 @@ if rol_actual == "admin":
                     except Exception as e:
                         st.error(f"Error al registrar cargo: {e}")
 
-    with t3:
+   with t3:
         st.subheader("⭐ Gestión y Registro de Cuotas Extraordinarias")
         with st.form("form_cuota_extra"):
             col_ce1, col_ce2 = st.columns(2)
@@ -887,6 +887,7 @@ if rol_actual == "admin":
                                 st.rerun()
         except Exception as e:
             st.error(f"Error listando cuotas extraordinarias: {e}")
+
 
     with t4:
         st.subheader("💱 Tasas de Cambio (BCV)")
