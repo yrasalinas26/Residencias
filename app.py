@@ -1424,7 +1424,7 @@ if rol_actual == "admin":
             st.error(f"Error en conciliación: {e}")
 
         # -------------------------------------------------------------------------
-        # REPORTE DE MOROSIDAD SENCILLO MENSUAL (SIN PROPIETARIOS) + PDF
+        # REPORTE DE MOROSIDAD SENCILLO MENSUAL (SIN PROPIETARIOS) + PDF CON DATOS DEL EDIFICIO
         # -------------------------------------------------------------------------
         st.markdown("---")
         st.subheader("📋 Reporte de Morosidad y Saldos por Unidad (Mensual)")
@@ -1486,75 +1486,100 @@ if rol_actual == "admin":
                 df_reporte_simple = pd.DataFrame(reporte_simple)
                 st.dataframe(df_reporte_simple, use_container_width=True)
 
-                # --- BOTÓN DE DESCARGA EN PDF (ReportLab) ---
-                try:
-                    from reportlab.lib.pagesizes import letter
-                    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle
-                    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-                    from reportlab.lib import colors
-                    import io
+                # --- BOTÓN DE DESCARGA EN PDF CON MEMBRETE DEL EDIFICIO ---
+                import io
+                from reportlab.lib.pagesizes import letter
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib import colors
 
-                    def generar_pdf_morosidad(mes, df_datos):
-                        buffer = io.BytesIO()
-                        doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
-                        elementos = []
-                        
-                        styles = getSampleStyleSheet()
-                        estilo_titulo = ParagraphStyle(
-                            'TituloPDF', parent=styles['Heading1'],
-                            fontName='Helvetica-Bold', fontSize=14,
-                            textColor=colors.HexColor('#1f4e79'), alignment=1, spaceAfter=8
-                        )
-                        estilo_sub = ParagraphStyle(
-                            'SubPDF', parent=styles['Normal'],
-                            fontName='Helvetica', fontSize=10,
-                            textColor=colors.HexColor('#595959'), alignment=1, spaceAfter=15
-                        )
-
-                        elementos.append(Paragraph("<b>CONDOMINIO RESIDENCIAS</b>", estilo_titulo))
-                        elementos.append(Paragraph(f"<b>Reporte Mensual de Morosidad y Saldos - Periodo: {mes}</b>", estilo_sub))
-                        
-                        tabla_data = [["Unidad", "Alícuota", "Cuota ($)", "Pagado ($)", "Estatus / Saldo"]]
-                        for _, row in df_datos.iterrows():
-                            tabla_data.append([
-                                str(row["Unidad"]),
-                                str(row["Alícuota (%)"]),
-                                str(row["Cuota Correspondiente ($)"]),
-                                str(row["Pagado Registrado ($)"]),
-                                str(row["Estatus"])
-                            ])
-                        
-                        t = Table(tabla_data, colWidths=[65, 65, 85, 85, 230])
-                        t.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e79')),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0, 0), (-1, 0), 9),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                            ('TOPPADDING', (0, 0), (-1, 0), 6),
-                            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
-                            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d3d3d3')),
-                            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                            ('FONTSIZE', (0, 1), (-1, -1), 8.5),
-                            ('ALIGN', (4, 1), (4, -1), 'LEFT'),
-                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                        ]))
-                        elementos.append(t)
-                        doc.build(elementos)
-                        buffer.seek(0)
-                        return buffer.getvalue()
-
-                    pdf_bytes = generar_pdf_morosidad(mes_concil, df_reporte_simple)
-                    st.download_button(
-                        label="📥 Descargar Reporte Mensual en PDF",
-                        data=pdf_bytes,
-                        file_name=f"Reporte_Morosidad_{mes_concil}.pdf",
-                        mime="application/pdf",
-                        key="btn_descargar_pdf_t9"
+                def generar_pdf_morosidad_mensual(mes, df_datos):
+                    buffer = io.BytesIO()
+                    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+                    elementos = []
+                    
+                    styles = getSampleStyleSheet()
+                    
+                    # Estilos para el encabezado corporativo del edificio
+                    estilo_edificio = ParagraphStyle(
+                        'NombreEdificio',
+                        parent=styles['Heading1'],
+                        fontName='Helvetica-Bold',
+                        fontSize=14,
+                        textColor=colors.HexColor('#1f4e79'),
+                        alignment=1,
+                        spaceAfter=2
                     )
-                except Exception as pdf_err:
-                    st.warning(f"La librería ReportLab no está disponible para generar el PDF: {pdf_err}")
+                    
+                    estilo_info_edificio = ParagraphStyle(
+                        'InfoEdificio',
+                        parent=styles['Normal'],
+                        fontName='Helvetica',
+                        fontSize=9,
+                        textColor=colors.HexColor('#595959'),
+                        alignment=1,
+                        spaceAfter=15
+                    )
+                    
+                    estilo_titulo_rep = ParagraphStyle(
+                        'TituloReporte',
+                        parent=styles['Heading2'],
+                        fontName='Helvetica-Bold',
+                        fontSize=11,
+                        textColor=colors.HexColor('#333333'),
+                        alignment=1,
+                        spaceAfter=15
+                    )
+
+                    # Datos del encabezado (Puedes cambiar estos textos según los datos reales de tu edificio)
+                    nombre_edificio = "CONDOMINIO RESIDENCIAS (NOMBRE DE TU EDIFICIO)"
+                    rif_edificio = "RIF: J-00000000-0 | Dirección: Av. Principal, Urb. Ejemplo"
+                    
+                    elementos.append(Paragraph(f"<b>{nombre_edificio}</b>", estilo_edificio))
+                    elementos.append(Paragraph(rif_edificio, estilo_info_edificio))
+                    elementos.append(Paragraph(f"<b>Reporte Mensual de Morosidad y Saldos — Periodo: {mes}</b>", estilo_titulo_rep))
+                    
+                    tabla_data = [["Unidad", "Alícuota", "Cuota ($)", "Pagado ($)", "Estatus / Saldo"]]
+                    
+                    for _, row in df_datos.iterrows():
+                        tabla_data.append([
+                            str(row["Unidad"]),
+                            str(row["Alícuota (%)"]),
+                            str(row["Cuota Correspondiente ($)"]),
+                            str(row["Pagado Registrado ($)"]),
+                            str(row["Estatus"])
+                        ])
+                    
+                    t = Table(tabla_data, colWidths=[60, 60, 85, 85, 250])
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e79')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 9),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                        ('TOPPADDING', (0, 0), (-1, 0), 6),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d3d3d3')),
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 9),
+                        ('ALIGN', (4, 1), (4, -1), 'LEFT'),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ]))
+                    
+                    elementos.append(t)
+                    doc.build(elementos)
+                    buffer.seek(0)
+                    return buffer.getvalue()
+
+                pdf_bytes = generar_pdf_morosidad_mensual(mes_concil, df_reporte_simple)
+                st.download_button(
+                    label="📥 Descargar Reporte Mensual en PDF",
+                    data=pdf_bytes,
+                    file_name=f"Reporte_Morosidad_{mes_concil}.pdf",
+                    mime="application/pdf",
+                    key=f"btn_pdf_morosidad_{mes_concil}"
+                )
 
             else:
                 st.warning("No hay unidades registradas en la base de datos.")
