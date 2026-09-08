@@ -863,7 +863,7 @@ if rol_actual == "admin":
                     text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"),
                     conn
                 )
-                df_unidades_ce = pd.read_sql("SELECT unidad, propietario, alicuota FROM unidades", conn)
+                df_unidades_ce = pd.read_sql("SELECT unidad, propietario, alicuota, telefono FROM unidades", conn)
 
             if df_cuotas_admin.empty:
                 st.info("No hay cuotas extraordinarias registradas.")
@@ -913,7 +913,7 @@ if rol_actual == "admin":
                                     st.error(f"Error al eliminar: {e}")
 
                         st.markdown("---")
-                        st.subheader("📢 Mensajes para WhatsApp (Distribución por Alícuotas)")
+                        st.subheader("📢 Envío Directo por WhatsApp (Distribución por Alícuotas)")
                         
                         # Cálculo automático por alícuotas
                         if not df_unidades_ce.empty:
@@ -935,27 +935,43 @@ if rol_actual == "admin":
                                 f"Por favor realizar su pago correspondiente y reportarlo por la app. ¡Gracias!"
                             )
                             
-                            st.markdown("**1️⃣ Mensaje para el Grupo General de WhatsApp:**")
-                            st.code(msg_grupo, language="markdown")
+                            import urllib.parse
+                            msg_grupo_encoded = urllib.parse.quote(msg_grupo)
+                            link_grupo = f"https://wa.me/?text={msg_grupo_encoded}"
+                            
+                            st.markdown("**1️⃣ Difusión General:**")
+                            st.link_button("📲 Enviar Aviso al Grupo General (WhatsApp)", url=link_grupo)
                             
                             st.markdown("---")
-                            st.markdown("**2️⃣ Mensaje Individualizado por Propietario:**")
-                            apto_w = st.selectbox("Seleccione apartamento para copiar su monto:", df_unidades_ce['unidad'].tolist(), key=f"sel_w_ce_{id_ce}")
+                            st.markdown("**2️⃣ Envío Individualizado por Propietario:**")
+                            apto_w = st.selectbox("Seleccione apartamento:", df_unidades_ce['unidad'].tolist(), key=f"sel_w_ce_{id_ce}")
                             
                             if apto_w:
                                 row_sel = df_unidades_ce[df_unidades_ce['unidad'] == apto_w].iloc[0]
                                 alic_sel = float(row_sel['alicuota'])
                                 monto_sel = monto_total_ce * (alic_sel / 100.0)
+                                tel_prop = str(row_sel['telefono']).strip()
                                 
                                 msg_individual = (
                                     f"Hola {row_sel['propietario']}, le escribimos de la administración de las Residencias.\n\n"
                                     f"Le recordamos su cuota extraordinaria:\n"
-    								f"📌 *Concepto:* {concepto_txt}\n"
+                                    f"📌 *Concepto:* {concepto_txt}\n"
                                     f"🏠 *Unidad:* {apto_w} (Alícuota {alic_sel}%)\n"
                                     f"💵 *Monto a pagar:* **${monto_sel:,.2f}**\n\n"
                                     f"Agradecemos reportar su pago a la brevedad. ¡Saludos!"
                                 )
-                                st.code(msg_individual, language="markdown")
+                                
+                                msg_ind_encoded = urllib.parse.quote(msg_individual)
+                                
+                                # Limpiar el teléfono para formato internacional (siempre que tenga números)
+                                tel_limpio = "".join(filter(str.isdigit, tel_prop))
+                                
+                                if tel_limpio:
+                                    link_individual = f"https://wa.me/{tel_limpio}?text={msg_ind_encoded}"
+                                    st.link_button(f"📲 Enviar WhatsApp a {row_sel['propietario']} ({apto_w})", url=link_individual)
+                                    st.caption(f"Número registrado: {tel_prop}")
+                                else:
+                                    st.warning(f"⚠️ El apartamento {apto_w} no tiene un teléfono válido registrado en la sección de unidades.")
                         else:
                             st.warning("No hay unidades configuradas para hacer el cálculo.")
 
