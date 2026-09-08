@@ -863,31 +863,104 @@ if rol_actual == "admin":
                     text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"),
                     conn
                 )
+                df_unidades_ce = pd.read_sql("SELECT unidad, propietario, alicuota FROM unidades", conn)
 
             if df_cuotas_admin.empty:
                 st.info("No hay cuotas extraordinarias registradas.")
             else:
                 for _, r_ce in df_cuotas_admin.iterrows():
-                    c_det, c_act = st.columns([3, 2])
-                    with c_det:
-                        badge_ce = "🟡 Pendiente" if r_ce["estatus"] == "Pendiente" else "🟢 Aprobada"
-                        st.markdown(
-                            f"**Concepto:** {r_ce['concepto']} | **Monto Total:** ${float(r_ce['monto_total']):,.2f} | **Fecha:** {r_ce['fecha_emision']} | **Estatus:** {badge_ce}"
-                        )
-                    with c_act:
-                        if r_ce["estatus"] == "Pendiente":
-                            if st.button("✅ Aprobar Cuota", key=f"app_ce_{r_ce['id']}"):
-                                with engine.connect() as conn:
-                                    conn.execute(
-                                        text("UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id"),
-                                        {"id": r_ce['id']}
-                                    )
-                                    conn.commit()
-                                st.success("Cuota extraordinaria aprobada.")
-                                st.rerun()
+                    id_ce = r_ce['id']
+                    concepto_txt = r_ce['concepto']
+                    monto_total_ce = float(r_ce['monto_total'])
+                    estatus_ce = r_ce['estatus']
+                    
+                    badge_ce = "🟡 Pendiente" if estatus_ce == "Pendiente" else "🟢 Aprobada"
+                    
+                    with st.expander(f"Cuota #{id_ce} | {concepto_txt} - ${monto_total_ce:,.2f} ({badge_ce})"):
+                        col_det1, col_det2 = st.columns(2)
+                        with col_det1:
+                            st.markdown(f"**Concepto:** {concepto_txt}")
+                            st.markdown(f"**Monto Total:** ${monto_total_ce:,.2f}")
+                            st.markdown(f"**Fecha de Emisión:** {r_ce['fecha_emision']}")
+                        with col_det2:
+                            st.markdown(f"**Estatus:** {badge_ce}")
+
+                        # Botones de acción (Aprobar / Eliminar)
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if estatus_ce == "Pendiente":
+                                if st.button("✅ Aprobar Cuota", key=f"app_ce_{id_ce}", type="primary"):
+                                    with engine.connect() as conn:
+                                        conn.execute(
+                                            text("UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id"),
+                                            {"id": id_ce}
+                                        )
+                                        conn.commit()
+                                    st.success("Cuota extraordinaria aprobada.")
+                                    st.rerun()
+                        with col_btn2:
+                            if st.button("🗑️ Eliminar Cuota", key=f"del_ce_{id_ce}", type="secondary"):
+                                try:
+                                    with engine.connect() as conn:
+                                        conn.execute(
+                                            text("DELETE FROM cuotas_extraordinarias WHERE id = :id"),
+                                            {"id": id_ce}
+                                        )
+                                        conn.commit()
+                                    st.error("Cuota extraordinaria eliminada correctamente.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al eliminar: {e}")
+
+                        st.markdown("---")
+                        st.subheader("📢 Mensajes para WhatsApp (Distribución por Alícuotas)")
+                        
+                        # Cálculo automático por alícuotas
+                        if not df_unidades_ce.empty:
+                            lineas_detalle = []
+                            for _, u in df_unidades_ce.iterrows():
+                                alic = float(u['alicuota'])
+                                monto_parte = monto_total_ce * (alic / 100.0)
+                                lineas_detalle.append(f"• Apto {u['unidad']} ({alic}%): ${monto_parte:,.2f}")
+                            
+                            detalle_str = "\n".join(lineas_detalle)
+                            
+                            # 1. Mensaje para el Grupo General
+                            msg_grupo = (
+                                f"📢 *AVISO DE CUOTA EXTRAORDINARIA* 📢\n\n"
+                                f"Estimados propietarios, se ha emitido una cuota extraordinaria con los siguientes detalles:\n\n"
+                                f"📌 *Concepto:* {concepto_txt}\n"
+                                f"💵 *Monto Total:* ${monto_total_ce:,.2f}\n\n"
+                                f"📋 *Distribución por alícuotas:*\n{detalle_str}\n\n"
+                                f"Por favor realizar su pago correspondiente y reportarlo por la app. ¡Gracias!"
+                            )
+                            
+                            st.markdown("**1️⃣ Mensaje para el Grupo General de WhatsApp:**")
+                            st.code(msg_grupo, language="markdown")
+                            
+                            st.markdown("---")
+                            st.markdown("**2️⃣ Mensaje Individualizado por Propietario:**")
+                            apto_w = st.selectbox("Seleccione apartamento para copiar su monto:", df_unidades_ce['unidad'].tolist(), key=f"sel_w_ce_{id_ce}")
+                            
+                            if apto_w:
+                                row_sel = df_unidades_ce[df_unidades_ce['unidad'] == apto_w].iloc[0]
+                                alic_sel = float(row_sel['alicuota'])
+                                monto_sel = monto_total_ce * (alic_sel / 100.0)
+                                
+                                msg_individual = (
+                                    f"Hola {row_sel['propietario']}, le escribimos de la administración de las Residencias.\n\n"
+                                    f"Le recordamos su cuota extraordinaria:\n"
+    								f"📌 *Concepto:* {concepto_txt}\n"
+                                    f"🏠 *Unidad:* {apto_w} (Alícuota {alic_sel}%)\n"
+                                    f"💵 *Monto a pagar:* **${monto_sel:,.2f}**\n\n"
+                                    f"Agradecemos reportar su pago a la brevedad. ¡Saludos!"
+                                )
+                                st.code(msg_individual, language="markdown")
+                        else:
+                            st.warning("No hay unidades configuradas para hacer el cálculo.")
+
         except Exception as e:
             st.error(f"Error listando cuotas extraordinarias: {e}")
-
 
     with t4:
         st.subheader("💱 Tasas de Cambio (BCV)")
