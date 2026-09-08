@@ -1424,6 +1424,74 @@ if rol_actual == "admin":
             st.error(f"Error en conciliación: {e}")
 
         # -------------------------------------------------------------------------
+        # REPORTE DE MOROSIDAD SENCILLO MENSUAL (SIN PROPIETARIOS)
+        # -------------------------------------------------------------------------
+        st.markdown("---")
+        st.subheader("📋 Reporte de Morosidad y Saldos por Unidad (Mensual)")
+        st.info(f"Estatus detallado de las 13 unidades para el periodo **{mes_concil}** (sin mostrar nombres de propietarios).")
+
+        try:
+            with engine.connect() as conn:
+                # 1. Obtener unidades y alícuotas
+                df_unidades = pd.read_sql("SELECT unidad, alicuota FROM unidades", conn)
+                
+                # 2. Obtener gastos del mes
+                gasto_mes_total = float(g_comun_sum if 'g_comun_sum' in locals() and g_comun_sum else 0.0)
+                
+                # 3. Obtener pagos aprobados del mes por unidad
+                query_pagos_mes = text("""
+                    SELECT apartamento, SUM(monto_usd) as total_pagado 
+                    FROM pagos_reportados 
+                    WHERE mes_anio = :m AND estatus = 'Aprobado'
+                    GROUP BY apartamento
+                """)
+                df_pagos_mes = pd.read_sql(query_pagos_mes, conn, params={"m": mes_concil})
+
+            if not df_unidades.empty:
+                # Orden estricto de las 13 unidades
+                orden_unidades = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+                df_unidades['unidad'] = pd.Categorical(df_unidades['unidad'], categories=orden_unidades, ordered=True)
+                df_unidades = df_unidades.sort_values('unidad').reset_index(drop=True)
+
+                reporte_simple = []
+                for _, u_row in df_unidades.iterrows():
+                    apto = str(u_row['unidad'])
+                    alic = float(u_row['alicuota'])
+                    
+                    # Calcular cuota parte según alícuota
+                    cuota_parte = gasto_mes_total * (alic / 100.0)
+                    
+                    # Buscar pagos aprobados de esta unidad en el mes
+                    pagos_encontrados = 0.0
+                    if not df_pagos_mes.empty:
+                        match_pago = df_pagos_mes[df_pagos_mes['apartamento'] == apto]
+                        if not match_pago.empty:
+                            pagos_encontrados = float(match_pago['total_pagado'].values[0])
+                    
+                    diferencia = pagos_encontrados - cuota_parte
+                    
+                    if diferencia >= -0.01:
+                        estatus_morosidad = f"🟢 Solvente / A Favor (+${diferencia:,.2f})"
+                    else:
+                        estatus_morosidad = f"🔴 Deudor (-${abs(diferencia):,.2f})"
+
+                    reporte_simple.append({
+                        "Unidad": apto,
+                        "Alícuota (%)": f"{alic}%",
+                        "Cuota Correspondiente ($)": f"${cuota_parte:,.2f}",
+                        "Pagado Registrado ($)": f"${pagos_encontrados:,.2f}",
+                        "Estatus": estatus_morosidad
+                    })
+
+                df_reporte_simple = pd.DataFrame(reporte_simple)
+                st.dataframe(df_reporte_simple, use_container_width=True)
+            else:
+                st.warning("No hay unidades registradas en la base de datos.")
+
+        except Exception as e:
+            st.error(f"Error generando el reporte de morosidad mensual: {e}")
+
+        # -------------------------------------------------------------------------
         # GESTIÓN Y VALIDACIÓN DE PAGOS REPORTADOS (INMEDIATO ABAJO DE T9)
         # -------------------------------------------------------------------------
         st.markdown("---")
