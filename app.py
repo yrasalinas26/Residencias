@@ -1519,7 +1519,7 @@ if rol_actual == "admin":
         except Exception as e:
             st.error(f"Ocurrió un error: {e}")
    
-    with t10:
+with t10:
     st.subheader("📊 Cierre y Reporte de Gestión por Periodo")
     st.info("Genera el balance consolidado, el desglose mensual de gastos por proveedor y el estatus de morosidad de las 13 unidades según el rango seleccionado.")
         
@@ -1655,7 +1655,7 @@ if rol_actual == "admin":
                 st.caption("💡 Este reporte consolida la gestión completa de las unidades respetando el orden correcto del edificio y el desglose temporal de proveedores.")
 
             except Exception as e:
-                st.error(f"Error generando el reporte de gestión: {e}")  
+                st.error(f"Error generando el reporte de gestión: {e}")   
 
 else:
     # -------------------------------------------------------------------------
