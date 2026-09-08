@@ -915,13 +915,24 @@ if rol_actual == "admin":
                         st.markdown("---")
                         st.subheader("📢 Envío Directo por WhatsApp (Distribución por Alícuotas)")
                         
-                        # Cálculo automático por alícuotas
+                        # Cálculo automático por alícuotas con orden estricto
                         if not df_unidades_ce.empty:
-                            lineas_detalle = []
+                            orden_oficial = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+                            
+                            dict_unidades = {}
                             for _, u in df_unidades_ce.iterrows():
-                                alic = float(u['alicuota'])
-                                monto_parte = monto_total_ce * (alic / 100.0)
-                                lineas_detalle.append(f"• Apto {u['unidad']} ({alic}%): ${monto_parte:,.2f}")
+                                dict_unidades[str(u['unidad']).strip().upper()] = {
+                                    "propietario": u['propietario'],
+                                    "alicuota": float(u['alicuota']),
+                                    "telefono": str(u['telefono'])
+                                }
+
+                            lineas_detalle = []
+                            for apto_nombre in orden_oficial:
+                                if apto_nombre in dict_unidades:
+                                    alic = dict_unidades[apto_nombre]["alicuota"]
+                                    monto_parte = monto_total_ce * (alic / 100.0)
+                                    lineas_detalle.append(f"• Apto {apto_nombre} ({alic}%): ${monto_parte:,.2f}")
                             
                             detalle_str = "\n".join(lineas_detalle)
                             
@@ -944,16 +955,18 @@ if rol_actual == "admin":
                             
                             st.markdown("---")
                             st.markdown("**2️⃣ Envío Individualizado por Propietario:**")
-                            apto_w = st.selectbox("Seleccione apartamento:", df_unidades_ce['unidad'].tolist(), key=f"sel_w_ce_{id_ce}")
+                            
+                            lista_aptos_ordenada = [apto for apto in orden_oficial if apto in dict_unidades]
+                            apto_w = st.selectbox("Seleccione apartamento:", lista_aptos_ordenada, key=f"sel_w_ce_{id_ce}")
                             
                             if apto_w:
-                                row_sel = df_unidades_ce[df_unidades_ce['unidad'] == apto_w].iloc[0]
-                                alic_sel = float(row_sel['alicuota'])
+                                info_u = dict_unidades[apto_w]
+                                alic_sel = info_u['alicuota']
                                 monto_sel = monto_total_ce * (alic_sel / 100.0)
-                                tel_prop = str(row_sel['telefono']).strip()
+                                tel_prop = info_u['telefono'].strip()
                                 
                                 msg_individual = (
-                                    f"Hola {row_sel['propietario']}, le escribimos de la administración de las Residencias.\n\n"
+                                    f"Hola {info_u['propietario']}, le escribimos de la administración de las Residencias.\n\n"
                                     f"Le recordamos su cuota extraordinaria:\n"
                                     f"📌 *Concepto:* {concepto_txt}\n"
                                     f"🏠 *Unidad:* {apto_w} (Alícuota {alic_sel}%)\n"
@@ -962,13 +975,11 @@ if rol_actual == "admin":
                                 )
                                 
                                 msg_ind_encoded = urllib.parse.quote(msg_individual)
-                                
-                                # Limpiar el teléfono para formato internacional (siempre que tenga números)
                                 tel_limpio = "".join(filter(str.isdigit, tel_prop))
                                 
                                 if tel_limpio:
                                     link_individual = f"https://wa.me/{tel_limpio}?text={msg_ind_encoded}"
-                                    st.link_button(f"📲 Enviar WhatsApp a {row_sel['propietario']} ({apto_w})", url=link_individual)
+                                    st.link_button(f"📲 Enviar WhatsApp a {info_u['propietario']} ({apto_w})", url=link_individual)
                                     st.caption(f"Número registrado: {tel_prop}")
                                 else:
                                     st.warning(f"⚠️ El apartamento {apto_w} no tiene un teléfono válido registrado en la sección de unidades.")
@@ -977,7 +988,6 @@ if rol_actual == "admin":
 
         except Exception as e:
             st.error(f"Error listando cuotas extraordinarias: {e}")
-
     with t4:
         st.subheader("💱 Tasas de Cambio (BCV)")
         tasa_actual_auto = verificar_y_actualizar_tasa_hoy(engine)
