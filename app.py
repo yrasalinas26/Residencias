@@ -1519,21 +1519,21 @@ if rol_actual == "admin":
         except Exception as e:
             st.error(f"Ocurrió un error: {e}")
    
-with t10:
-    st.subheader("📊 Cierre y Reporte de Gestión por Periodo")
-    st.info("Genera el balance consolidado, el desglose mensual de gastos por proveedor y el estatus de morosidad de las 13 unidades según el rango seleccionado.")
+    with t10:
+        st.subheader("📊 Cierre y Reporte de Gestión por Periodo")
+        st.info("Genera el balance consolidado, el desglose mensual de gastos por proveedor y el estatus de morosidad de las 13 unidades según el rango seleccionado.")
         
-    # Selector de rango de periodo (Desde mes/año - Hasta mes/año)
-    col_p1, col_p2, col_p3 = st.columns([2, 2, 2])
-    with col_p1:
-        periodo_desde = st.text_input("Desde (AAAA-MM):", value="2026-01", key="input_periodo_desde")
-    with col_p2:
-        periodo_hasta = st.text_input("Hasta (AAAA-MM):", value="2026-12", key="input_periodo_hasta")
-    with col_p3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        btn_generar_anual = st.button("🚀 Generar Reporte de Gestión", type="primary", key="btn_generar_reporte_anual")
+        # Selector de rango de periodo (Desde mes/año - Hasta mes/año)
+        col_p1, col_p2, col_p3 = st.columns([2, 2, 2])
+        with col_p1:
+            periodo_desde = st.text_input("Desde (AAAA-MM):", value="2026-01", key="input_periodo_desde")
+        with col_p2:
+            periodo_hasta = st.text_input("Hasta (AAAA-MM):", value="2026-12", key="input_periodo_hasta")
+        with col_p3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            btn_generar_anual = st.button("🚀 Generar Reporte de Gestión", type="primary", key="btn_generar_reporte_anual")
 
-    if btn_generar_anual:
+        if btn_generar_anual:
         if not periodo_desde.strip() or not periodo_hasta.strip():
             st.warning("Por favor ingrese ambos periodos en formato AAAA-MM (ej. 2026-01).")
         else:
@@ -1655,8 +1655,7 @@ with t10:
                 st.caption("💡 Este reporte consolida la gestión completa de las unidades respetando el orden correcto del edificio y el desglose temporal de proveedores.")
 
             except Exception as e:
-                st.error(f"Error generando el reporte de gestión: {e}")   
-
+                st.error(f"Error generando el reporte de gestión: {e}")
 else:
     # -------------------------------------------------------------------------
     # PANEL DEL PROPIETARIO (AUTENTICADO CON SU UNIDAD)
