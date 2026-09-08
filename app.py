@@ -1534,128 +1534,128 @@ if rol_actual == "admin":
             btn_generar_anual = st.button("🚀 Generar Reporte de Gestión", type="primary", key="btn_generar_reporte_anual")
 
         if btn_generar_anual:
-        if not periodo_desde.strip() or not periodo_hasta.strip():
-            st.warning("Por favor ingrese ambos periodos en formato AAAA-MM (ej. 2026-01).")
-        else:
-            try:
-                with engine.connect() as conn:
-                    # 1. Obtener unidades y alícuotas
-                    df_unidades = pd.read_sql("SELECT unidad, propietario, alicuota FROM unidades", conn)
-                    
-                    # 2. Obtener gastos aprobados filtrados por rango de mes_anio (alfabéticamente funciona perfecto para formato 'AAAA-MM')
-                    query_gastos = text("""
-                        SELECT mes_anio, concepto, proveedor, monto, estatus 
-                        FROM gastos 
-                        WHERE estatus = 'Aprobado' AND mes_anio BETWEEN :desde AND :hasta
-                    """)
-                    df_gastos_anual = pd.read_sql(query_gastos, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
-
-                    # 3. Obtener pagos aprobados filtrados por rango de mes_anio
-                    query_pagos = text("""
-                        SELECT mes_anio, apartamento, monto_usd, referencia, fecha_pago, estatus 
-                        FROM pagos_reportados 
-                        WHERE estatus = 'Aprobado' AND mes_anio BETWEEN :desde AND :hasta
-                    """)
-                    df_pagos_anual = pd.read_sql(query_pagos, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
-
-                st.markdown("---")
-                st.markdown(f"## 📁 BALANCE Y RENDICIÓN DE CUENTAS (Período: **{periodo_desde}** al **{periodo_hasta}**)")
-                
-                # --- SECCIÓN 1: RESUMEN FINANCIERO GLOBAL ---
-                total_gastos_periodo = float(df_gastos_anual['monto'].sum()) if not df_gastos_anual.empty else 0.0
-                total_ingresos_periodo = float(df_pagos_anual['monto_usd'].sum()) if not df_pagos_anual.empty else 0.0
-                balance_periodo = total_ingresos_periodo - total_gastos_periodo
-
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric("Total Gastos del Período", f"${total_gastos_periodo:,.2f}")
-                col_m2.metric("Total Ingresos Recaudados", f"${total_ingresos_periodo:,.2f}")
-                
-                if balance_periodo >= 0:
-                    col_m3.metric("Balance General", f"${balance_periodo:,.2f} (Superávit)", delta_color="normal")
-                else:
-                    col_m3.metric("Balance General", f"-${abs(balance_periodo):,.2f} (Déficit)", delta_color="inverse")
-
-                st.markdown("---")
-
-                # --- SECCIÓN 2: GASTOS DE PROVEEDORES CON MONTOS POR MES ---
-                st.subheader("🛠️ Desglose de Gastos por Proveedor (Montos por Mes)")
-                if not df_gastos_anual.empty:
-                    df_gastos_anual['proveedor'] = df_gastos_anual['proveedor'].fillna('No especificado')
-                    
-                    # Crear tabla pivote: Proveedor como filas, Meses como columnas, Monto como valores
-                    df_pivot_proveedores = df_gastos_anual.pivot_table(
-                        index='proveedor', 
-                        columns='mes_anio', 
-                        values='monto', 
-                        aggfunc='sum', 
-                        fill_value=0.0
-                    )
-                    
-                    # Añadir columna de Total General por Proveedor y ordenar de mayor a menor gasto
-                    df_pivot_proveedores['Total Pagado ($)'] = df_pivot_proveedores.sum(axis=1)
-                    df_pivot_proveedores = df_pivot_proveedores.sort_values(by='Total Pagado ($)', ascending=False)
-                    
-                    # Resetear índice para mostrar limpio en Streamlit
-                    df_pivot_proveedores = df_pivot_proveedores.reset_index()
-                    df_pivot_proveedores.rename(columns={'proveedor': 'Proveedor / Concepto General'}, inplace=True)
-                    
-                    st.dataframe(df_pivot_proveedores, use_container_width=True)
-                else:
-                    st.info(f"No se registraron gastos aprobados para el período entre {periodo_desde} y {periodo_hasta}.")
-
-                st.markdown("---")
-
-                # --- SECCIÓN 3: ESTADO DE CUENTA Y MOROSIDAD POR UNIDAD ORDENADO ---
-                st.subheader("👥 Estatus de Saldos y Morosidad por Unidad al Cierre del Período")
-                
-                if not df_unidades.empty and not df_gastos_anual.empty:
-                    meses_activos = sorted(df_gastos_anual['mes_anio'].unique())
-                    
-                    # Orden estricto requerido para las 13 unidades
-                    orden_unidades = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
-                    df_unidades['unidad'] = pd.Categorical(df_unidades['unidad'], categories=orden_unidades, ordered=True)
-                    df_unidades = df_unidades.sort_values('unidad').reset_index(drop=True)
-                    
-                    reporte_morosidad = []
-                    
-                    for _, u_row in df_unidades.iterrows():
-                        apto = str(u_row['unidad'])
-                        prop = u_row['propietario']
-                        alic = float(u_row['alicuota'])
+            if not periodo_desde.strip() or not periodo_hasta.strip():
+                st.warning("Por favor ingrese ambos periodos en formato AAAA-MM (ej. 2026-01).")
+            else:
+                try:
+                    with engine.connect() as conn:
+                        # 1. Obtener unidades y alícuotas
+                        df_unidades = pd.read_sql("SELECT unidad, propietario, alicuota FROM unidades", conn)
                         
-                        saldo_unidad_acumulado = 0.0
+                        # 2. Obtener gastos aprobados filtrados por rango de mes_anio
+                        query_gastos = text("""
+                            SELECT mes_anio, concepto, proveedor, monto, estatus 
+                            FROM gastos 
+                            WHERE estatus = 'Aprobado' AND mes_anio BETWEEN :desde AND :hasta
+                        """)
+                        df_gastos_anual = pd.read_sql(query_gastos, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
+
+                        # 3. Obtener pagos aprobados filtrados por rango de mes_anio
+                        query_pagos = text("""
+                            SELECT mes_anio, apartamento, monto_usd, referencia, fecha_pago, estatus 
+                            FROM pagos_reportados 
+                            WHERE estatus = 'Aprobado' AND mes_anio BETWEEN :desde AND :hasta
+                        """)
+                        df_pagos_anual = pd.read_sql(query_pagos, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
+
+                    st.markdown("---")
+                    st.markdown(f"## 📁 BALANCE Y RENDICIÓN DE CUENTAS (Período: **{periodo_desde}** al **{periodo_hasta}**)")
+                    
+                    # --- SECCIÓN 1: RESUMEN FINANCIERO GLOBAL ---
+                    total_gastos_periodo = float(df_gastos_anual['monto'].sum()) if not df_gastos_anual.empty else 0.0
+                    total_ingresos_periodo = float(df_pagos_anual['monto_usd'].sum()) if not df_pagos_anual.empty else 0.0
+                    balance_periodo = total_ingresos_periodo - total_gastos_periodo
+
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1.metric("Total Gastos del Período", f"${total_gastos_periodo:,.2f}")
+                    col_m2.metric("Total Ingresos Recaudados", f"${total_ingresos_periodo:,.2f}")
+                    
+                    if balance_periodo >= 0:
+                        col_m3.metric("Balance General", f"${balance_periodo:,.2f} (Superávit)", delta_color="normal")
+                    else:
+                        col_m3.metric("Balance General", f"-${abs(balance_periodo):,.2f} (Déficit)", delta_color="inverse")
+
+                    st.markdown("---")
+
+                    # --- SECCIÓN 2: GASTOS DE PROVEEDORES CON MONTOS POR MES ---
+                    st.subheader("🛠️ Desglose de Gastos por Proveedor (Montos por Mes)")
+                    if not df_gastos_anual.empty:
+                        df_gastos_anual['proveedor'] = df_gastos_anual['proveedor'].fillna('No especificado')
                         
-                        for m in meses_activos:
-                            gasto_mes_val = float(df_gastos_anual[df_gastos_anual['mes_anio'] == m]['monto'].sum())
-                            cuota_parte = gasto_mes_val * (alic / 100.0)
+                        # Crear tabla pivote: Proveedor como filas, Meses como columnas, Monto como valores
+                        df_pivot_proveedores = df_gastos_anual.pivot_table(
+                            index='proveedor', 
+                            columns='mes_anio', 
+                            values='monto', 
+                            aggfunc='sum', 
+                            fill_value=0.0
+                        )
+                        
+                        # Añadir columna de Total General por Proveedor y ordenar de mayor a menor gasto
+                        df_pivot_proveedores['Total Pagado ($)'] = df_pivot_proveedores.sum(axis=1)
+                        df_pivot_proveedores = df_pivot_proveedores.sort_values(by='Total Pagado ($)', ascending=False)
+                        
+                        # Resetear índice para mostrar limpio en Streamlit
+                        df_pivot_proveedores = df_pivot_proveedores.reset_index()
+                        df_pivot_proveedores.rename(columns={'proveedor': 'Proveedor / Concepto General'}, inplace=True)
+                        
+                        st.dataframe(df_pivot_proveedores, use_container_width=True)
+                    else:
+                        st.info(f"No se registraron gastos aprobados para el período entre {periodo_desde} y {periodo_hasta}.")
+
+                    st.markdown("---")
+
+                    # --- SECCIÓN 3: ESTADO DE CUENTA Y MOROSIDAD POR UNIDAD ORDENADO ---
+                    st.subheader("👥 Estatus de Saldos y Morosidad por Unidad al Cierre del Período")
+                    
+                    if not df_unidades.empty and not df_gastos_anual.empty:
+                        meses_activos = sorted(df_gastos_anual['mes_anio'].unique())
+                        
+                        # Orden estricto requerido para las 13 unidades
+                        orden_unidades = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+                        df_unidades['unidad'] = pd.Categorical(df_unidades['unidad'], categories=orden_unidades, ordered=True)
+                        df_unidades = df_unidades.sort_values('unidad').reset_index(drop=True)
+                        
+                        reporte_morosidad = []
+                        
+                        for _, u_row in df_unidades.iterrows():
+                            apto = str(u_row['unidad'])
+                            prop = u_row['propietario']
+                            alic = float(u_row['alicuota'])
                             
-                            pagos_unidad_mes = 0.0
-                            if not df_pagos_anual.empty:
-                                p_filtrados = df_pagos_anual[(df_pagos_anual['apartamento'] == apto) & (df_pagos_anual['mes_anio'] == m)]
-                                pagos_unidad_mes = float(p_filtrados['monto_usd'].sum())
+                            saldo_unidad_acumulado = 0.0
                             
-                            diferencia = pagos_unidad_mes - cuota_parte
-                            saldo_unidad_acumulado += diferencia
+                            for m in meses_activos:
+                                gasto_mes_val = float(df_gastos_anual[df_gastos_anual['mes_anio'] == m]['monto'].sum())
+                                cuota_parte = gasto_mes_val * (alic / 100.0)
+                                
+                                pagos_unidad_mes = 0.0
+                                if not df_pagos_anual.empty:
+                                    p_filtrados = df_pagos_anual[(df_pagos_anual['apartamento'] == apto) & (df_pagos_anual['mes_anio'] == m)]
+                                    pagos_unidad_mes = float(p_filtrados['monto_usd'].sum())
+                                
+                                diferencia = pagos_unidad_mes - cuota_parte
+                                saldo_unidad_acumulado += diferencia
+                            
+                            estatus_str = f"🟢 Solvente / A Favor (+${saldo_unidad_acumulado:,.2f})" if saldo_unidad_acumulado >= 0 else f"🔴 Deudor Pendiente (-${abs(saldo_unidad_acumulado):,.2f})"
+                            
+                            reporte_morosidad.append({
+                                "Unidad": apto,
+                                "Propietario": prop,
+                                "Alícuota (%)": f"{alic}%",
+                                "Saldo Final del Período": estatus_str
+                            })
                         
-                        estatus_str = f"🟢 Solvente / A Favor (+${saldo_unidad_acumulado:,.2f})" if saldo_unidad_acumulado >= 0 else f"🔴 Deudor Pendiente (-${abs(saldo_unidad_acumulado):,.2f})"
-                        
-                        reporte_morosidad.append({
-                            "Unidad": apto,
-                            "Propietario": prop,
-                            "Alícuota (%)": f"{alic}%",
-                            "Saldo Final del Período": estatus_str
-                        })
-                    
-                    df_morosidad_final = pd.DataFrame(reporte_morosidad)
-                    st.dataframe(df_morosidad_final, use_container_width=True)
-                else:
-                    st.info("Faltan datos de unidades o gastos para calcular el estado de cuentas en este período.")
+                        df_morosidad_final = pd.DataFrame(reporte_morosidad)
+                        st.dataframe(df_morosidad_final, use_container_width=True)
+                    else:
+                        st.info("Faltan datos de unidades o gastos para calcular el estado de cuentas en este período.")
 
-                st.markdown("---")
-                st.caption("💡 Este reporte consolida la gestión completa de las unidades respetando el orden correcto del edificio y el desglose temporal de proveedores.")
+                    st.markdown("---")
+                    st.caption("💡 Este reporte consolida la gestión completa de las unidades respetando el orden correcto del edificio y el desglose temporal de proveedores.")
 
-            except Exception as e:
-                st.error(f"Error generando el reporte de gestión: {e}")
+                except Exception as e:
+                    st.error(f"Error generando el reporte de gestión: {e}")
 else:
     # -------------------------------------------------------------------------
     # PANEL DEL PROPIETARIO (AUTENTICADO CON SU UNIDAD)
