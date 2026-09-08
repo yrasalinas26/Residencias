@@ -1424,7 +1424,7 @@ if rol_actual == "admin":
             st.error(f"Error en conciliación: {e}")
 
         # -------------------------------------------------------------------------
-        # REPORTE DE MOROSIDAD SENCILLO MENSUAL (SIN PROPIETARIOS) + PDF CON DATOS DEL EDIFICIO
+        # REPORTE DE MOROSIDAD SENCILLO MENSUAL (SIN PROPIETARIOS) + PDF CON DATOS DE T8
         # -------------------------------------------------------------------------
         st.markdown("---")
         st.subheader("📋 Reporte de Morosidad y Saldos por Unidad (Mensual)")
@@ -1458,10 +1458,8 @@ if rol_actual == "admin":
                     apto = str(u_row['unidad'])
                     alic = float(u_row['alicuota'])
                     
-                    # Calcular cuota parte según alícuota
                     cuota_parte = gasto_mes_total * (alic / 100.0)
                     
-                    # Buscar pagos aprobados de esta unidad en el mes
                     pagos_encontrados = 0.0
                     if not df_pagos_mes.empty:
                         match_pago = df_pagos_mes[df_pagos_mes['apartamento'] == apto]
@@ -1486,21 +1484,35 @@ if rol_actual == "admin":
                 df_reporte_simple = pd.DataFrame(reporte_simple)
                 st.dataframe(df_reporte_simple, use_container_width=True)
 
-                # --- BOTÓN DE DESCARGA EN PDF CON MEMBRETE DEL EDIFICIO ---
+                # --- BOTÓN DE DESCARGA EN PDF LEYENDO DATOS DE CONFIGURACIÓN (T8) ---
                 import io
                 from reportlab.lib.pagesizes import letter
                 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
                 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
                 from reportlab.lib import colors
 
-                def generar_pdf_morosidad_mensual(mes, df_datos):
+                def generar_pdf_morosidad_mensual(mes, df_datos, db_engine):
+                    # Consultar los datos del edificio guardados en la configuración (t8)
+                    nombre_edif = "CONDOMINIO RESIDENCIAS"
+                    rif_edif = ""
+                    dir_edif = ""
+                    try:
+                        with db_engine.connect() as c_config:
+                            # Ajusta el nombre de la tabla/columnas si difiere ligeramente en tu t8 (ej. 'configuracion' o 'edificio')
+                            res_config = c_config.execute(text("SELECT nombre, rif, direccion FROM configuracion LIMIT 1")).fetchone()
+                            if res_config:
+                                nombre_edif = res_config[0] or nombre_edif
+                                rif_edif = res_config[1] or ""
+                                dir_edif = res_config[2] or ""
+                    except Exception:
+                        pass # Si falla o usa otra tabla, mantiene los valores por defecto
+
                     buffer = io.BytesIO()
                     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
                     elementos = []
                     
                     styles = getSampleStyleSheet()
                     
-                    # Estilos para el encabezado corporativo del edificio
                     estilo_edificio = ParagraphStyle(
                         'NombreEdificio',
                         parent=styles['Heading1'],
@@ -1531,12 +1543,11 @@ if rol_actual == "admin":
                         spaceAfter=15
                     )
 
-                    # Datos del encabezado (Puedes cambiar estos textos según los datos reales de tu edificio)
-                    nombre_edificio = "CONDOMINIO RESIDENCIAS (NOMBRE DE TU EDIFICIO)"
-                    rif_edificio = "RIF: J-00000000-0 | Dirección: Av. Principal, Urb. Ejemplo"
+                    elementos.append(Paragraph(f"<b>{nombre_edif}</b>", estilo_edificio))
+                    info_detalles = f"RIF: {rif_edif} | Dirección: {dir_edif}".strip(" |")
+                    if info_detalles:
+                        elementos.append(Paragraph(info_detalles, estilo_info_edificio))
                     
-                    elementos.append(Paragraph(f"<b>{nombre_edificio}</b>", estilo_edificio))
-                    elementos.append(Paragraph(rif_edificio, estilo_info_edificio))
                     elementos.append(Paragraph(f"<b>Reporte Mensual de Morosidad y Saldos — Periodo: {mes}</b>", estilo_titulo_rep))
                     
                     tabla_data = [["Unidad", "Alícuota", "Cuota ($)", "Pagado ($)", "Estatus / Saldo"]]
@@ -1572,7 +1583,7 @@ if rol_actual == "admin":
                     buffer.seek(0)
                     return buffer.getvalue()
 
-                pdf_bytes = generar_pdf_morosidad_mensual(mes_concil, df_reporte_simple)
+                pdf_bytes = generar_pdf_morosidad_mensual(mes_concil, df_reporte_simple, engine)
                 st.download_button(
                     label="📥 Descargar Reporte Mensual en PDF",
                     data=pdf_bytes,
