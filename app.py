@@ -790,8 +790,111 @@ if rol_actual == "admin":
                                         {"id": r_gasto["id"]},
                                     )
                                     conn.commit()
-                                st.success("Gasto eliminado.")
+                                st.error("Gasto eliminado.")
                                 st.rerun()
+
+            # ==========================================
+            # SECCIÓN NUEVA: RECIBO DE GASTOS COMUNES Y WHATSAPP
+            # ==========================================
+            st.write("---")
+            st.subheader(f"📢 Generar Recibo y Envío por WhatsApp (Periodo: {mes_filtro})")
+
+            with engine.connect() as conn:
+                # Traer solo los gastos APROBADOS del mes para calcular el recibo real
+                df_gastos_aprobados = pd.read_sql(
+                    text("SELECT concepto, monto FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                    conn,
+                    params={"m": mes_filtro}
+                )
+                df_unidades_gc = pd.read_sql("SELECT unidad, propietario, alicuota, telefono FROM unidades", conn)
+
+            if df_gastos_aprobados.empty:
+                st.warning(f"⚠️ No hay gastos aprobados para el periodo {mes_filtro} para poder generar el recibo.")
+            else:
+                total_gastos_mes = df_gastos_aprobados['monto'].sum()
+                
+                # Mostrar desglose en pantalla
+                st.markdown(f"**Total de Gastos Comunes Aprobados:** ${total_gastos_mes:,.2f}")
+                with st.expander("Ver desglose de los gastos del mes"):
+                    for _, g_row in df_gastos_aprobados.iterrows():
+                        st.text(f"• {g_row['concepto']}: ${float(g_row['monto']):,.2f}")
+
+                if df_unidades_gc.empty:
+                    st.warning("⚠️ No hay unidades configuradas para calcular las alícuotas.")
+                else:
+                    # Orden oficial estricto de las 13 unidades
+                    orden_oficial = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
+                    
+                    dict_unidades_gc = {}
+                    for _, u in df_unidades_gc.iterrows():
+                        dict_unidades_gc[str(u['unidad']).strip().upper()] = {
+                            "propietario": u['propietario'],
+                            "alicuota": float(u['alicuota']),
+                            "telefono": str(u['telefono'])
+                        }
+
+                    # Construir el texto del detalle de gastos para el mensaje
+                    desglose_gastos_txt = "\n".join([f"• {row['concepto']}: ${float(row['monto']):,.2f}" for _, row in df_gastos_aprobados.iterrows()])
+
+                    # Construir la distribución por apartamento ordenada
+                    lineas_distribucion = []
+                    for apto_nombre in orden_oficial:
+                        if apto_nombre in dict_unidades_gc:
+                            alic = dict_unidades_gc[apto_nombre]["alicuota"]
+                            monto_parte = total_gastos_mes * (alic / 100.0)
+                            lineas_distribucion.append(f"• Apto {apto_nombre} ({alic}%): ${monto_parte:,.2f}")
+                    
+                    distribucion_str = "\n".join(lineas_distribucion)
+
+                    # 1. Mensaje para el Grupo General
+                    msg_grupo_gc = (
+                        f"🏢 *RELACIÓN DE GASTOS COMUNES - {mes_filtro}* 🏢\n\n"
+                        f"Estimados propietarios, a continuación el detalle de los gastos del mes:\n\n"
+                        f"{desglose_gastos_txt}\n\n"
+                        f"💵 *Monto Total del Mes:* ${total_gastos_mes:,.2f}\n\n"
+                        f"📋 *Distribución por alícuotas:*\n{distribucion_str}\n\n"
+                        f"Agradecemos su pronta cancelación. ¡Saludos!"
+                    )
+
+                    import urllib.parse
+                    msg_grupo_encoded = urllib.parse.quote(msg_grupo_gc)
+                    link_grupo_gc = f"https://wa.me/?text={msg_grupo_encoded}"
+
+                    st.markdown("---")
+                    st.markdown("**1️⃣ Difusión General del Recibo:**")
+                    st.link_button("📲 Enviar Relación de Gastos al Grupo (WhatsApp)", url=link_grupo_gc)
+
+                    st.markdown("---")
+                    st.markdown("**2️⃣ Envío de Estado de Cuenta Individual:**")
+                    
+                    lista_aptos_gc = [apto for apto in orden_oficial if apto in dict_unidades_gc]
+                    apto_sel_gc = st.selectbox("Seleccione apartamento para enviar recibo individual:", lista_aptos_gc, key=f"sel_gc_{mes_filtro}")
+
+                    if apto_sel_gc:
+                        info_u_gc = dict_unidades_gc[apto_sel_gc]
+                        alic_gc = info_u_gc['alicuota']
+                        monto_apto_gc = total_gastos_mes * (alic_gc / 100.0)
+                        tel_gc = info_u_gc['telefono'].strip()
+
+                        msg_ind_gc = (
+                            f"Hola {info_u_gc['propietario']}, le escribimos de la administración de las Residencias.\n\n"
+                            f"Le enviamos su estado de cuenta de Gastos Comunes ({mes_filtro}):\n"
+                            f"🏠 *Unidad:* {apto_sel_gc} (Alícuota {alic_gc}%)\n\n"
+                            f"📌 *Desglose de gastos del periodo:*\n{desglose_gastos_txt}\n\n"
+                            f"💵 *Total a pagar:* **${monto_apto_gc:,.2f}**\n\n"
+                            f"Por favor reportar su pago al realizarlo. ¡Gracias!"
+                        )
+
+                        msg_ind_gc_encoded = urllib.parse.quote(msg_ind_gc)
+                        tel_limpio_gc = "".join(filter(str.isdigit, tel_gc))
+
+                        if tel_limpio_gc:
+                            link_ind_gc = f"https://wa.me/{tel_limpio_gc}?text={msg_ind_gc_encoded}"
+                            st.link_button(f"📲 Enviar Recibo Individual a {info_u_gc['propietario']} ({apto_sel_gc})", url=link_ind_gc)
+                            st.caption(f"Teléfono registrado: {tel_gc}")
+                        else:
+                            st.warning(f"⚠️ El apartamento {apto_sel_gc} no tiene un teléfono válido registrado.")
+
         except Exception as e:
             st.error(f"Error cargando gastos: {e}")
 
