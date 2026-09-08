@@ -1484,7 +1484,7 @@ if rol_actual == "admin":
                 df_reporte_simple = pd.DataFrame(reporte_simple)
                 st.dataframe(df_reporte_simple, use_container_width=True)
 
-                # --- BOTÓN DE DESCARGA EN PDF LEYENDO DATOS DE CONFIGURACIÓN (T8) ---
+                # --- BOTÓN DE DESCARGA EN PDF LEYENDO LA TABLA CORRECTA (configuracion_edificio) ---
                 import io
                 from reportlab.lib.pagesizes import letter
                 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -1492,20 +1492,19 @@ if rol_actual == "admin":
                 from reportlab.lib import colors
 
                 def generar_pdf_morosidad_mensual(mes, df_datos, db_engine):
-                    # Consultar los datos del edificio guardados en la configuración (t8)
+                    # Consultar los datos del edificio directamente de 'configuracion_edificio' (la misma que usa t8)
                     nombre_edif = "CONDOMINIO RESIDENCIAS"
                     rif_edif = ""
                     dir_edif = ""
                     try:
                         with db_engine.connect() as c_config:
-                            # Ajusta el nombre de la tabla/columnas si difiere ligeramente en tu t8 (ej. 'configuracion' o 'edificio')
-                            res_config = c_config.execute(text("SELECT nombre, rif, direccion FROM configuracion LIMIT 1")).fetchone()
+                            res_config = c_config.execute(text("SELECT nombre, rif, direccion FROM configuracion_edificio WHERE id = 1")).fetchone()
                             if res_config:
                                 nombre_edif = res_config[0] or nombre_edif
                                 rif_edif = res_config[1] or ""
                                 dir_edif = res_config[2] or ""
                     except Exception:
-                        pass # Si falla o usa otra tabla, mantiene los valores por defecto
+                        pass # Si ocurre algún detalle, mantiene los valores por defecto
 
                     buffer = io.BytesIO()
                     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -1676,7 +1675,7 @@ if rol_actual == "admin":
                                     if st.button("❌ Rechazar", key=f"rechazar_{p['id']}"):
                                         with engine.begin() as conn_w:
                                             conn_w.execute(
-                                                text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"),
+                                                text("UPDATE pagos_reportados WHERE id = :id"),
                                                 {"id": p['id']}
                                             )
                                         st.warning(f"Pago #{p['id']} marcado como rechazado.")
