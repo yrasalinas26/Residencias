@@ -1233,6 +1233,54 @@ if rol_actual == "admin":
         st.markdown("---")
         
         # =====================================================================
+        # ⚠️ GESTIÓN DE SALDO INICIAL / DEUDOR ANTERIOR (EJ. 07/2026)
+        # =====================================================================
+        with st.expander("⚠️ Configurar Saldo Inicial / Deudor por Unidad (Ej. al 07/2026)"):
+            st.info("Permite registrar un saldo de arrastre (deudor o a favor) antes del inicio del sistema o para un periodo específico.")
+            df_saldos_units = obtener_unidades_df()
+            lista_saldos_units = df_saldos_units['unidad'].tolist() if not df_saldos_units.empty else []
+            
+            apto_saldo = st.selectbox("Seleccione la Unidad:", lista_saldos_units, key="select_saldo_inicial_unit")
+            
+            # Consultar si ya tiene saldo inicial registrado
+            saldo_actual_db = 0.0
+            try:
+                with engine.connect() as conn:
+                    res_s = conn.execute(text("SELECT saldo_inicial FROM unidades WHERE unidad = :u"), {"u": apto_saldo}).fetchone()
+                    if res_s and hasattr(res_s, 'saldo_inicial') and res_s.saldo_inicial is not None:
+                        saldo_actual_db = float(res_s.saldo_inicial)
+            except Exception:
+                # Si la columna no existe aún en la BD, la creamos al vuelo de manera segura
+                try:
+                    with engine.begin() as conn_w:
+                        conn_w.execute(text("ALTER TABLE unidades ADD COLUMN saldo_inicial FLOAT DEFAULT 0.0"))
+                except Exception:
+                    pass
+
+            monto_saldo_ingresado = st.number_input(
+                "Saldo Inicial en USD (Positivo si es a favor, Negativo si es deudor / deuda previa):", 
+                value=saldo_actual_db, 
+                step=1.0, 
+                format="%.2f",
+                key="input_valor_saldo_inicial",
+                help="Ejemplo: Si el apartamento 6B debe $150 al 07/2026, ingresa -150.00"
+            )
+            
+            if st.button("Guardar Saldo Inicial", key="btn_guardar_saldo_inicial", type="primary"):
+                try:
+                    with engine.begin() as conn_w:
+                        conn_w.execute(
+                            text("UPDATE unidades SET saldo_inicial = :s WHERE unidad = :u"),
+                            {"s": monto_saldo_ingresado, "u": apto_saldo}
+                        )
+                    st.success(f"¡Saldo inicial actualizado exitosamente para la unidad {apto_saldo}!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar saldo inicial: {e}")
+
+        st.markdown("---")
+
+        # =====================================================================
         # 📄 HISTORIAL Y ESTADO DE CUENTA DETALLADO POR PROPIETARIO
         # =====================================================================
         with st.expander("👤 Consultar Historial y Estado de Cuenta Detallado", expanded=True):
@@ -1244,16 +1292,17 @@ if rol_actual == "admin":
             if st.button("Generar Historial Financiero", key="btn_edo_cuenta", type="primary"):
                 try:
                     with engine.connect() as conn:
-                        # 1. Obtener la alícuota y propietario de la unidad seleccionada
+                        # 1. Obtener la alícuota, propietario y saldo inicial de la unidad seleccionada
                         res_unid = conn.execute(
-                            text("SELECT alicuota, propietario FROM unidades WHERE unidad = :u"),
+                            text("SELECT alicuota, propietario, saldo_inicial FROM unidades WHERE unidad = :u"),
                             {"u": apto_seleccionado}
                         ).fetchone()
                         
                         alicuota_pct = float(res_unid.alicuota) if res_unid and res_unid.alicuota else 0.0
                         nombre_prop = res_unid.propietario if res_unid else "N/D"
+                        saldo_inicial_base = float(res_unid.saldo_inicial) if res_unid and hasattr(res_unid, 'saldo_inicial') and res_unid.saldo_inicial else 0.0
 
-                        # 2. Obtener todos los pagos aprobados de esta unidad incluyendo moneda, monto original, tasa y detalles
+                        # 2. Obtener todos los pagos aprobados de esta unidad
                         df_pagos_aprobados = pd.read_sql(
                             text("""
                                 SELECT mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, referencia, fecha_pago, metodo_pago 
@@ -1271,11 +1320,12 @@ if rol_actual == "admin":
                         )
 
                     st.markdown(f"### 📄 Estado de Cuenta Histórico: Unidad **{apto_seleccionado}** ({nombre_prop})")
-                    st.info(f"📌 Alícuota asignada: **{alicuota_pct}%**")
+                    st.info(f"📌 Alícuota asignada: **{alicuota_pct}%** | 📌 Saldo Inicial de Arrastre: **${saldo_inicial_base:,.2f} USD**")
 
                     if not df_gastos_mes.empty:
                         reporte_global = []
-                        saldo_acumulado = 0.0
+                        # El acumulado arranca directamente con el saldo inicial configurado (ej: -150 si es deudor)
+                        saldo_acumulado = saldo_inicial_base 
 
                         for _, row_g in df_gastos_mes.iterrows():
                             mes = row_g["mes_anio"]
@@ -1314,7 +1364,7 @@ if rol_actual == "admin":
                                 referencia = ", ".join(refs)
                                 fecha_pago = ", ".join(fechas)
 
-                            # Cálculo del balance del mes (Pagado en USD menos lo que debía cobrar)
+                            # Cálculo del balance del mes (Pagado menos lo que debía cobrar)
                             diferencia_mes = monto_pagado_usd - cuota_a_cobrar
                             saldo_acumulado += diferencia_mes
 
