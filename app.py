@@ -1888,6 +1888,7 @@ with t6:
                         
                         df_morosidad_final = pd.DataFrame(reporte_morosidad)
                         st.dataframe(df_morosidad_final, use_container_width=True)
+                    
                     else:
                         st.info("Faltan datos de unidades o gastos para calcular el estado de cuentas en este período.")
 
