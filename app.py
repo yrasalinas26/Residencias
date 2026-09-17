@@ -1893,7 +1893,6 @@ with t6:
 
                     st.markdown("---")
                     st.caption("💡 Este reporte consolida la gestión completa de las unidades respetando el orden correcto del edificio y el desglose temporal de proveedores.")
-
                 except Exception as e:
                     st.error(f"Error generando el reporte de gestión: {e}")
 else:
