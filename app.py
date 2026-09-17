@@ -1192,232 +1192,248 @@ if rol_actual == "admin":
         except Exception as e:
             st.error(f"Error cargando pagos reportados: {e}")
 
-    with t6:
-        st.subheader("🏢 Configuración de Alícuotas y Propietarios")
-        st.info("Distribución oficial del edificio: 10 unidades al 6%, dos unidades al 12%, y el PH al 16% (Total 100%).")
+with t6:
+    st.subheader("🏢 Configuración de Alícuotas y Propietarios")
+    st.info("Distribución oficial del edificio: 10 unidades al 6%, dos unidades al 12%, y el PH al 16% (Total 100%).")
+    
+    # 1. Cargar datos actuales
+    df_unidades = obtener_unidades_df()
+    
+    if not df_unidades.empty:
+        # Aseguramos el orden de las columnas esperadas
+        cols_mostrar = ['unidad', 'propietario', 'telefono', 'alicuota']
+        cols_presentes = [c for c in cols_mostrar if c in df_unidades.columns]
         
-        df_unidades = obtener_unidades_df()
-        with st.form("form_editar_unidades"):
-            updated_data = []
-            for idx, row in df_unidades.iterrows():
-                st.markdown(f"**Unidad: {row['unidad']}**")
-                col_u1, col_u2, col_u3 = st.columns(3)
-                with col_u1:
-                    prop_val = st.text_input(f"Propietario {row['unidad']}", value=row['propietario'], key=f"prop_{row['unidad']}")
-                with col_u2:
-                    tel_val = st.text_input(f"Teléfono {row['unidad']}", value=row['telefono'], key=f"tel_{row['unidad']}")
-                with col_u3:
-                    alic_val = st.number_input(f"Alícuota % {row['unidad']}", value=float(row['alicuota']), step=0.01, key=f"alic_{row['unidad']}")
-                
-                updated_data.append({"unidad": row['unidad'], "propietario": prop_val, "telefono": tel_val, "alicuota": alic_val})
-                st.markdown("---")
-
-            btn_guardar_unidades = st.form_submit_button("Guardar Cambios de Unidades", type="primary")
-            if btn_guardar_unidades:
-                try:
-                    with engine.connect() as conn:
-                        for item in updated_data:
-                            conn.execute(
-                                text("""
-                                    UPDATE unidades SET propietario = :p, telefono = :t, alicuota = :a
-                                    WHERE unidad = :u
-                                """),
-                                {"p": item["propietario"], "t": item["telefono"], "a": item["alicuota"], "u": item["unidad"]}
-                            )
-                        conn.commit()
-                    st.success("Unidades actualizadas correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error actualizando unidades: {e}")
-
-        st.markdown("---")
+        st.markdown("### ✏️ Edición Rápida de Unidades")
+        st.caption("Modifica los valores directamente en la tabla y presiona 'Guardar Cambios' abajo.")
         
-        # =====================================================================
-        # ⚠️ GESTIÓN DE SALDO INICIAL / DEUDOR ANTERIOR (EJ. 07/2026)
-        # =====================================================================
-        with st.expander("⚠️ Configurar Saldo Inicial / Deudor por Unidad (Ej. al 07/2026)"):
-            st.info("Permite registrar un saldo de arrastre (deudor o a favor) antes del inicio del sistema o para un periodo específico.")
-            df_saldos_units = obtener_unidades_df()
-            lista_saldos_units = df_saldos_units['unidad'].tolist() if not df_saldos_units.empty else []
-            
-            apto_saldo = st.selectbox("Seleccione la Unidad:", lista_saldos_units, key="select_saldo_inicial_unit")
-            
-            # Consultar si ya tiene saldo inicial registrado
-            saldo_actual_db = 0.0
+        # 2. Editor interactivo masivo (tipo Excel)
+        df_editado = st.data_editor(
+            df_unidades[cols_presentes],
+            disabled=["unidad"], # La clave primaria 'unidad' no se debe modificar
+            column_config={
+                "unidad": st.column_config.TextColumn("Unidad / Apto", disabled=True),
+                "propietario": st.column_config.TextColumn("Nombre del Propietario"),
+                "telefono": st.column_config.TextColumn("Teléfono"),
+                "alicuota": st.column_config.NumberColumn(
+                    "Alícuota (%)",
+                    format="%.2f %%",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=0.01
+                )
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="editor_unidades_t6"
+        )
+        
+        # 3. Botón de guardado masivo en la Base de Datos
+        if st.button("💾 Guardar Cambios de Unidades", type="primary", key="btn_save_unid_editor"):
+            try:
+                with engine.begin() as conn:
+                    for _, row in df_editado.iterrows():
+                        conn.execute(
+                            text("""
+                                UPDATE unidades 
+                                SET propietario = :p, telefono = :t, alicuota = :a
+                                WHERE unidad = :u
+                            """),
+                            {
+                                "p": str(row["propietario"] or "").strip(),
+                                "t": str(row["telefono"] or "").strip(),
+                                "a": float(row["alicuota"]),
+                                "u": str(row["unidad"])
+                            }
+                        )
+                st.success("✅ Unidades actualizadas correctamente.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error actualizando unidades: {e}")
+    else:
+        st.warning("No se encontraron unidades registradas en la base de datos.")
+
+    st.markdown("---")
+    
+    # =====================================================================
+    # ⚠️ GESTIÓN DE SALDO INICIAL / DEUDOR ANTERIOR (SE MANTIENE IGUAL)
+    # =====================================================================
+    with st.expander("⚠️ Configurar Saldo Inicial / Deudor por Unidad (Ej. al 07/2026)"):
+        st.info("Permite registrar un saldo de arrastre (deudor o a favor) antes del inicio del sistema o para un periodo específico.")
+        df_saldos_units = obtener_unidades_df()
+        lista_saldos_units = df_saldos_units['unidad'].tolist() if not df_saldos_units.empty else []
+        
+        apto_saldo = st.selectbox("Seleccione la Unidad:", lista_saldos_units, key="select_saldo_inicial_unit")
+        
+        # Consultar si ya tiene saldo inicial registrado
+        saldo_actual_db = 0.0
+        try:
+            with engine.connect() as conn:
+                res_s = conn.execute(text("SELECT saldo_inicial FROM unidades WHERE unidad = :u"), {"u": apto_saldo}).fetchone()
+                if res_s and hasattr(res_s, 'saldo_inicial') and res_s.saldo_inicial is not None:
+                    saldo_actual_db = float(res_s.saldo_inicial)
+        except Exception:
+            try:
+                with engine.begin() as conn_w:
+                    conn_w.execute(text("ALTER TABLE unidades ADD COLUMN saldo_inicial FLOAT DEFAULT 0.0"))
+            except Exception:
+                pass
+
+        monto_saldo_ingresado = st.number_input(
+            "Saldo Inicial en USD (Positivo si es a favor, Negativo si es deudor / deuda previa):", 
+            value=saldo_actual_db, 
+            step=1.0, 
+            format="%.2f",
+            key="input_valor_saldo_inicial",
+            help="Ejemplo: Si el apartamento 6B debe $150 al 07/2026, ingresa -150.00"
+        )
+        
+        if st.button("Guardar Saldo Inicial", key="btn_guardar_saldo_inicial", type="primary"):
+            try:
+                with engine.begin() as conn_w:
+                    conn_w.execute(
+                        text("UPDATE unidades SET saldo_inicial = :s WHERE unidad = :u"),
+                        {"s": monto_saldo_ingresado, "u": apto_saldo}
+                    )
+                st.success(f"¡Saldo inicial actualizado exitosamente para la unidad {apto_saldo}!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar saldo inicial: {e}")
+
+    st.markdown("---")
+
+    # =====================================================================
+    # 📄 HISTORIAL Y ESTADO DE CUENTA DETALLADO POR PROPIETARIO (SE MANTIENE IGUAL)
+    # =====================================================================
+    with st.expander("👤 Consultar Historial y Estado de Cuenta Detallado", expanded=True):
+        df_lista_units = obtener_unidades_df()
+        lista_apartamentos = df_lista_units['unidad'].tolist() if not df_lista_units.empty else []
+        
+        apto_seleccionado = st.selectbox("Seleccione el Apartamento / Unidad:", lista_apartamentos, key="select_edo_cta_admin")
+        
+        if st.button("Generar Historial Financiero", key="btn_edo_cuenta", type="primary"):
             try:
                 with engine.connect() as conn:
-                    res_s = conn.execute(text("SELECT saldo_inicial FROM unidades WHERE unidad = :u"), {"u": apto_saldo}).fetchone()
-                    if res_s and hasattr(res_s, 'saldo_inicial') and res_s.saldo_inicial is not None:
-                        saldo_actual_db = float(res_s.saldo_inicial)
-            except Exception:
-                # Si la columna no existe aún en la BD, la creamos al vuelo de manera segura
-                try:
-                    with engine.begin() as conn_w:
-                        conn_w.execute(text("ALTER TABLE unidades ADD COLUMN saldo_inicial FLOAT DEFAULT 0.0"))
-                except Exception:
-                    pass
+                    res_unid = conn.execute(
+                        text("SELECT alicuota, propietario, saldo_inicial FROM unidades WHERE unidad = :u"),
+                        {"u": apto_seleccionado}
+                    ).fetchone()
+                    
+                    alicuota_pct = float(res_unid.alicuota) if res_unid and res_unid.alicuota else 0.0
+                    nombre_prop = res_unid.propietario if res_unid else "N/D"
+                    saldo_inicial_base = float(res_unid.saldo_inicial) if res_unid and hasattr(res_unid, 'saldo_inicial') and res_unid.saldo_inicial else 0.0
 
-            monto_saldo_ingresado = st.number_input(
-                "Saldo Inicial en USD (Positivo si es a favor, Negativo si es deudor / deuda previa):", 
-                value=saldo_actual_db, 
-                step=1.0, 
-                format="%.2f",
-                key="input_valor_saldo_inicial",
-                help="Ejemplo: Si el apartamento 6B debe $150 al 07/2026, ingresa -150.00"
-            )
-            
-            if st.button("Guardar Saldo Inicial", key="btn_guardar_saldo_inicial", type="primary"):
-                try:
-                    with engine.begin() as conn_w:
-                        conn_w.execute(
-                            text("UPDATE unidades SET saldo_inicial = :s WHERE unidad = :u"),
-                            {"s": monto_saldo_ingresado, "u": apto_saldo}
-                        )
-                    st.success(f"¡Saldo inicial actualizado exitosamente para la unidad {apto_saldo}!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al guardar saldo inicial: {e}")
+                    df_pagos_aprobados = pd.read_sql(
+                        text("""
+                            SELECT mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, referencia, fecha_pago, metodo_pago 
+                            FROM pagos_reportados 
+                            WHERE apartamento = :apt AND estatus = 'Aprobado'
+                        """),
+                        conn,
+                        params={"apt": apto_seleccionado}
+                    )
+                    
+                    df_gastos_mes = pd.read_sql(
+                        text("SELECT mes_anio, SUM(monto) as total_gastos FROM gastos WHERE estatus = 'Aprobado' GROUP BY mes_anio ORDER BY mes_anio"),
+                        conn
+                    )
 
-        st.markdown("---")
+                st.markdown(f"### 📄 Estado de Cuenta Histórico: Unidad **{apto_seleccionado}** ({nombre_prop})")
+                st.info(f"📌 Alícuota asignada: **{alicuota_pct}%** | 📌 Saldo Inicial de Arrastre: **${saldo_inicial_base:,.2f} USD**")
 
-        # =====================================================================
-        # 📄 HISTORIAL Y ESTADO DE CUENTA DETALLADO POR PROPIETARIO
-        # =====================================================================
-        with st.expander("👤 Consultar Historial y Estado de Cuenta Detallado", expanded=True):
-            df_lista_units = obtener_unidades_df()
-            lista_apartamentos = df_lista_units['unidad'].tolist() if not df_lista_units.empty else []
-            
-            apto_seleccionado = st.selectbox("Seleccione el Apartamento / Unidad:", lista_apartamentos, key="select_edo_cta_admin")
-            
-            if st.button("Generar Historial Financiero", key="btn_edo_cuenta", type="primary"):
+                if not df_gastos_mes.empty:
+                    reporte_global = []
+                    saldo_acumulado = saldo_inicial_base 
+
+                    for _, row_g in df_gastos_mes.iterrows():
+                        mes = row_g["mes_anio"]
+                        gasto_total = float(row_g["total_gastos"])
+                        cuota_a_cobrar = gasto_total * (alicuota_pct / 100.0)
+
+                        pago_mes = df_pagos_aprobados[df_pagos_aprobados["mes_anio"] == mes] if not df_pagos_aprobados.empty else pd.DataFrame()
+                        
+                        monto_pagado_usd = 0.0
+                        detalle_pago_str = "Sin pago"
+                        tasa_str = "N/A"
+                        referencia = "N/A"
+                        fecha_pago = "Pendiente"
+                        
+                        if not pago_mes.empty:
+                            monto_pagado_usd = float(pago_mes["monto_usd"].sum())
+                            
+                            detalles_origen = []
+                            tasas_usadas = []
+                            refs = []
+                            fechas = []
+                            
+                            for _, p_row in pago_mes.iterrows():
+                                mo = float(p_row["monto_original"])
+                                mon = p_row["moneda"]
+                                ta = float(p_row["tasa_aplicada"])
+                                detalles_origen.append(f"{mo:,.2f} {mon}")
+                                if mon == "VES":
+                                    tasas_usadas.append(f"{ta:,.4f}")
+                                refs.append(str(p_row["referencia"]))
+                                fechas.append(str(p_row["fecha_pago"]))
+                            
+                            detalle_pago_str = " + ".join(detalles_origen)
+                            tasa_str = ", ".join(tasas_usadas) if tasas_usadas else "USD Directo"
+                            referencia = ", ".join(refs)
+                            fecha_pago = ", ".join(fechas)
+
+                        diferencia_mes = monto_pagado_usd - cuota_a_cobrar
+                        saldo_acumulado += diferencia_mes
+
+                        estatus_saldo = f"🟢 A Favor (+${saldo_acumulado:,.2f})" if saldo_acumulado >= 0 else f"🔴 Deudor (-${abs(saldo_acumulado):,.2f})"
+
+                        reporte_global.append({
+                            "Periodo": mes,
+                            "A Cobrar ($)": round(cuota_a_cobrar, 2),
+                            "Pago Original": detalle_pago_str,
+                            "Tasa Aplicada": tasa_str,
+                            "Pagado ($)": round(monto_pagado_usd, 2),
+                            "Referencia": referencia,
+                            "Fecha Pago": fecha_pago,
+                            "Saldo / Remanente": estatus_saldo
+                        })
+
+                    df_estado = pd.DataFrame(reporte_global)
+                    st.dataframe(df_estado, use_container_width=True)
+                    
+                    st.markdown("---")
+                    st.caption("💡 **Tip para imprimir:** Presiona `Ctrl + P` (o `Cmd + P` en Mac) para guardar este historial y compartirlo con el propietario.")
+                else:
+                    st.info("No hay registros de gastos aprobados para generar el historial.")
+
+            except Exception as e:
+                st.error(f"Error generando el estado de cuenta histórico: {e}")
+
+    # =====================================================================
+    # 🔐 RESTABLECER CONTRASEÑA DE PROPIETARIO (SE MANTIENE IGUAL)
+    # =====================================================================
+    with st.expander("🔐 Restablecer Contraseña de Propietario"):
+        st.info("Asigna una nueva contraseña temporal a la unidad seleccionada en caso de pérdida u olvido.")
+        
+        df_pass_units = obtener_unidades_df()
+        lista_pass_units = df_pass_units['unidad'].tolist() if not df_pass_units.empty else []
+        
+        apto_pass = st.selectbox("Seleccione la Unidad para resetear clave:", lista_pass_units, key="select_pass_unit")
+        nueva_clave = st.text_input("Nueva Contraseña Temporal:", type="password", key="input_nueva_clave")
+        
+        if st.button("Actualizar Contraseña", key="btn_reset_pass", type="primary"):
+            if nueva_clave.strip():
                 try:
                     with engine.connect() as conn:
-                        # 1. Obtener la alícuota, propietario y saldo inicial de la unidad seleccionada
-                        res_unid = conn.execute(
-                            text("SELECT alicuota, propietario, saldo_inicial FROM unidades WHERE unidad = :u"),
-                            {"u": apto_seleccionado}
-                        ).fetchone()
-                        
-                        alicuota_pct = float(res_unid.alicuota) if res_unid and res_unid.alicuota else 0.0
-                        nombre_prop = res_unid.propietario if res_unid else "N/D"
-                        saldo_inicial_base = float(res_unid.saldo_inicial) if res_unid and hasattr(res_unid, 'saldo_inicial') and res_unid.saldo_inicial else 0.0
-
-                        # 2. Obtener todos los pagos aprobados de esta unidad
-                        df_pagos_aprobados = pd.read_sql(
-                            text("""
-                                SELECT mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, referencia, fecha_pago, metodo_pago 
-                                FROM pagos_reportados 
-                                WHERE apartamento = :apt AND estatus = 'Aprobado'
-                            """),
-                            conn,
-                            params={"apt": apto_seleccionado}
+                        conn.execute(
+                            text("UPDATE unidades SET password = :p WHERE unidad = :u"),
+                            {"p": nueva_clave.strip(), "u": apto_pass}
                         )
-                        
-                        # 3. Obtener todos los gastos aprobados ordenados por mes
-                        df_gastos_mes = pd.read_sql(
-                            text("SELECT mes_anio, SUM(monto) as total_gastos FROM gastos WHERE estatus = 'Aprobado' GROUP BY mes_anio ORDER BY mes_anio"),
-                            conn
-                        )
-
-                    st.markdown(f"### 📄 Estado de Cuenta Histórico: Unidad **{apto_seleccionado}** ({nombre_prop})")
-                    st.info(f"📌 Alícuota asignada: **{alicuota_pct}%** | 📌 Saldo Inicial de Arrastre: **${saldo_inicial_base:,.2f} USD**")
-
-                    if not df_gastos_mes.empty:
-                        reporte_global = []
-                        # El acumulado arranca directamente con el saldo inicial configurado (ej: -150 si es deudor)
-                        saldo_acumulado = saldo_inicial_base 
-
-                        for _, row_g in df_gastos_mes.iterrows():
-                            mes = row_g["mes_anio"]
-                            gasto_total = float(row_g["total_gastos"])
-                            cuota_a_cobrar = gasto_total * (alicuota_pct / 100.0)
-
-                            # Buscar pagos aprobados para este mes exacto
-                            pago_mes = df_pagos_aprobados[df_pagos_aprobados["mes_anio"] == mes] if not df_pagos_aprobados.empty else pd.DataFrame()
-                            
-                            monto_pagado_usd = 0.0
-                            detalle_pago_str = "Sin pago"
-                            tasa_str = "N/A"
-                            referencia = "N/A"
-                            fecha_pago = "Pendiente"
-                            
-                            if not pago_mes.empty:
-                                monto_pagado_usd = float(pago_mes["monto_usd"].sum())
-                                
-                                detalles_origen = []
-                                tasas_usadas = []
-                                refs = []
-                                fechas = []
-                                
-                                for _, p_row in pago_mes.iterrows():
-                                    mo = float(p_row["monto_original"])
-                                    mon = p_row["moneda"]
-                                    ta = float(p_row["tasa_aplicada"])
-                                    detalles_origen.append(f"{mo:,.2f} {mon}")
-                                    if mon == "VES":
-                                        tasas_usadas.append(f"{ta:,.4f}")
-                                    refs.append(str(p_row["referencia"]))
-                                    fechas.append(str(p_row["fecha_pago"]))
-                                
-                                detalle_pago_str = " + ".join(detalles_origen)
-                                tasa_str = ", ".join(tasas_usadas) if tasas_usadas else "USD Directo"
-                                referencia = ", ".join(refs)
-                                fecha_pago = ", ".join(fechas)
-
-                            # Cálculo del balance del mes (Pagado menos lo que debía cobrar)
-                            diferencia_mes = monto_pagado_usd - cuota_a_cobrar
-                            saldo_acumulado += diferencia_mes
-
-                            estatus_saldo = f"🟢 A Favor (+${saldo_acumulado:,.2f})" if saldo_acumulado >= 0 else f"🔴 Deudor (-${abs(saldo_acumulado):,.2f})"
-
-                            reporte_global.append({
-                                "Periodo": mes,
-                                "A Cobrar ($)": round(cuota_a_cobrar, 2),
-                                "Pago Original": detalle_pago_str,
-                                "Tasa Aplicada": tasa_str,
-                                "Pagado ($)": round(monto_pagado_usd, 2),
-                                "Referencia": referencia,
-                                "Fecha Pago": fecha_pago,
-                                "Saldo / Remanente": estatus_saldo
-                            })
-
-                        df_estado = pd.DataFrame(reporte_global)
-                        st.dataframe(df_estado, use_container_width=True)
-                        
-                        st.markdown("---")
-                        st.caption("💡 **Tip para imprimir:** Presiona `Ctrl + P` (o `Cmd + P` en Mac) para guardar este historial y compartirlo con el propietario.")
-                    else:
-                        st.info("No hay registros de gastos aprobados para generar el historial.")
-
+                        conn.commit()
+                    st.success(f"¡Contraseña actualizada con éxito para la unidad {apto_pass}!")
                 except Exception as e:
-                    st.error(f"Error generando el estado de cuenta histórico: {e}")
-
-        # =====================================================================
-        # 🔐 RESTABLECER CONTRASEÑA DE PROPIETARIO
-        # =====================================================================
-        with st.expander("🔐 Restablecer Contraseña de Propietario"):
-            st.info("Asigna una nueva contraseña temporal a la unidad seleccionada en caso de pérdida u olvido.")
-            
-            df_pass_units = obtener_unidades_df()
-            lista_pass_units = df_pass_units['unidad'].tolist() if not df_pass_units.empty else []
-            
-            apto_pass = st.selectbox("Seleccione la Unidad para resetear clave:", lista_pass_units, key="select_pass_unit")
-            nueva_clave = st.text_input("Nueva Contraseña Temporal:", type="password", key="input_nueva_clave")
-            
-            if st.button("Actualizar Contraseña", key="btn_reset_pass", type="primary"):
-                if nueva_clave.strip():
-                    try:
-                        with engine.connect() as conn:
-                            conn.execute(
-                                text("UPDATE unidades SET password = :p WHERE unidad = :u"),
-                                {"p": nueva_clave.strip(), "u": apto_pass}
-                            )
-                            conn.commit()
-                        st.success(f"¡Contraseña actualizada con éxito para la unidad {apto_pass}!")
-                    except Exception as e:
-                        st.error(f"Error al actualizar la contraseña: {e}")
-                else:
-                    st.warning("Por favor ingrese una contraseña válida.")
+                    st.error(f"Error al actualizar la contraseña: {e}")
+            else:
+                st.warning("Por favor ingrese una contraseña válida.")
     with t7:
         renderizar_recibos()
 
