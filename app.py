@@ -1450,6 +1450,14 @@ if rol_actual == "admin":
                 
                 with col_m1:
                     unidad_destino_pm = st.selectbox("Seleccionar Unidad / Apartamento:", lista_units_admin, key="admin_pm_unidad")
+                    
+                    # ➕ NUEVO: Selector para elegir si es Mensualidad o Cuota Extraordinaria
+                    tipo_pago_admin = st.selectbox(
+                        "Tipo de Pago:", 
+                        ["Mensualidad", "Cuota Extraordinaria", "Otro"], 
+                        key="admin_pm_tipo_pago"
+                    )
+                    
                     mes_pago_pm = st.text_input("Periodo a Abonar (AAAA-MM)", value=obtener_mes_anterior(), key="admin_pm_mes")
                     monto_ves = st.number_input("Monto en Bolívares (VES)", min_value=0.01, step=1.00, key="admin_pm_monto_ves")
                     
@@ -1483,10 +1491,11 @@ if rol_actual == "admin":
                                 conn_ins.execute(
                                     text("""
                                         INSERT INTO pagos_reportados (apartamento, tipo_pago, mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus)
-                                        VALUES (:apt, 'Mensualidad', :m, :mo, 'VES', :ta, :musd, 'Pago Móvil', :ref, :f, 'Aprobado')
+                                        VALUES (:apt, :tp, :m, :mo, 'VES', :ta, :musd, 'Pago Móvil', :ref, :f, 'Aprobado')
                                     """),
                                     {
                                         "apt": unidad_destino_pm,
+                                        "tp": tipo_pago_admin,  # ➕ Se guarda el tipo seleccionado dinámicamente
                                         "m": mes_pago_pm,
                                         "mo": monto_ves,
                                         "ta": tasa_aplicada_pm,
@@ -1495,10 +1504,10 @@ if rol_actual == "admin":
                                         "f": fecha_pago_pm
                                     }
                                 )
-                            st.success(f"✅ ¡Pago Móvil de Bs. {monto_ves:,.2f} (${monto_usd_calc:,.2f} USD) registrado y aprobado para la unidad {unidad_destino_pm}!")
+                            st.success(f"✅ ¡{tipo_pago_admin} por Bs. {monto_ves:,.2f} (${monto_usd_calc:,.2f} USD) registrada y aprobada para la unidad {unidad_destino_pm}!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al registrar el pago móvil: {e}")
+                            st.error(f"❌ Error al registrar el pago: {e}")
                     else:
                         st.warning("⚠️ Por favor ingresa un monto y una tasa válidos.")
     with t7:
