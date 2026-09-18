@@ -1433,6 +1433,74 @@ if rol_actual == "admin":
                         st.error(f"Error al actualizar la contraseña: {e}")
                 else:
                     st.warning("Por favor ingrese una contraseña válida.")
+
+        st.markdown("---")
+
+        # =====================================================================
+        # 📱 REGISTRAR PAGO MÓVIL / TRANSFERENCIA (ADMIN)
+        # =====================================================================
+        with st.expander("📱 Registrar Pago Móvil / Transferencia en Nombre de un Propietario (Admin)"):
+            st.info("Ideal para reportar pagos en bolívares (Pago Móvil o transferencia) de propietarios que no usan la plataforma o están fuera del país.")
+            
+            df_units_pago = obtener_unidades_df()
+            lista_units_admin = df_units_pago['unidad'].tolist() if not df_units_pago.empty else []
+            
+            with st.form("form_pago_movil_admin"):
+                col_m1, col_m2 = st.columns(2)
+                
+                with col_m1:
+                    unidad_destino_pm = st.selectbox("Seleccionar Unidad / Apartamento:", lista_units_admin, key="admin_pm_unidad")
+                    mes_pago_pm = st.text_input("Periodo a Abonar (AAAA-MM)", value=obtener_mes_anterior(), key="admin_pm_mes")
+                    monto_ves = st.number_input("Monto en Bolívares (VES)", min_value=0.01, step=1.00, key="admin_pm_monto_ves")
+                    
+                    fecha_pago_pm = st.date_input("Fecha del Pago Móvil", value=date.today(), key="admin_pm_fecha")
+                    
+                    # Buscar tasa del día sugerida
+                    tasa_sug_pm = 1.0
+                    try:
+                        with engine.connect() as conn_t:
+                            res_t = conn_t.execute(text("SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT 1"), {"f": fecha_pago_pm}).scalar()
+                            if res_t:
+                                tasa_sug_pm = float(res_t)
+                    except Exception:
+                        pass
+                        
+                with col_m2:
+                    tasa_aplicada_pm = st.number_input("Tasa BCV del Día (VES/USD)", min_value=0.01, value=tasa_sug_pm, step=0.01, key="admin_pm_tasa")
+                    banco_origen = st.text_input("Banco Emisor (Ej. Banesco, Mercantil, Provincial)", placeholder="Ej: Banesco", key="admin_pm_banco")
+                    referencia_pm = st.text_input("Nro. de Referencia (últimos dígitos o serial)", placeholder="Ej: 123456", key="admin_pm_ref")
+                    telefono_pagador = st.text_input("Teléfono del Pagador (Opcional)", placeholder="0412-1234567", key="admin_pm_tlf")
+
+                btn_guardar_pm_admin = st.form_submit_button("💾 Guardar y Aprobar Pago Móvil", type="primary")
+                
+                if btn_guardar_pm_admin:
+                    if monto_ves > 0 and tasa_aplicada_pm > 0:
+                        monto_usd_calc = monto_ves / tasa_aplicada_pm
+                        ref_completa = f"PM: {referencia_pm} | Banco: {banco_origen} | Tlf: {telefono_pagador}"
+                        
+                        try:
+                            with engine.begin() as conn_ins:
+                                conn_ins.execute(
+                                    text("""
+                                        INSERT INTO pagos_reportados (apartamento, tipo_pago, mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus)
+                                        VALUES (:apt, 'Mensualidad', :m, :mo, 'VES', :ta, :musd, 'Pago Móvil', :ref, :f, 'Aprobado')
+                                    """),
+                                    {
+                                        "apt": unidad_destino_pm,
+                                        "m": mes_pago_pm,
+                                        "mo": monto_ves,
+                                        "ta": tasa_aplicada_pm,
+                                        "musd": monto_usd_calc,
+                                        "ref": ref_completa,
+                                        "f": fecha_pago_pm
+                                    }
+                                )
+                            st.success(f"✅ ¡Pago Móvil de Bs. {monto_ves:,.2f} (${monto_usd_calc:,.2f} USD) registrado y aprobado para la unidad {unidad_destino_pm}!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al registrar el pago móvil: {e}")
+                    else:
+                        st.warning("⚠️ Por favor ingresa un monto y una tasa válidos.")
     with t7:
         renderizar_recibos()
 
