@@ -929,7 +929,7 @@ if rol_actual == "admin":
                     except Exception as e:
                         st.error(f"Error al registrar cargo: {e}")
 
-    with t3:
+      with t3:
         st.subheader("⭐ Gestión y Registro de Cuotas Extraordinarias")
         with st.form("form_cuota_extra"):
             col_ce1, col_ce2 = st.columns(2)
@@ -1091,6 +1091,42 @@ if rol_actual == "admin":
 
         except Exception as e:
             st.error(f"Error listando cuotas extraordinarias: {e}")
+
+        # --- NUEVO: REPORTE GENERAL DE PAGOS DE CUOTAS EXTRAORDINARIAS ---
+        st.write("---")
+        st.subheader("📊 Reporte Consolidado de Pagos de Cuotas Extraordinarias")
+        st.info("Aquí puedes visualizar todos los aportes que los propietarios han reportado y aprobado correspondientes a cuotas extraordinarias.")
+        
+        try:
+            with engine.connect() as conn:
+                query_reporte_ce = text("""
+                    SELECT 
+                        referencia AS Concepto_Cuota, 
+                        apartamento AS Apartamento, 
+                        monto_usd AS Monto_Cuota, 
+                        referencia AS Referencia_Pago, 
+                        fecha_pago AS Fecha_Pago
+                    FROM pagos_reportados 
+                    WHERE estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria'
+                    ORDER BY fecha_pago DESC
+                """)
+                df_reporte_ce = pd.read_sql(query_reporte_ce, conn)
+                
+            if not df_reporte_ce.empty:
+                st.dataframe(df_reporte_ce, use_container_width=True)
+                
+                # Botón de descarga CSV opcional para máxima utilidad
+                csv_data = df_reporte_ce.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Descargar Reporte de Cuotas Extraordinarias (CSV)",
+                    data=csv_data,
+                    file_name="reporte_cuotas_extraordinarias.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.info("No se encuentran pagos aprobados de cuotas extraordinarias registrados en el sistema.")
+        except Exception as e:
+            st.warning(f"Aún no se ha adaptado la columna de tipos de pago o hubo un error al consultar: {e}") 
     with t4:
         st.subheader("💱 Tasas de Cambio (BCV)")
         tasa_actual_auto = verificar_y_actualizar_tasa_hoy(engine)
@@ -1837,7 +1873,7 @@ if rol_actual == "admin":
    
     with t10:
         st.subheader("📊 Cierre y Reporte de Gestión por Periodo")
-        st.info("Genera el balance consolidado, el desglose mensual de gastos por proveedor, los ingresos por cuotas extraordinarias y el estatus de morosidad de las unidades según el rango seleccionado.")
+        st.info("Genera el balance consolidado, el desglose mensual de gastos por proveedor y el estatus de morosidad de las unidades según el rango seleccionado.")
         
         # Selector de rango de periodo (Desde mes/año - Hasta mes/año)
         col_p1, col_p2, col_p3 = st.columns([2, 2, 2])
@@ -1874,33 +1910,23 @@ if rol_actual == "admin":
                         """)
                         df_pagos_mensuales = pd.read_sql(query_pagos_mensuales, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
 
-                        # 4. Obtener pagos aprobados EXTRAORDINARIOS filtrados por rango
-                        query_pagos_extras = text("""
-                            SELECT mes_anio, apartamento, monto_usd, referencia, fecha_pago, estatus, metodo_pago 
-                            FROM pagos_reportados 
-                            WHERE estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria' AND mes_anio BETWEEN :desde AND :hasta
-                        """)
-                        df_pagos_extras = pd.read_sql(query_pagos_extras, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
-
                     st.markdown("---")
                     st.markdown(f"## 📁 BALANCE Y RENDICIÓN DE CUENTAS (Período: **{periodo_desde}** al **{periodo_hasta}**)")
                     
-                    # --- SECCIÓN 1: RESUMEN FINANCIERO GLOBAL ---
+                    # --- SECCIÓN 1: RESUMEN FINANCIERO GLOBAL (ORDINARIO) ---
                     total_gastos_periodo = float(df_gastos_anual['monto'].sum()) if not df_gastos_anual.empty else 0.0
                     total_ingresos_mensuales = float(df_pagos_mensuales['monto_usd'].sum()) if not df_pagos_mensuales.empty else 0.0
-                    total_ingresos_extras = float(df_pagos_extras['monto_usd'].sum()) if not df_pagos_extras.empty else 0.0
                     
                     balance_periodo = total_ingresos_mensuales - total_gastos_periodo
 
-                    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-                    col_m1.metric("Total Gastos", f"${total_gastos_periodo:,.2f}")
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1.metric("Total Gastos Ordinarios", f"${total_gastos_periodo:,.2f}")
                     col_m2.metric("Recaudación Mensual", f"${total_ingresos_mensuales:,.2f}")
-                    col_m3.metric("Cuotas Extraordinarias", f"${total_ingresos_extras:,.2f}")
                     
                     if balance_periodo >= 0:
-                        col_m4.metric("Balance Mensual", f"${balance_periodo:,.2f} (Superávit)")
+                        col_m3.metric("Balance del Periodo", f"${balance_periodo:,.2f} (Superávit)")
                     else:
-                        col_m4.metric("Balance Mensual", f"-${abs(balance_periodo):,.2f} (Déficit)")
+                        col_m3.metric("Balance del Periodo", f"-${abs(balance_periodo):,.2f} (Déficit)")
 
                     st.markdown("---")
 
@@ -1927,36 +1953,8 @@ if rol_actual == "admin":
                         st.info(f"No se registraron gastos aprobados para el período entre {periodo_desde} y {periodo_hasta}.")
 
                     st.markdown("---")
-                    
-                    # --- SECCIÓN 3: REPORTE DETALLADO DE CUOTAS EXTRAORDINARIAS ---
-                    st.subheader("🚀 Recaudación y Desglose de Cuotas Extraordinarias")
-                    
-                    if not df_pagos_extras.empty:
-                        st.markdown("#### Detalle de Aportes Extraordinarios")
-                        st.dataframe(df_pagos_extras, use_container_width=True)
-                        
-                        # Resumen agrupado por concepto o motivo de la cuota extra
-                        st.markdown("#### 📌 Resumen por Concepto / Motivo de Cuota Extra")
-                        try:
-                            with engine.connect() as conn_c:
-                                df_resumen_extras = pd.read_sql(
-                                    text("""
-                                        SELECT referencia as Concepto_Detalle, SUM(monto_usd) as Total_USD, COUNT(apartamento) as Cantidad_Pagos
-                                        FROM pagos_reportados 
-                                        WHERE estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria' AND mes_anio BETWEEN :desde AND :hasta
-                                        GROUP BY referencia
-                                    """),
-                                    conn_c,
-                                    params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()}
-                                )
-                            if not df_resumen_extras.empty:
-                                st.dataframe(df_resumen_extras, use_container_width=True)
-                        except Exception:
-                            pass
-                    else:
-                        st.info("No hay registros de cuotas extraordinarias aprobadas en este rango de periodos.")
-                  
-                    # --- SECCIÓN 4: ESTADO DE CUENTA Y MOROSIDAD POR UNIDAD ORDENADO ---
+
+                    # --- SECCIÓN 3: ESTADO DE CUENTA Y MOROSIDAD POR UNIDAD ---
                     st.subheader("👥 Estatus de Saldos y Morosidad Ordinaria por Unidad")
                     
                     if not df_unidades.empty and not df_gastos_anual.empty:
@@ -2003,7 +2001,7 @@ if rol_actual == "admin":
                         st.info("Faltan datos de unidades o gastos para calcular el estado de cuentas ordinario en este período.")
 
                     st.markdown("---")
-                    st.caption("💡 Este reporte consolida la gestión completa separando la contabilidad ordinaria de las cuotas extraordinarias.")
+                    st.caption("💡 Este reporte consolida exclusivamente el balance de gastos ordinarios, recaudación de mensualidades y morosidad.")
                 except Exception as e:
                     st.error(f"Error generando el reporte de gestión: {e}")
 else:
