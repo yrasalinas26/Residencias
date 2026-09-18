@@ -1927,16 +1927,35 @@ if rol_actual == "admin":
                         st.info(f"No se registraron gastos aprobados para el período entre {periodo_desde} y {periodo_hasta}.")
 
                     st.markdown("---")
-
-                    # --- SECCIÓN 3: REPORTE DETALLADO DE CUOTAS EXTRAORDINARIAS EN EL PERIODO ---
-                    st.subheader("🚀 Recaudación por Cuotas Extraordinarias en el Periodo")
+                    
+                    # --- SECCIÓN 3: REPORTE DETALLADO DE CUOTAS EXTRAORDINARIAS ---
+                    st.subheader("🚀 Recaudación y Desglose de Cuotas Extraordinarias")
+                    
                     if not df_pagos_extras.empty:
+                        st.markdown("#### Detalle de Aportes Extraordinarios")
                         st.dataframe(df_pagos_extras, use_container_width=True)
+                        
+                        # Resumen agrupado por concepto o motivo de la cuota extra
+                        st.markdown("#### 📌 Resumen por Concepto / Motivo de Cuota Extra")
+                        try:
+                            with engine.connect() as conn_c:
+                                df_resumen_extras = pd.read_sql(
+                                    text("""
+                                        SELECT referencia as Concepto_Detalle, SUM(monto_usd) as Total_USD, COUNT(apartamento) as Cantidad_Pagos
+                                        FROM pagos_reportados 
+                                        WHERE estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria' AND mes_anio BETWEEN :desde AND :hasta
+                                        GROUP BY referencia
+                                    """),
+                                    conn_c,
+                                    params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()}
+                                )
+                            if not df_resumen_extras.empty:
+                                st.dataframe(df_resumen_extras, use_container_width=True)
+                        except Exception:
+                            pass
                     else:
                         st.info("No hay registros de cuotas extraordinarias aprobadas en este rango de periodos.")
-
-                    st.markdown("---")
-
+                  
                     # --- SECCIÓN 4: ESTADO DE CUENTA Y MOROSIDAD POR UNIDAD ORDENADO ---
                     st.subheader("👥 Estatus de Saldos y Morosidad Ordinaria por Unidad")
                     
