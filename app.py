@@ -1633,51 +1633,70 @@ if rol_actual == "admin":
         mes_concil = st.text_input("Periodo a conciliar (AAAA-MM):", value=obtener_mes_anterior(), key="mes_conciliacion")
         try:
             with engine.connect() as conn:
+                # 1. Gastos comunes del mes
                 g_comun_sum = conn.execute(
                     text("SELECT SUM(monto) FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
                     {"m": mes_concil}
                 ).scalar() or 0.0
 
-                p_aprob_sum = conn.execute(
-                    text("SELECT SUM(monto_usd) FROM pagos_reportados WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                # 2. Pagos aprobados separados por tipo (Ordinaria vs Extraordinaria)
+                p_ordinaria_sum = conn.execute(
+                    text("SELECT SUM(monto_usd) FROM pagos_reportados WHERE mes_anio = :m AND estatus = 'Aprobado' AND (tipo_pago = 'Cuota Ordinaria' OR tipo_pago IS NULL)"),
                     {"m": mes_concil}
                 ).scalar() or 0.0
 
-            col_c1, col_c2, col_c3 = st.columns(3)
+                p_extra_sum = conn.execute(
+                    text("SELECT SUM(monto_usd) FROM pagos_reportados WHERE mes_anio = :m AND estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria'"),
+                    {"m": mes_concil}
+                ).scalar() or 0.0
+
+                p_aprob_sum = p_ordinaria_sum + p_extra_sum
+
+            col_c1, col_c2, col_c3, col_c4 = st.columns(4)
             balance_val = float(p_aprob_sum or 0.0) - float(g_comun_sum or 0.0)
             col_c1.metric("Gastos Aprobados", f"${float(g_comun_sum or 0.0):,.2f}")
-            col_c2.metric("Pagos Validados / Ingresos", f"${float(p_aprob_sum or 0.0):,.2f}")
-            col_c3.metric("Balance", f"${balance_val:,.2f}")  
+            col_c2.metric("Ingr. Ordinarios", f"${float(p_ordinaria_sum or 0.0):,.2f}")
+            col_c3.metric("Ingr. Extraordinarios", f"${float(p_extra_sum or 0.0):,.2f}")
+            col_c4.metric("Balance Total", f"${balance_val:,.2f}")  
             
         except Exception as e:
             st.error(f"Error en conciliación: {e}")
 
         # -------------------------------------------------------------------------
-        # REPORTE DE MOROSIDAD SENCILLO MENSUAL (SIN PROPIETARIOS) + PDF CON DATOS DE T8
+        # REPORTE DE MOROSIDAD Y SALDOS POR UNIDAD (DESGLOSADO)
         # -------------------------------------------------------------------------
         st.markdown("---")
-        st.subheader("📋 Reporte de Morosidad y Saldos por Unidad (Mensual)")
-        st.info(f"Estatus detallado de las 13 unidades para el periodo **{mes_concil}** (sin mostrar nombres de propietarios).")
+        st.subheader("📋 Reporte de Morosidad y Saldos por Unidad")
+        st.info(f"Estatus detallado de las unidades para el periodo **{mes_concil}**, separando cuotas ordinarias y extraordinarias.")
 
         try:
             with engine.connect() as conn:
                 # 1. Obtener unidades y alícuotas
                 df_unidades = pd.read_sql("SELECT unidad, alicuota FROM unidades", conn)
                 
-                # 2. Obtener gastos del mes
+                # 2. Gastos del mes
                 gasto_mes_total = float(g_comun_sum if 'g_comun_sum' in locals() and g_comun_sum else 0.0)
                 
-                # 3. Obtener pagos aprobados del mes por unidad
-                query_pagos_mes = text("""
-                    SELECT apartamento, SUM(monto_usd) as total_pagado 
+                # 3. Obtener pagos ordinarios aprobados del mes por unidad
+                query_pagos_ord = text("""
+                    SELECT apartamento, SUM(monto_usd) as total_ordinario 
                     FROM pagos_reportados 
-                    WHERE mes_anio = :m AND estatus = 'Aprobado'
+                    WHERE mes_anio = :m AND estatus = 'Aprobado' AND (tipo_pago = 'Cuota Ordinaria' OR tipo_pago IS NULL)
                     GROUP BY apartamento
                 """)
-                df_pagos_mes = pd.read_sql(query_pagos_mes, conn, params={"m": mes_concil})
+                df_pagos_ord = pd.read_sql(query_pagos_ord, conn, params={"m": mes_concil})
+
+                # 4. Obtener pagos extraordinarios aprobados del mes por unidad
+                query_pagos_ext = text("""
+                    SELECT apartamento, SUM(monto_usd) as total_extraordinario 
+                    FROM pagos_reportados 
+                    WHERE mes_anio = :m AND estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria'
+                    GROUP BY apartamento
+                """)
+                df_pagos_ext = pd.read_sql(query_pagos_ext, conn, params={"m": mes_concil})
 
             if not df_unidades.empty:
-                # Orden estricto de las 13 unidades
+                # Orden estricto de las unidades
                 orden_unidades = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
                 df_unidades['unidad'] = pd.Categorical(df_unidades['unidad'], categories=orden_unidades, ordered=True)
                 df_unidades = df_unidades.sort_values('unidad').reset_index(drop=True)
@@ -1689,31 +1708,39 @@ if rol_actual == "admin":
                     
                     cuota_parte = gasto_mes_total * (alic / 100.0)
                     
-                    pagos_encontrados = 0.0
-                    if not df_pagos_mes.empty:
-                        match_pago = df_pagos_mes[df_pagos_mes['apartamento'] == apto]
-                        if not match_pago.empty:
-                            pagos_encontrados = float(match_pago['total_pagado'].values[0])
+                    pagos_ord = 0.0
+                    if not df_pagos_ord.empty:
+                        m_ord = df_pagos_ord[df_pagos_ord['apartamento'] == apto]
+                        if not m_ord.empty:
+                            pagos_ord = float(m_ord['total_ordinario'].values[0])
+
+                    pagos_ext = 0.0
+                    if not df_pagos_ext.empty:
+                        m_ext = df_pagos_ext[df_pagos_ext['apartamento'] == apto]
+                        if not m_ext.empty:
+                            pagos_ext = float(m_ext['total_extraordinario'].values[0])
                     
-                    diferencia = pagos_encontrados - cuota_parte
+                    # La diferencia de morosidad ordinaria frente a su cuota correspondiente
+                    diferencia_ord = pagos_ord - cuota_parte
                     
-                    if diferencia >= -0.01:
-                        estatus_morosidad = f"🟢 Solvente / A Favor (+${diferencia:,.2f})"
+                    if diferencia_ord >= -0.01:
+                        estatus_morosidad = f"🟢 Solvente Ordinario (+${diferencia_ord:,.2f})"
                     else:
-                        estatus_morosidad = f"🔴 Deudor (-${abs(diferencia):,.2f})"
+                        estatus_morosidad = f"🔴 Deudor Ordinario (-${abs(diferencia_ord):,.2f})"
 
                     reporte_simple.append({
                         "Unidad": apto,
                         "Alícuota (%)": f"{alic}%",
-                        "Cuota Correspondiente ($)": f"${cuota_parte:,.2f}",
-                        "Pagado Registrado ($)": f"${pagos_encontrados:,.2f}",
+                        "Cuota Mensual ($)": f"${cuota_parte:,.2f}",
+                        "Pagado Ordinario ($)": f"${pagos_ord:,.2f}",
+                        "Pagado Extraordinario ($)": f"${pagos_ext:,.2f}",
                         "Estatus": estatus_morosidad
                     })
 
                 df_reporte_simple = pd.DataFrame(reporte_simple)
                 st.dataframe(df_reporte_simple, use_container_width=True)
 
-                # --- BOTÓN DE DESCARGA EN PDF LEYENDO LA TABLA CORRECTA (configuracion_edificio) ---
+                # --- BOTÓN DE DESCARGA EN PDF (Actualizado con columnas separadas) ---
                 import io
                 from reportlab.lib.pagesizes import letter
                 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -1721,7 +1748,6 @@ if rol_actual == "admin":
                 from reportlab.lib import colors
 
                 def generar_pdf_morosidad_mensual(mes, df_datos, db_engine):
-                    # Consultar los datos del edificio directamente de 'configuracion_edificio' (la misma que usa t8)
                     nombre_edif = "CONDOMINIO RESIDENCIAS"
                     rif_edif = ""
                     dir_edif = ""
@@ -1733,7 +1759,7 @@ if rol_actual == "admin":
                                 rif_edif = res_config[1] or ""
                                 dir_edif = res_config[2] or ""
                     except Exception:
-                        pass # Si ocurre algún detalle, mantiene los valores por defecto
+                        pass
 
                     buffer = io.BytesIO()
                     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -1742,33 +1768,13 @@ if rol_actual == "admin":
                     styles = getSampleStyleSheet()
                     
                     estilo_edificio = ParagraphStyle(
-                        'NombreEdificio',
-                        parent=styles['Heading1'],
-                        fontName='Helvetica-Bold',
-                        fontSize=14,
-                        textColor=colors.HexColor('#1f4e79'),
-                        alignment=1,
-                        spaceAfter=2
+                        'NombreEdificio', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=14, textColor=colors.HexColor('#1f4e79'), alignment=1, spaceAfter=2
                     )
-                    
                     estilo_info_edificio = ParagraphStyle(
-                        'InfoEdificio',
-                        parent=styles['Normal'],
-                        fontName='Helvetica',
-                        fontSize=9,
-                        textColor=colors.HexColor('#595959'),
-                        alignment=1,
-                        spaceAfter=15
+                        'InfoEdificio', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#595959'), alignment=1, spaceAfter=15
                     )
-                    
                     estilo_titulo_rep = ParagraphStyle(
-                        'TituloReporte',
-                        parent=styles['Heading2'],
-                        fontName='Helvetica-Bold',
-                        fontSize=11,
-                        textColor=colors.HexColor('#333333'),
-                        alignment=1,
-                        spaceAfter=15
+                        'TituloReporte', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=11, textColor=colors.HexColor('#333333'), alignment=1, spaceAfter=15
                     )
 
                     elementos.append(Paragraph(f"<b>{nombre_edif}</b>", estilo_edificio))
@@ -1776,33 +1782,34 @@ if rol_actual == "admin":
                     if info_detalles:
                         elementos.append(Paragraph(info_detalles, estilo_info_edificio))
                     
-                    elementos.append(Paragraph(f"<b>Reporte Mensual de Morosidad y Saldos — Periodo: {mes}</b>", estilo_titulo_rep))
+                    elementos.append(Paragraph(f"<b>Reporte Mensual de Morosidad y Pagos — Periodo: {mes}</b>", estilo_titulo_rep))
                     
-                    tabla_data = [["Unidad", "Alícuota", "Cuota ($)", "Pagado ($)", "Estatus / Saldo"]]
+                    tabla_data = [["Unidad", "Alícuota", "Cuota ($)", "Ord. ($)", "Extra. ($)", "Estatus / Saldo"]]
                     
                     for _, row in df_datos.iterrows():
                         tabla_data.append([
                             str(row["Unidad"]),
                             str(row["Alícuota (%)"]),
-                            str(row["Cuota Correspondiente ($)"]),
-                            str(row["Pagado Registrado ($)"]),
+                            str(row["Cuota Mensual ($)"]),
+                            str(row["Pagado Ordinario ($)"]),
+                            str(row["Pagado Extraordinario ($)"]),
                             str(row["Estatus"])
                         ])
                     
-                    t = Table(tabla_data, colWidths=[60, 60, 85, 85, 250])
+                    t = Table(tabla_data, colWidths=[50, 50, 75, 75, 75, 185])
                     t.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e79')),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 9),
+                        ('FONTSIZE', (0, 0), (-1, 0), 8),
                         ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
                         ('TOPPADDING', (0, 0), (-1, 0), 6),
                         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
                         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d3d3d3')),
                         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 9),
-                        ('ALIGN', (4, 1), (4, -1), 'LEFT'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 8),
+                        ('ALIGN', (5, 1), (5, -1), 'LEFT'),
                         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                     ]))
                     
@@ -1827,11 +1834,11 @@ if rol_actual == "admin":
             st.error(f"Error generando el reporte de morosidad mensual: {e}")
 
         # -------------------------------------------------------------------------
-        # GESTIÓN Y VALIDACIÓN DE PAGOS REPORTADOS (INMEDIATO ABAJO DE T9)
+        # GESTIÓN Y VALIDACIÓN DE PAGOS REPORTADOS
         # -------------------------------------------------------------------------
         st.markdown("---")
         st.subheader("🔍 Gestión y Validación de Pagos Reportados")
-        st.info("Revisa los pagos enviados por los propietarios. Puedes aprobarlos, rechazarlos o eliminarlos si contienen errores para que el propietario pueda volver a reportarlos.")
+        st.info("Revisa los pagos enviados por los propietarios. Puedes aprobarlos, rechazarlos o eliminarlos si contienen errores.")
 
         try:
             with engine.connect() as conn:
@@ -1849,16 +1856,28 @@ if rol_actual == "admin":
             if df_pagos_admin.empty:
                 st.info("No hay pagos reportados en el sistema.")
             else:
-                filtro_estatus = st.selectbox(
-                    "Filtrar por estatus:", 
-                    ["Todos", "Pendiente", "Aprobado", "Rechazado"],
-                    key="filtro_estatus_admin"
-                )
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    filtro_estatus = st.selectbox(
+                        "Filtrar por estatus:", 
+                        ["Todos", "Pendiente", "Aprobado", "Rechazado"],
+                        key="filtro_estatus_admin"
+                    )
+                with col_f2:
+                    filtro_tipo = st.selectbox(
+                        "Filtrar por tipo de pago:",
+                        ["Todos", "Cuota Ordinaria", "Cuota Extraordinaria"],
+                        key="filtro_tipo_admin"
+                    )
 
-                df_filtrado = df_pagos_admin if filtro_estatus == "Todos" else df_pagos_admin[df_pagos_admin["estatus"] == filtro_estatus]
+                df_filtrado = df_pagos_admin.copy()
+                if filtro_estatus != "Todos":
+                    df_filtrado = df_filtrado[df_filtrado["estatus"] == filtro_estatus]
+                if filtro_tipo != "Todos":
+                    df_filtrado = df_filtrado[df_filtrado["tipo_pago"] == filtro_tipo]
 
                 if df_filtrado.empty:
-                    st.warning(f"No hay pagos con el estatus '{filtro_estatus}'.")
+                    st.warning("No hay pagos que coincidan con los filtros seleccionados.")
                 else:
                     for _, p in df_filtrado.iterrows():
                         if p["estatus"] == "Aprobado":
@@ -1868,12 +1887,14 @@ if rol_actual == "admin":
                         else:
                             badge = "🔴 Rechazado"
 
-                        with st.expander(f"ID #{p['id']} | Apto: {p['apartamento']} | Periodo: {p['mes_anio']} | ${float(p['monto_usd']):,.2f} USD ({badge})"):
+                        tipo_etiqueta = p['tipo_pago'] if p['tipo_pago'] else 'Cuota Ordinaria'
+
+                        with st.expander(f"ID #{p['id']} | Apto: {p['apartamento']} | {tipo_etiqueta} | ${float(p['monto_usd']):,.2f} USD ({badge})"):
                             col_info1, col_info2 = st.columns(2)
                             with col_info1:
                                 st.markdown(f"""
                                 - **Propietario / Apto:** Unidad {p['apartamento']}
-                                - **Tipo de Pago:** {p['tipo_pago']}
+                                - **Tipo de Pago:** {tipo_etiqueta}
                                 - **Monto Original:** {float(p['monto_original']):,.2f} {p['moneda']}
                                 - **Tasa Aplicada:** {float(p['tasa_aplicada']):,.4f}
                                 - **Equivalente USD:** **${float(p['monto_usd']):,.2f}**
@@ -1883,7 +1904,7 @@ if rol_actual == "admin":
                                 - **Método:** {p['metodo_pago']}
                                 - **Referencia:** `{p['referencia']}`
                                 - **Fecha del Pago:** {p['fecha_pago']}
-                                - **Reportado el:** {p['fecha_reporte']}
+                                - **Periodo:** {p['mes_anio']}
                                 """)
 
                             col_b1, col_b2, col_b3 = st.columns(3)
@@ -1904,7 +1925,7 @@ if rol_actual == "admin":
                                     if st.button("❌ Rechazar", key=f"rechazar_{p['id']}"):
                                         with engine.begin() as conn_w:
                                             conn_w.execute(
-                                                text("UPDATE pagos_reportados WHERE id = :id"),
+                                                text("UPDATE pagos_reportados SET estatus = 'Rechazado' WHERE id = :id"),
                                                 {"id": p['id']}
                                             )
                                         st.warning(f"Pago #{p['id']} marcado como rechazado.")
@@ -1917,10 +1938,10 @@ if rol_actual == "admin":
                                             text("DELETE FROM pagos_reportados WHERE id = :id"),
                                             {"id": p['id']}
                                         )
-                                    st.error(f"Pago #{p['id']} eliminado del sistema. El propietario ya puede reportarlo de nuevo.")
+                                    st.error(f"Pago #{p['id']} eliminado del sistema.")
                                     st.rerun()
         except Exception as e:
-            st.error(f"Ocurrió un error: {e}")
+            st.error(f"Ocurrió un error en la gestión de pagos: {e}")
    
     with t10:
         st.subheader("📊 Cierre y Reporte de Gestión por Periodo")
