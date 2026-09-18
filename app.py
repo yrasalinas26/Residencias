@@ -944,7 +944,7 @@ if rol_actual == "admin":
                     st.error("Debes ingresar un concepto para la cuota extraordinaria.")
                 else:
                     try:
-                        with engine.begin() as conn:  # Usar begin() maneja la transacción de forma segura
+                        with engine.begin() as conn:
                             conn.execute(
                                 text("""
                                     INSERT INTO cuotas_extraordinarias (concepto, monto_total, fecha_emision, estatus)
@@ -960,7 +960,6 @@ if rol_actual == "admin":
         st.write("---")
         st.subheader("📋 Listado y Control de Cuotas Extraordinarias")
         
-        # Función auxiliar interna con reintento para prevenir Deadlocks
         import time
         from sqlalchemy.exc import DBAPIError
 
@@ -983,7 +982,6 @@ if rol_actual == "admin":
                         raise e
 
         try:
-            # Carga segura con reintento automático anti-deadlock
             df_cuotas_admin = ejecutar_sql_seguro(
                 "SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC", 
                 es_lectura=True
@@ -1013,7 +1011,6 @@ if rol_actual == "admin":
                         with col_det2:
                             st.markdown(f"**Estatus:** {badge_ce}")
 
-                        # Botones de acción (Aprobar / Eliminar) seguros
                         col_btn1, col_btn2 = st.columns(2)
                         with col_btn1:
                             if estatus_ce == "Pendiente":
@@ -1119,11 +1116,11 @@ if rol_actual == "admin":
                 st.rerun()
 
         # =========================================================================
-        # --- REPORTE GENERAL DE PAGOS DE CUOTAS EXTRAORDINARIAS ---
+        # --- REPORTE GENERAL DE PAGOS (LISTO PARA IMPRIMIR / WHATSAPP) ---
         # =========================================================================
         st.write("---")
-        st.subheader("📊 Reporte Consolidado de Pagos de Cuotas Extraordinarias")
-        st.info("Aquí puedes visualizar todos los aportes que los propietarios han reportado y aprobado correspondientes a cuotas extraordinarias.")
+        st.subheader("📊 Reporte de Pagos Aprobados - Cuotas Extraordinarias")
+        st.info("💡 **Consejo de impresión:** Presiona `Ctrl + P` en tu teclado para imprimir este reporte de manera limpia o guardarlo como PDF. También puedes enviarlo directamente por WhatsApp.")
         
         try:
             query_reporte_ce = """
@@ -1140,15 +1137,43 @@ if rol_actual == "admin":
             df_reporte_ce = ejecutar_sql_seguro(query_reporte_ce, es_lectura=True)
                 
             if not df_reporte_ce.empty:
+                # Mostramos la tabla interactiva de Streamlit
                 st.dataframe(df_reporte_ce, use_container_width=True)
                 
-                csv_data = df_reporte_ce.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Descargar Reporte de Cuotas Extraordinarias (CSV)",
-                    data=csv_data,
-                    file_name="reporte_cuotas_extraordinarias.csv",
-                    mime="text/csv"
+                # Cálculo rápido de total recaudado para el reporte
+                total_recaudado_ce = df_reporte_ce['Monto_Cuota'].sum()
+                st.markdown(f"### **Total Recaudado en Cuotas Extraordinarias: ${total_recaudado_ce:,.2f}**")
+                
+                st.write("")
+                st.markdown("#### 🚀 Acciones de Compartir Reporte")
+                
+                # Generador de mensaje formateado para WhatsApp con el reporte
+                detalle_pagos_txt = ""
+                for _, row in df_reporte_ce.iterrows():
+                    detalle_pagos_txt += f"• Apto {row['Apartamento']} - ${row['Monto_Cuota']:,.2f} (Ref: {row['Referencia_Pago']})\n"
+                
+                msg_reporte_wa = (
+                    f"📊 *REPORTE DE PAGOS: CUOTAS EXTRAORDINARIAS* 📊\n\n"
+                    f"*Detalle de pagos aprobados:*\n{detalle_pagos_txt}\n"
+                    f"💵 *Total Recaudado:* ${total_recaudado_ce:,.2f}\n\n"
+                    f"Reporte emitido por la administración."
                 )
+                
+                import urllib.parse
+                msg_reporte_encoded = urllib.parse.quote(msg_reporte_wa)
+                link_reporte_wa = f"https://wa.me/?text={msg_reporte_encoded}"
+                
+                col_wa1, col_wa2 = st.columns(2)
+                with col_wa1:
+                    st.link_button("📲 Enviar Reporte por WhatsApp (General)", url=link_reporte_wa, type="primary")
+                with col_wa2:
+                    csv_data = df_reporte_ce.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Descargar CSV",
+                        data=csv_data,
+                        file_name="reporte_cuotas_extraordinarias.csv",
+                        mime="text/csv"
+                    )
             else:
                 st.info("No se encuentran pagos aprobados de cuotas extraordinarias registrados en el sistema.")
         except Exception as e:
