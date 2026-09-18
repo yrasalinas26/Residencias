@@ -1092,7 +1092,9 @@ if rol_actual == "admin":
         except Exception as e:
             st.error(f"Error listando cuotas extraordinarias: {e}")
 
-        # --- NUEVO: REPORTE GENERAL DE PAGOS DE CUOTAS EXTRAORDINARIAS ---
+        # =========================================================================
+        # --- AQUÍ ABAJO VA EL REPORTE GENERAL DE PAGOS DE CUOTAS EXTRAORDINARIAS ---
+        # =========================================================================
         st.write("---")
         st.subheader("📊 Reporte Consolidado de Pagos de Cuotas Extraordinarias")
         st.info("Aquí puedes visualizar todos los aportes que los propietarios han reportado y aprobado correspondientes a cuotas extraordinarias.")
@@ -1126,7 +1128,7 @@ if rol_actual == "admin":
             else:
                 st.info("No se encuentran pagos aprobados de cuotas extraordinarias registrados en el sistema.")
         except Exception as e:
-            st.warning(f"Aún no se ha adaptado la columna de tipos de pago o hubo un error al consultar: {e}") 
+            st.warning(f"Aún no se ha adaptado la columna de tipos de pago o hubo un error al consultar: {e}")
     with t4:
         st.subheader("💱 Tasas de Cambio (BCV)")
         tasa_actual_auto = verificar_y_actualizar_tasa_hoy(engine)
