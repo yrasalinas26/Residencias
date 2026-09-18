@@ -944,7 +944,7 @@ if rol_actual == "admin":
                     st.error("Debes ingresar un concepto para la cuota extraordinaria.")
                 else:
                     try:
-                        with engine.connect() as conn:
+                        with engine.begin() as conn:  # Usar begin() maneja la transacción de forma segura
                             conn.execute(
                                 text("""
                                     INSERT INTO cuotas_extraordinarias (concepto, monto_total, fecha_emision, estatus)
@@ -952,7 +952,6 @@ if rol_actual == "admin":
                                 """),
                                 {"c": concepto_ce, "m": monto_ce}
                             )
-                            conn.commit()
                         st.success("✅ Cuota extraordinaria creada exitosamente en estado pendiente.")
                         st.rerun()
                     except Exception as e:
@@ -960,13 +959,39 @@ if rol_actual == "admin":
 
         st.write("---")
         st.subheader("📋 Listado y Control de Cuotas Extraordinarias")
+        
+        # Función auxiliar interna con reintento para prevenir Deadlocks
+        import time
+        from sqlalchemy.exc import DBAPIError
+
+        def ejecutar_sql_seguro(query_text, params=None, es_lectura=True):
+            max_intentos = 3
+            for intento in range(max_intentos):
+                try:
+                    if es_lectura:
+                        with engine.connect() as conn:
+                            return pd.read_sql(text(query_text), conn, params=params)
+                    else:
+                        with engine.begin() as conn:
+                            conn.execute(text(query_text), params or {})
+                            return True
+                except DBAPIError as e:
+                    if "deadlock detected" in str(e) and intento < max_intentos - 1:
+                        time.sleep(0.4 * (intento + 1))
+                        continue
+                    else:
+                        raise e
+
         try:
-            with engine.connect() as conn:
-                df_cuotas_admin = pd.read_sql(
-                    text("SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC"),
-                    conn
-                )
-                df_unidades_ce = pd.read_sql("SELECT unidad, propietario, alicuota, telefono FROM unidades", conn)
+            # Carga segura con reintento automático anti-deadlock
+            df_cuotas_admin = ejecutar_sql_seguro(
+                "SELECT id, concepto, monto_total, fecha_emision, estatus FROM cuotas_extraordinarias ORDER BY id DESC", 
+                es_lectura=True
+            )
+            df_unidades_ce = ejecutar_sql_seguro(
+                "SELECT unidad, propietario, alicuota, telefono FROM unidades", 
+                es_lectura=True
+            )
 
             if df_cuotas_admin.empty:
                 st.info("No hay cuotas extraordinarias registradas.")
@@ -988,28 +1013,29 @@ if rol_actual == "admin":
                         with col_det2:
                             st.markdown(f"**Estatus:** {badge_ce}")
 
-                        # Botones de acción (Aprobar / Eliminar)
+                        # Botones de acción (Aprobar / Eliminar) seguros
                         col_btn1, col_btn2 = st.columns(2)
                         with col_btn1:
                             if estatus_ce == "Pendiente":
                                 if st.button("✅ Aprobar Cuota", key=f"app_ce_{id_ce}", type="primary"):
-                                    with engine.connect() as conn:
-                                        conn.execute(
-                                            text("UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id"),
-                                            {"id": id_ce}
+                                    try:
+                                        ejecutar_sql_seguro(
+                                            "UPDATE cuotas_extraordinarias SET estatus = 'Aprobada' WHERE id = :id",
+                                            {"id": id_ce},
+                                            es_lectura=False
                                         )
-                                        conn.commit()
-                                    st.success("Cuota extraordinaria aprobada.")
-                                    st.rerun()
+                                        st.success("Cuota extraordinaria aprobada.")
+                                        st.rerun()
+                                    except Exception as ex:
+                                        st.error(f"Error al aprobar: {ex}")
                         with col_btn2:
                             if st.button("🗑️ Eliminar Cuota", key=f"del_ce_{id_ce}", type="secondary"):
                                 try:
-                                    with engine.connect() as conn:
-                                        conn.execute(
-                                            text("DELETE FROM cuotas_extraordinarias WHERE id = :id"),
-                                            {"id": id_ce}
-                                        )
-                                        conn.commit()
+                                    ejecutar_sql_seguro(
+                                        "DELETE FROM cuotas_extraordinarias WHERE id = :id",
+                                        {"id": id_ce},
+                                        es_lectura=False
+                                    )
                                     st.error("Cuota extraordinaria eliminada correctamente.")
                                     st.rerun()
                                 except Exception as e:
@@ -1018,7 +1044,6 @@ if rol_actual == "admin":
                         st.markdown("---")
                         st.subheader("📢 Envío Directo por WhatsApp (Distribución por Alícuotas)")
                         
-                        # Cálculo automático por alícuotas con orden estricto
                         if not df_unidades_ce.empty:
                             orden_oficial = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
                             
@@ -1039,7 +1064,6 @@ if rol_actual == "admin":
                             
                             detalle_str = "\n".join(lineas_detalle)
                             
-                            # 1. Mensaje para el Grupo General
                             msg_grupo = (
                                 f"📢 *AVISO DE CUOTA EXTRAORDINARIA* 📢\n\n"
                                 f"Estimados propietarios, se ha emitido una cuota extraordinaria con los siguientes detalles:\n\n"
@@ -1090,34 +1114,34 @@ if rol_actual == "admin":
                             st.warning("No hay unidades configuradas para hacer el cálculo.")
 
         except Exception as e:
-            st.error(f"Error listando cuotas extraordinarias: {e}")
+            st.error(f"Error de conexión o bloqueo temporal en la base de datos: {e}")
+            if st.button("🔄 Reintentar Carga"):
+                st.rerun()
 
         # =========================================================================
-        # --- AQUÍ ABAJO VA EL REPORTE GENERAL DE PAGOS DE CUOTAS EXTRAORDINARIAS ---
+        # --- REPORTE GENERAL DE PAGOS DE CUOTAS EXTRAORDINARIAS ---
         # =========================================================================
         st.write("---")
         st.subheader("📊 Reporte Consolidado de Pagos de Cuotas Extraordinarias")
         st.info("Aquí puedes visualizar todos los aportes que los propietarios han reportado y aprobado correspondientes a cuotas extraordinarias.")
         
         try:
-            with engine.connect() as conn:
-                query_reporte_ce = text("""
-                    SELECT 
-                        referencia AS Concepto_Cuota, 
-                        apartamento AS Apartamento, 
-                        monto_usd AS Monto_Cuota, 
-                        referencia AS Referencia_Pago, 
-                        fecha_pago AS Fecha_Pago
-                    FROM pagos_reportados 
-                    WHERE estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria'
-                    ORDER BY fecha_pago DESC
-                """)
-                df_reporte_ce = pd.read_sql(query_reporte_ce, conn)
+            query_reporte_ce = """
+                SELECT 
+                    referencia AS Concepto_Cuota, 
+                    apartamento AS Apartamento, 
+                    monto_usd AS Monto_Cuota, 
+                    referencia AS Referencia_Pago, 
+                    fecha_pago AS Fecha_Pago
+                FROM pagos_reportados 
+                WHERE estatus = 'Aprobado' AND tipo_pago = 'Cuota Extraordinaria'
+                ORDER BY fecha_pago DESC
+            """
+            df_reporte_ce = ejecutar_sql_seguro(query_reporte_ce, es_lectura=True)
                 
             if not df_reporte_ce.empty:
                 st.dataframe(df_reporte_ce, use_container_width=True)
                 
-                # Botón de descarga CSV opcional para máxima utilidad
                 csv_data = df_reporte_ce.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Descargar Reporte de Cuotas Extraordinarias (CSV)",
