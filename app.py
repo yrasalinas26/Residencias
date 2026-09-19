@@ -1843,26 +1843,28 @@ if rol_actual == "admin":
         if periodo_cifra_btn := st.button("Calcular Conciliación del Periodo", key="btn_calc_conciliacion"):
             try:
                 # 1. Ingresos aprobados
-                q_ingresos = "SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"
-                df_ing_c = ejecutar_sql_seguro(q_ingresos, {"periodo": periodo_cifras}, es_lectura=True)
+                q_ingresos = text("SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo")
+                with engine.connect() as conn:
+                    df_ing_c = pd.read_sql(q_ingresos, conn, params={"periodo": periodo_cifras})
                 
                 total_ing = 0.0
                 if not df_ing_c.empty and 'monto_usd' in df_ing_c.columns:
-                    # Convertimos cada valor a string primero y luego a float (elimina cualquier rastro de Decimal)
-                    total_ing = sum(float(str(x)) for x in df_ing_c['monto_usd'].dropna())
+                    # Convertimos explícitamente toda la columna a float para evitar cualquier conflicto con Decimal
+                    df_ing_c['monto_usd'] = df_ing_c['monto_usd'].astype(float)
+                    total_ing = float(df_ing_c['monto_usd'].sum())
 
                 # 2. Gastos aprobados
-                q_gastos = "SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo"
-                df_gas_c = pd.DataFrame()
+                total_gas = 0.0
                 try:
-                    df_gas_c = ejecutar_sql_seguro(q_gastos, {"periodo": periodo_cifras}, es_lectura=True)
+                    q_gastos = text("SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo")
+                    with engine.connect() as conn:
+                        df_gas_c = pd.read_sql(q_gastos, conn, params={"periodo": periodo_cifras})
+                    
+                    if not df_gas_c.empty and 'monto_usd' in df_gas_c.columns:
+                        df_gas_c['monto_usd'] = df_gas_c['monto_usd'].astype(float)
+                        total_gas = float(df_gas_c['monto_usd'].sum())
                 except Exception:
                     pass
-
-                total_gas = 0.0
-                if not df_gas_c.empty and 'monto_usd' in df_gas_c.columns:
-                    # Convertimos cada valor a string primero y luego a float
-                    total_gas = sum(float(str(x)) for x in df_gas_c['monto_usd'].dropna())
 
                 col_c1, col_c2, col_c3 = st.columns(3)
                 with col_c1:
@@ -1883,12 +1885,14 @@ if rol_actual == "admin":
 
         # Lógica de visualización rápida según el reporte seleccionado
         if tipo_reporte_sel == "Cuotas Ordinarias":
-            df_ord = ejecutar_sql_seguro("SELECT * FROM unidades", es_lectura=True)
+            with engine.connect() as conn:
+                df_ord = pd.read_sql(text("SELECT * FROM unidades"), conn)
             if not df_ord.empty:
                 st.dataframe(df_ord, use_container_width=True)
         elif tipo_reporte_sel == "Cuotas Extraordinarias":
             try:
-                df_ext = ejecutar_sql_seguro("SELECT * FROM cuotas_extraordinarias", es_lectura=True)
+                with engine.connect() as conn:
+                    df_ext = pd.read_sql(text("SELECT * FROM cuotas_extraordinarias"), conn)
                 if not df_ext.empty:
                     st.dataframe(df_ext, use_container_width=True)
                 else:
@@ -1897,7 +1901,8 @@ if rol_actual == "admin":
                 st.info("No se encontró la tabla de cuotas extraordinarias.")
         else:
             try:
-                df_prov = ejecutar_sql_seguro("SELECT * FROM gastos_proveedores", es_lectura=True)
+                with engine.connect() as conn:
+                    df_prov = pd.read_sql(text("SELECT * FROM gastos_proveedores"), conn)
                 if not df_prov.empty:
                     st.dataframe(df_prov, use_container_width=True)
                 else:
@@ -1911,8 +1916,9 @@ if rol_actual == "admin":
         st.subheader("🔍 Gestión y Validación de Pagos Reportados")
         st.info("Aquí puedes revisar los pagos reportados por los propietarios, aprobarlos o eliminarlos permanentemente si contienen errores.")
 
-        q_todos_pagos = "SELECT id, apartamento, tipo_pago, monto_usd, metodo_pago, referencia, estatus, mes_anio FROM pagos_reportados ORDER BY id DESC"
-        df_todos_pagos = ejecutar_sql_seguro(q_todos_pagos, es_lectura=True)
+        with engine.connect() as conn:
+            q_todos_pagos = text("SELECT id, apartamento, tipo_pago, monto_usd, metodo_pago, referencia, estatus, mes_anio FROM pagos_reportados ORDER BY id DESC")
+            df_todos_pagos = pd.read_sql(q_todos_pagos, conn)
 
         if not df_todos_pagos.empty:
             st.dataframe(df_todos_pagos, use_container_width=True)
@@ -1927,9 +1933,9 @@ if rol_actual == "admin":
 
             if btn_eliminar_pago_def:
                 try:
-                    q_del = "DELETE FROM pagos_reportados WHERE id = :id_pago"
+                    q_del = text("DELETE FROM pagos_reportados WHERE id = :id_pago")
                     with engine.begin() as conn:
-                        conn.execute(text(q_del), {"id_pago": pago_id_sel})
+                        conn.execute(q_del, {"id_pago": pago_id_sel})
                     st.success(f"¡El pago con ID {pago_id_sel} ha sido eliminado con éxito!")
                     st.rerun()
                 except Exception as e:
