@@ -300,8 +300,9 @@ def verificar_y_actualizar_tasa_hoy(eng):
                 text("SELECT tasa FROM tasa_cambio WHERE fecha = :f"), {"f": hoy}
             ).scalar()
 
-            if tasa_existente:
-                return float(tasa_existente)
+            # <-- CAMBIO AQUÍ: Usamos float(str(...)) para blindar contra Decimal de la BD
+            if tasa_existente is not None:
+                return float(str(tasa_existente))
 
             response = requests.get(
                 "https://pydolarvenezuela-api.vercel.app/api/v1/dollar/bcv",
@@ -333,13 +334,14 @@ def verificar_y_actualizar_tasa_hoy(eng):
             ultima_tasa = conn.execute(
                 text("SELECT tasa FROM tasa_cambio ORDER BY fecha DESC LIMIT 1")
             ).scalar()
-            if ultima_tasa:
-                return float(ultima_tasa)
+            
+            # <-- Y CAMBIO AQUÍ TAMBIÉN: Blindamos la última tasa de la misma forma
+            if ultima_tasa is not None:
+                return float(str(ultima_tasa))
     except Exception:
         pass
 
     return 36.00
-
 
 def obtener_datos_edificio():
     if not engine:
