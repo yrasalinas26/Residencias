@@ -1568,11 +1568,11 @@ if rol_actual == "admin":
                 
                 if btn_aprobar_pago_admin:
                     if monto_pagado > 0 and tasa_aplicada > 0:
-                        # Cálculo del monto en USD según la moneda seleccionada
-                        if moneda_pago == "VES":
+                        # Forzar la conversión estricta según la moneda elegida
+                        if moneda_pago.upper() == "VES":
                             monto_usd_calc = monto_pagado / tasa_aplicada
                         else:
-                            monto_usd_calc = monto_pagado  # Si paga en USD directo
+                            monto_usd_calc = monto_pagado  # Si es USD directo
                             
                         try:
                             with engine.begin() as conn_ins:
@@ -1586,18 +1586,18 @@ if rol_actual == "admin":
                                         "tp": tipo_pago_admin,
                                         "m": mes_pago_pm,
                                         "mo": monto_pagado,
-                                        "mon": moneda_pago,
+                                        "mon": moneda_pago.upper(),
                                         "ta": tasa_aplicada,
-                                        "musd": monto_usd_calc,
+                                        "musd": round(monto_usd_calc, 2), # Redondeado limpio a 2 decimales
                                         "met": metodo_pago,
                                         "ref": referencia_pm,
                                         "f": fecha_pago_pm
                                     }
                                 )
-                            st.success(f"✅ ¡Pago de {monto_pagado:,.2f} {moneda_pago} (${monto_usd_calc:,.2f} USD) aprobado y registrado para la unidad {unidad_destino_pm}!")
+                            st.success(f"✅ ¡Pago de {monto_pagado:,.2f} {moneda_pago} (Equivalente a ${monto_usd_calc:,.2f} USD) aprobado y registrado!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al registrar y aprobar el pago: {e}")
+                            st.error(f"❌ Error al registrar el pago: {e}")
                     else:
                         st.warning("⚠️ Por favor ingresa un monto y una tasa válidos.")
     with t7:
