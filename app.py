@@ -1844,29 +1844,23 @@ if rol_actual == "admin":
 
         if periodo_cifra_btn := st.button("Calcular Conciliación del Periodo", key="btn_calc_conciliacion"):
             try:
-                # 1. Ingresos aprobados (Consulta nativa con ejecución directa por conexión)
+                # 1. Ingresos aprobados (Forzando limpieza total con pd.to_numeric)
+                q_ingresos = "SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"
+                df_ing_c = ejecutar_sql_seguro(q_ingresos, {"periodo": periodo_cifras}, es_lectura=True)
+                
                 total_ing = 0.0
-                with engine.connect() as conn:
-                    result_ing = conn.execute(
-                        text("SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"),
-                        {"periodo": periodo_cifras}
-                    )
-                    for row in result_ing:
-                        # Convertimos cada valor individual a float de forma segura desde el row
-                        if row[0] is not None:
-                            total_ing += float(str(row[0]))
+                if not df_ing_c.empty and 'monto_usd' in df_ing_c.columns:
+                    serie_limpia = pd.to_numeric(df_ing_c['monto_usd'], errors='coerce').fillna(0.0)
+                    total_ing = float(serie_limpia.sum())
 
-                # 2. Gastos aprobados (Consulta nativa de la misma forma)
+                # 2. Gastos aprobados (Aplicando la misma limpieza)
+                q_gastos = "SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo"
                 total_gas = 0.0
                 try:
-                    with engine.connect() as conn:
-                        result_gas = conn.execute(
-                            text("SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo"),
-                            {"periodo": periodo_cifras}
-                        )
-                        for row in result_gas:
-                            if row[0] is not None:
-                                total_gas += float(str(row[0]))
+                    df_gas_c = ejecutar_sql_seguro(q_gastos, {"periodo": periodo_cifras}, es_lectura=True)
+                    if not df_gas_c.empty and 'monto_usd' in df_gas_c.columns:
+                        serie_gas_limpia = pd.to_numeric(df_gas_c['monto_usd'], errors='coerce').fillna(0.0)
+                        total_gas = float(serie_gas_limpia.sum())
                 except Exception:
                     pass
 
@@ -1881,7 +1875,6 @@ if rol_actual == "admin":
 
             except Exception as e:
                 st.error(f"Error en conciliación: {e}")
-
         st.markdown("---")
         st.subheader("📋 Reportes Separados de Morosidad y Saldos")
         tipo_reporte_sel = st.selectbox("Seleccione el tipo de reporte a visualizar y descargar:", ["Cuotas Ordinarias", "Cuotas Extraordinarias", "Proveedores"])
