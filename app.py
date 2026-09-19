@@ -1833,7 +1833,7 @@ if rol_actual == "admin":
         st.subheader("🔍 Gestión y Validación de Pagos Reportados")
         # (El resto de la sección de administración de pagos se mantiene igual con los filtros)
    
-     with t10:
+    with t10:
         st.subheader("💱 Conciliación de Pagos y Estado Financiero")
         st.info("Resumen consolidado de ingresos por pagos aprobados frente a los gastos totales aprobados del periodo.")
 
