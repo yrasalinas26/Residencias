@@ -1524,77 +1524,80 @@ if rol_actual == "admin":
         st.markdown("---")
 
         # =====================================================================
-        # 📱 REGISTRAR PAGO MÓVIL / TRANSFERENCIA (ADMIN)
+        # 📱 REGISTRAR Y APROBAR PAGO EN NOMBRE DE UN PROPIETARIO (ADMIN)
         # =====================================================================
-        with st.expander("📱 Registrar Pago Móvil / Transferencia en Nombre de un Propietario (Admin)"):
-            st.info("Ideal para reportar pagos en bolívares (Pago Móvil o transferencia) de propietarios que no usan la plataforma o están fuera del país.")
+        with st.expander("📱 Registrar y Aprobar Pago (Admin)"):
+            st.info("Permite registrar y aprobar un pago directamente en nombre de un propietario seleccionando la moneda y método correspondiente.")
             
             df_units_pago = obtener_unidades_df()
             lista_units_admin = df_units_pago['unidad'].tolist() if not df_units_pago.empty else []
             
-            with st.form("form_pago_movil_admin"):
-                col_m1, col_m2 = st.columns(2)
+            with st.form("form_pago_admin_unificado"):
+                unidad_destino_pm = st.selectbox("Seleccionar Unidad / Apartamento:", lista_units_admin, key="admin_uni_destino")
                 
-                with col_m1:
-                    unidad_destino_pm = st.selectbox("Seleccionar Unidad / Apartamento:", lista_units_admin, key="admin_pm_unidad")
-                    
-                    # ➕ NUEVO: Selector para elegir si es Mensualidad o Cuota Extraordinaria
+                col_a1, col_a2 = st.columns(2)
+                
+                with col_a1:
                     tipo_pago_admin = st.selectbox(
                         "Tipo de Pago:", 
                         ["Mensualidad", "Cuota Extraordinaria", "Otro"], 
-                        key="admin_pm_tipo_pago"
+                        key="admin_tipo_pago"
                     )
+                    mes_pago_pm = st.text_input("Periodo a Abonar (AAAA-MM)", value=obtener_mes_anterior(), key="admin_mes_abonar")
+                    moneda_pago = st.selectbox("Moneda de Pago:", ["USD", "VES"], key="admin_moneda_pago")
+                    monto_pagado = st.number_input("Monto Pagado en Moneda Seleccionada:", min_value=0.01, step=1.00, key="admin_monto_pagado")
+                
+                with col_a2:
+                    fecha_pago_pm = st.date_input("Fecha en que realizó el pago:", value=date.today(), key="admin_fecha_pago")
                     
-                    mes_pago_pm = st.text_input("Periodo a Abonar (AAAA-MM)", value=obtener_mes_anterior(), key="admin_pm_mes")
-                    monto_ves = st.number_input("Monto en Bolívares (VES)", min_value=0.01, step=1.00, key="admin_pm_monto_ves")
-                    
-                    fecha_pago_pm = st.date_input("Fecha del Pago Móvil", value=date.today(), key="admin_pm_fecha")
-                    
-                    # Buscar tasa del día sugerida
-                    tasa_sug_pm = 1.0
+                    # Buscar tasa sugerida si es VES
+                    tasa_sug_admin = 1.0
                     try:
                         with engine.connect() as conn_t:
                             res_t = conn_t.execute(text("SELECT tasa FROM tasa_cambio WHERE fecha = :f LIMIT 1"), {"f": fecha_pago_pm}).scalar()
                             if res_t:
-                                tasa_sug_pm = float(res_t)
+                                tasa_sug_admin = float(res_t)
                     except Exception:
                         pass
                         
-                with col_m2:
-                    tasa_aplicada_pm = st.number_input("Tasa BCV del Día (VES/USD)", min_value=0.01, value=tasa_sug_pm, step=0.01, key="admin_pm_tasa")
-                    banco_origen = st.text_input("Banco Emisor (Ej. Banesco, Mercantil, Provincial)", placeholder="Ej: Banesco", key="admin_pm_banco")
-                    referencia_pm = st.text_input("Nro. de Referencia (últimos dígitos o serial)", placeholder="Ej: 123456", key="admin_pm_ref")
-                    telefono_pagador = st.text_input("Teléfono del Pagador (Opcional)", placeholder="0412-1234567", key="admin_pm_tlf")
+                    tasa_aplicada = st.number_input("Tasa Aplicada (si es USD directo, colocar 1 o la tasa BCV):", min_value=0.01, value=tasa_sug_admin, step=0.01, key="admin_tasa_aplicada")
+                    metodo_pago = st.selectbox("Método de Pago:", ["Pago Móvil", "Transferencia Bancaria", "Zelle", "Efectivo USD", "Efectivo VES", "Otro"], key="admin_metodo_pago")
+                    referencia_pm = st.text_input("Número de Referencia:", placeholder="Ej: 123456 o N/A", key="admin_referencia_pago")
 
-                btn_guardar_pm_admin = st.form_submit_button("💾 Guardar y Aprobar Pago Móvil", type="primary")
+                btn_aprobar_pago_admin = st.form_submit_button("Aprobar Pago", type="primary")
                 
-                if btn_guardar_pm_admin:
-                    if monto_ves > 0 and tasa_aplicada_pm > 0:
-                        monto_usd_calc = monto_ves / tasa_aplicada_pm
-                        ref_completa = f"PM: {referencia_pm} | Banco: {banco_origen} | Tlf: {telefono_pagador}"
-                        
+                if btn_aprobar_pago_admin:
+                    if monto_pagado > 0 and tasa_aplicada > 0:
+                        # Cálculo del monto en USD según la moneda seleccionada
+                        if moneda_pago == "VES":
+                            monto_usd_calc = monto_pagado / tasa_aplicada
+                        else:
+                            monto_usd_calc = monto_pagado  # Si paga en USD directo
+                            
                         try:
                             with engine.begin() as conn_ins:
                                 conn_ins.execute(
                                     text("""
                                         INSERT INTO pagos_reportados (apartamento, tipo_pago, mes_anio, monto_original, moneda, tasa_aplicada, monto_usd, metodo_pago, referencia, fecha_pago, estatus)
-                                        VALUES (:apt, :tp, :m, :mo, 'VES', :ta, :musd, 'Pago Móvil', :ref, :f, 'Aprobado')
+                                        VALUES (:apt, :tp, :m, :mo, :mon, :ta, :musd, :met, :ref, :f, 'Aprobado')
                                     """),
                                     {
                                         "apt": unidad_destino_pm,
-                                        "tp": tipo_pago_admin,  # ➕ Se guarda el tipo seleccionado dinámicamente
+                                        "tp": tipo_pago_admin,
                                         "m": mes_pago_pm,
-                                        "mo": monto_ves,
-                                        "ta": tasa_aplicada_pm,
+                                        "mo": monto_pagado,
+                                        "mon": moneda_pago,
+                                        "ta": tasa_aplicada,
                                         "musd": monto_usd_calc,
-                                        "ref": ref_completa,
+                                        "met": metodo_pago,
+                                        "ref": referencia_pm,
                                         "f": fecha_pago_pm
                                     }
                                 )
-                            st.success(f"✅ ¡{tipo_pago_admin} por Bs. {monto_ves:,.2f} (${monto_usd_calc:,.2f} USD) registrada y aprobada para la unidad {unidad_destino_pm}!")
+                            st.success(f"✅ ¡Pago de {monto_pagado:,.2f} {moneda_pago} (${monto_usd_calc:,.2f} USD) aprobado y registrado para la unidad {unidad_destino_pm}!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al registrar el pago: {e}")
+                            st.error(f"❌ Error al registrar y aprobar el pago: {e}")
                     else:
                         st.warning("⚠️ Por favor ingresa un monto y una tasa válidos.")
     with t7:
