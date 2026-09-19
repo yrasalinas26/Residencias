@@ -1832,7 +1832,7 @@ if rol_actual == "admin":
         st.markdown("---")
         st.subheader("🔍 Gestión y Validación de Pagos Reportados")
         # (El resto de la sección de administración de pagos se mantiene igual con los filtros)
-   
+
     with t10:
         st.subheader("💱 Conciliación de Pagos y Estado Financiero")
         st.info("Resumen consolidado de ingresos por pagos aprobados frente a los gastos totales aprobados del periodo.")
@@ -1842,23 +1842,27 @@ if rol_actual == "admin":
 
         if periodo_cifra_btn := st.button("Calcular Conciliación del Periodo", key="btn_calc_conciliacion"):
             try:
-                # 1. Ingresos aprobados (Forzando conversión numérica en SQL para evitar Decimal)
-                q_ingresos = "SELECT COALESCE(SUM(CAST(monto_usd AS FLOAT)), 0.0) AS total FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"
+                # 1. Ingresos aprobados
+                q_ingresos = "SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"
                 df_ing_c = ejecutar_sql_seguro(q_ingresos, {"periodo": periodo_cifras}, es_lectura=True)
                 
                 total_ing = 0.0
-                if not df_ing_c.empty and 'total' in df_ing_c.columns:
-                    total_ing = float(df_ing_c['total'].iloc[0])
+                if not df_ing_c.empty and 'monto_usd' in df_ing_c.columns:
+                    # Convertimos cada valor a string primero y luego a float (elimina cualquier rastro de Decimal)
+                    total_ing = sum(float(str(x)) for x in df_ing_c['monto_usd'].dropna())
 
-                # 2. Gastos aprobados (Forzando conversión numérica en SQL)
-                q_gastos = "SELECT COALESCE(SUM(CAST(monto_usd AS FLOAT)), 0.0) AS total FROM gastos_proveedores WHERE mes_anio = :periodo"
-                total_gas = 0.0
+                # 2. Gastos aprobados
+                q_gastos = "SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo"
+                df_gas_c = pd.DataFrame()
                 try:
                     df_gas_c = ejecutar_sql_seguro(q_gastos, {"periodo": periodo_cifras}, es_lectura=True)
-                    if not df_gas_c.empty and 'total' in df_gas_c.columns:
-                        total_gas = float(df_gas_c['total'].iloc[0])
                 except Exception:
                     pass
+
+                total_gas = 0.0
+                if not df_gas_c.empty and 'monto_usd' in df_gas_c.columns:
+                    # Convertimos cada valor a string primero y luego a float
+                    total_gas = sum(float(str(x)) for x in df_gas_c['monto_usd'].dropna())
 
                 col_c1, col_c2, col_c3 = st.columns(3)
                 with col_c1:
