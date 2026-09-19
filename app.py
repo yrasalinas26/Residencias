@@ -1833,166 +1833,107 @@ if rol_actual == "admin":
         st.subheader("🔍 Gestión y Validación de Pagos Reportados")
         # (El resto de la sección de administración de pagos se mantiene igual con los filtros)
    
-    with t10:
-        st.subheader("📑 Conciliación y Reportes de Cierre por Periodos")
-        st.info("Genera reportes consolidados y de cierre por periodo (Mes/Año), y gestiona la eliminación de pagos erróneos.")
+     with t10:
+        st.subheader("💱 Conciliación de Pagos y Estado Financiero")
+        st.info("Resumen consolidado de ingresos por pagos aprobados frente a los gastos totales aprobados del periodo.")
 
-        # --- SECCIÓN 1: GESTIÓN Y ELIMINACIÓN DE PAGOS REPORTADOS ---
-        with st.expander("🗑️ Eliminar Pago Reportado (Corrección de Registros)", expanded=False):
-            st.warning("Use esta sección para buscar y eliminar pagos reportados que se hayan cargado por error.")
-            
-            # Buscador rápido de pagos para eliminar
-            q_pagos_recientes = "SELECT id, apartamento, tipo_pago, monto_usd, referencia, estatus, mes_anio FROM pagos_reportados ORDER BY id DESC LIMIT 50"
-            df_pagos_del = ejecutar_sql_seguro(q_pagos_recientes, es_lectura=True)
-            
-            if not df_pagos_del.empty:
-                # Mostrar tabla de referencia para identificar el ID
-                st.dataframe(df_pagos_del, use_container_width=True)
+        # Selector de Periodo a Conciliar
+        periodo_cifras = st.text_input("Periodo a conciliar (AAAA-MM):", value="2026-07", key="input_periodo_t10")
+
+        if periodo_cifra_btn := st.button("Calcular Conciliación del Periodo", key="btn_calc_conciliacion"):
+            try:
+                # 1. Ingresos aprobados
+                q_ingresos = "SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"
+                df_ing_c = ejecutar_sql_seguro(q_ingresos, {"periodo": periodo_cifras}, es_lectura=True)
                 
-                pago_id_a_borrar = st.number_input("Ingrese el ID exacto del pago que desea eliminar:", min_value=1, step=1, value=1)
-                
-                if st.button("🗑️ Eliminar Pago Permanentemente", type="secondary"):
-                    try:
-                        query_delete = "DELETE FROM pagos_reportados WHERE id = :id_pago"
-                        with engine.begin() as conn:
-                            conn.execute(text(query_delete), {"id_pago": pago_id_a_borrar})
-                        st.success(f"¡Pago con ID {pago_id_a_borrar} eliminado exitosamente!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error al intentar eliminar el pago: {e}")
-            else:
-                st.info("No hay pagos registrados para eliminar.")
+                total_ing = 0.0
+                if not df_ing_c.empty and 'monto_usd' in df_ing_c.columns:
+                    total_ing = float(df_ing_c['monto_usd'].astype(float).sum())
+
+                # 2. Gastos aprobados
+                q_gastos = "SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo"
+                df_gas_c = pd.DataFrame()
+                try:
+                    df_gas_c = ejecutar_sql_seguro(q_gastos, {"periodo": periodo_cifras}, es_lectura=True)
+                except Exception:
+                    pass
+
+                total_gas = 0.0
+                if not df_gas_c.empty and 'monto_usd' in df_gas_c.columns:
+                    total_gas = float(df_gas_c['monto_usd'].astype(float).sum())
+
+                col_c1, col_c2, col_c3 = st.columns(3)
+                with col_c1:
+                    st.metric("Total Ingresos Aprobados", f"${total_ing:,.2f}")
+                with col_c2:
+                    st.metric("Total Gastos Aprobados", f"${total_gas:,.2f}")
+                with col_c3:
+                    neto_conciliacion = total_ing - total_gas
+                    st.metric("Balance del Periodo", f"${neto_conciliacion:,.2f}", delta=f"${neto_conciliacion:,.2f}")
+
+            except Exception as e:
+                st.error(f"Error en conciliación: {e}")
+
+        st.markdown("---")
+        st.subheader("📋 Reportes Separados de Morosidad y Saldos")
+        tipo_reporte_sel = st.selectbox("Seleccione el tipo de reporte a visualizar y descargar:", ["Cuotas Ordinarias", "Cuotas Extraordinarias", "Proveedores"])
+        st.write(f"Mostrando: {tipo_reporte_sel}")
+
+        # Lógica de visualización rápida según el reporte seleccionado
+        if tipo_reporte_sel == "Cuotas Ordinarias":
+            df_ord = ejecutar_sql_seguro("SELECT * FROM unidades", es_lectura=True)
+            if not df_ord.empty:
+                st.dataframe(df_ord, use_container_width=True)
+        elif tipo_reporte_sel == "Cuotas Extraordinarias":
+            try:
+                df_ext = ejecutar_sql_seguro("SELECT * FROM cuotas_extraordinarias", es_lectura=True)
+                if not df_ext.empty:
+                    st.dataframe(df_ext, use_container_width=True)
+                else:
+                    st.info("No hay registros de cuotas extraordinarias.")
+            except Exception:
+                st.info("No se encontró la tabla de cuotas extraordinarias.")
+        else:
+            try:
+                df_prov = ejecutar_sql_seguro("SELECT * FROM gastos_proveedores", es_lectura=True)
+                if not df_prov.empty:
+                    st.dataframe(df_prov, use_container_width=True)
+                else:
+                    st.info("No hay registros de proveedores.")
+            except Exception:
+                st.info("No se encontró la tabla de proveedores.")
 
         st.markdown("---")
 
-        # --- SECCIÓN 2: REPORTE DE CIERRE Y CONCILIACIÓN ---
-        col_per1, col_per2 = st.columns(2)
-        with col_per1:
-            periodo_cierre = st.text_input("Ingrese el Periodo de Cierre (Ej. 2026-07 o Julio 2026):", value="2026-07")
-        with col_per2:
-            st.write("")
-            st.write("")
-            btn_generar_cierre = st.button("🔍 Calcular Cierre del Periodo", type="primary")
+        # --- SECCIÓN DE GESTIÓN, VALIDACIÓN Y ELIMINACIÓN DE PAGOS REPORTADOS ---
+        st.subheader("🔍 Gestión y Validación de Pagos Reportados")
+        st.info("Aquí puedes revisar los pagos reportados por los propietarios, aprobarlos o eliminarlos permanentemente si contienen errores.")
 
-        if btn_generar_cierre and periodo_cierre.strip():
-            st.markdown("---")
-            st.markdown(f"### 📊 Reporte de Cierre Consolidado para el Periodo: `{periodo_cierre}`")
+        q_todos_pagos = "SELECT id, apartamento, tipo_pago, monto_usd, metodo_pago, referencia, estatus, mes_anio FROM pagos_reportados ORDER BY id DESC"
+        df_todos_pagos = ejecutar_sql_seguro(q_todos_pagos, es_lectura=True)
 
-            try:
-                # 1. RECAUDACIÓN DE PROPIETARIOS
-                query_ingresos_propietarios = """
-                    SELECT 
-                        id,
-                        apartamento,
-                        tipo_pago,
-                        monto_usd,
-                        metodo_pago,
-                        referencia,
-                        fecha_pago
-                    FROM pagos_reportados
-                    WHERE estatus = 'Aprobado' AND mes_anio = :periodo
-                """
-                df_ingresos_prop = ejecutar_sql_seguro(query_ingresos_propietarios, {"periodo": periodo_cierre}, es_lectura=True)
+        if not df_todos_pagos.empty:
+            st.dataframe(df_todos_pagos, use_container_width=True)
+            
+            col_del1, col_del2 = st.columns(2)
+            with col_del1:
+                pago_id_sel = st.number_input("ID del pago a gestionar (Eliminar/Modificar):", min_value=1, step=1, value=int(df_todos_pagos['id'].iloc[0]) if not df_todos_pagos.empty else 1)
+            with col_del2:
+                st.write("")
+                st.write("")
+                btn_eliminar_pago_def = st.button("🗑️ Eliminar este Pago Permanentemente", type="secondary")
 
-                total_ingresos_mes = 0.0
-                if not df_ingresos_prop.empty and 'monto_usd' in df_ingresos_prop.columns:
-                    # CORRECCIÓN: Convertir explícitamente a float para evitar conflictos con Decimal de la BD
-                    total_ingresos_mes = float(df_ingresos_prop['monto_usd'].astype(float).sum())
-
-                # 2. GASTOS / PROVEEDORES DEL PERIODO
-                query_egresos_proveedores = """
-                    SELECT 
-                        id, 
-                        proveedor, 
-                        concepto, 
-                        monto_usd, 
-                        fecha 
-                    FROM gastos_proveedores 
-                    WHERE TO_CHAR(fecha, 'YYYY-MM') = :periodo OR mes_anio = :periodo
-                """
-                df_egresos_prov = pd.DataFrame()
+            if btn_eliminar_pago_def:
                 try:
-                    df_egresos_prov = ejecutar_sql_seguro(query_egresos_proveedores, {"periodo": periodo_cierre}, es_lectura=True)
-                except Exception:
-                    try:
-                        with engine.connect() as conn:
-                            df_egresos_prov = pd.read_sql(text("SELECT * FROM gastos_proveedores"), conn)
-                    except Exception:
-                        pass
-
-                total_egresos_mes = 0.0
-                if not df_egresos_prov.empty and 'monto_usd' in df_egresos_prov.columns:
-                    # CORRECCIÓN: Convertir explícitamente a float
-                    total_egresos_mes = float(df_egresos_prov['monto_usd'].astype(float).sum())
-
-                # --- MÉTRICAS FINANCIERAS GENERALES DEL CIERRE ---
-                col_m1, col_m2, col_m3 = st.columns(3)
-                with col_m1:
-                    st.metric("💵 Total Ingresos (Propietarios)", f"${total_ingresos_mes:,.2f}")
-                with col_m2:
-                    st.metric("📉 Total Egresos (Proveedores/Gastos)", f"${total_egresos_mes:,.2f}")
-                with col_m3:
-                    balance_neto = total_ingresos_mes - total_egresos_mes
-                    st.metric("⚖️ Balance Neto del Periodo", f"${balance_neto:,.2f}", delta=f"${balance_neto:,.2f}")
-
-                st.markdown("---")
-
-                # --- DETALLE 1: INGRESOS ---
-                st.subheader("🏠 Detalle de Ingresos (Propietarios)")
-                if not df_ingresos_prop.empty:
-                    st.dataframe(df_ingresos_prop, use_container_width=True)
-                else:
-                    st.info(f"No hay pagos aprobados registrados de propietarios para el periodo {periodo_cierre}.")
-
-                st.markdown("---")
-
-                # --- DETALLE 2: EGRESOS ---
-                st.subheader("🛠️ Detalle de Proveedores y Egresos")
-                if not df_egresos_prov.empty:
-                    st.dataframe(df_egresos_prov, use_container_width=True)
-                else:
-                    st.info(f"No se encontraron egresos o pagos a proveedores registrados para este periodo.")
-
-                st.markdown("---")
-
-                # --- ESTADO DE UNIDADES ---
-                st.subheader("📋 Estado de Solvencia General")
-                df_unidades_cierre = ejecutar_sql_seguro("SELECT unidad, propietario, alicuota, saldo_inicial FROM unidades", es_lectura=True)
-                
-                if not df_unidades_cierre.empty:
-                    st.caption("Distribución oficial aplicada:")
-                    st.dataframe(df_unidades_cierre, use_container_width=True)
-
-                # --- ACCIONES Y EXPORTACIÓN ---
-                st.markdown("### 🚀 Acciones del Reporte de Cierre")
-                
-                msg_cierre_wa = (
-                    f"📊 *REPORTE DE CIERRE - PERIODO {periodo_cierre}* 📊\n\n"
-                    f"💵 *Total Ingresos:* ${total_ingresos_mes:,.2f}\n"
-                    f"📉 *Total Egresos:* ${total_egresos_mes:,.2f}\n"
-                    f"⚖️ *Balance Neto:* ${balance_neto:,.2f}\n\n"
-                    f"Reporte emitido por la administración del edificio."
-                )
-
-                import urllib.parse
-                msg_cierre_encoded = urllib.parse.quote(msg_cierre_wa)
-                link_cierre_wa = f"https://wa.me/?text={msg_cierre_encoded}"
-
-                col_acc1, col_acc2 = st.columns(2)
-                with col_acc1:
-                    st.link_button("📲 Enviar Cierre por WhatsApp", url=link_cierre_wa, type="primary")
-                with col_acc2:
-                    if not df_ingresos_prop.empty:
-                        csv_cierre = df_ingresos_prop.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Descargar Cierre en CSV",
-                            data=csv_cierre,
-                            file_name=f"reporte_cierre_{periodo_cierre}.csv",
-                            mime="text/csv"
-                        )
-
-            except Exception as e:
-                st.error(f"Error al generar el reporte de conciliación y cierre: {e}")
+                    q_del = "DELETE FROM pagos_reportados WHERE id = :id_pago"
+                    with engine.begin() as conn:
+                        conn.execute(text(q_del), {"id_pago": pago_id_sel})
+                    st.success(f"¡El pago con ID {pago_id_sel} ha sido eliminado con éxito!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"No se pudo eliminar el pago: {e}")
+        else:
+            st.info("No hay pagos reportados registrados en el sistema.")
 else:
     
     # -------------------------------------------------------------------------
