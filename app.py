@@ -1834,138 +1834,199 @@ if rol_actual == "admin":
         # (El resto de la sección de administración de pagos se mantiene igual con los filtros)
    
     with t10:
-        st.subheader("📊 Cierre y Reporte de Gestión por Periodo")
-        st.info("Genera el balance consolidado, el desglose mensual de gastos por proveedor y el estatus de morosidad de las unidades según el rango seleccionado.")
-        
-        # Selector de rango de periodo (Desde mes/año - Hasta mes/año)
-        col_p1, col_p2, col_p3 = st.columns([2, 2, 2])
-        with col_p1:
-            periodo_desde = st.text_input("Desde (AAAA-MM):", value="2026-01", key="input_periodo_desde")
-        with col_p2:
-            periodo_hasta = st.text_input("Hasta (AAAA-MM):", value="2026-12", key="input_periodo_hasta")
-        with col_p3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            btn_generar_anual = st.button("🚀 Generar Reporte de Gestión", type="primary", key="btn_generar_reporte_anual")
+        st.subheader("📊 Reportes Financieros y Gestión de Pagos")
+        st.info("Visualiza el historial detallado de proveedores, pagos de propietarios por periodo y herramientas de depuración.")
 
-        if btn_generar_anual:
-            if not periodo_desde.strip() or not periodo_hasta.strip():
-                st.warning("Por favor ingrese ambos periodos en formato AAAA-MM (ej. 2026-01).")
+        # =====================================================================
+        # 1. REPORTE DE PAGOS A PROVEEDORES MES A MES
+        # =====================================================================
+        with st.expander("🛠️ Reporte de Pagos a Proveedores por Periodo", expanded=True):
+            st.markdown("### 📄 Pagos a Proveedores")
+            
+            # Obtener periodos disponibles de gastos/proveedores
+            try:
+                with engine.connect() as conn:
+                    df_periodos_prov = pd.read_sql(
+                        text("SELECT DISTINCT mes_anio FROM gastos ORDER BY mes_anio DESC"), 
+                        conn
+                    )
+                lista_periodos_prov = df_periodos_prov['mes_anio'].tolist() if not df_periodos_prov.empty else []
+            except Exception:
+                lista_periodos_prov = []
+
+            if lista_periodos_prov:
+                periodo_prov_sel = st.selectbox("Seleccione el Periodo (AAAA-MM) para Proveedores:", lista_periodos_prov, key="select_periodo_prov")
+                
+                if st.button("Consultar Pagos a Proveedores", key="btn_consultar_prov", type="primary"):
+                    try:
+                        with engine.connect() as conn:
+                            df_prov = pd.read_sql(
+                                text("""
+                                    SELECT id, mes_anio, categoria, proveedor, descripcion, monto, estatus, fecha_gasto 
+                                    FROM gastos 
+                                    WHERE mes_anio = :p AND estatus = 'Aprobado'
+                                    ORDER BY fecha_gasto DESC
+                                """),
+                                conn,
+                                params={"p": periodo_prov_sel}
+                            )
+                        
+                        if not df_prov.empty:
+                            st.success(f"Mostrando pagos a proveedores para el periodo: **{periodo_prov_sel}**")
+                            st.dataframe(df_prov, use_container_width=True)
+                            
+                            total_prov_mes = df_prov['monto'].sum()
+                            st.metric(label=f"Total Pagado a Proveedores ({periodo_prov_sel})", value=f"${total_prov_mes:,.2f} USD")
+                        else:
+                            st.info(f"No hay pagos a proveedores aprobados registrados para el periodo {periodo_prov_sel}.")
+                    except Exception as e:
+                        st.error(f"Error al consultar los pagos a proveedores: {e}")
             else:
-                try:
-                    with engine.connect() as conn:
-                        # 1. Obtener unidades y alícuotas
-                        df_unidades = pd.read_sql("SELECT unidad, propietario, alicuota FROM unidades", conn)
-                        
-                        # 2. Obtener gastos aprobados filtrados por rango de mes_anio
-                        query_gastos = text("""
-                            SELECT mes_anio, concepto, proveedor, monto, estatus 
-                            FROM gastos 
-                            WHERE estatus = 'Aprobado' AND mes_anio BETWEEN :desde AND :hasta
-                        """)
-                        df_gastos_anual = pd.read_sql(query_gastos, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
+                st.warning("No hay periodos de gastos registrados en la base de datos.")
 
-                        # 3. Obtener pagos aprobados ORDINARIOS (Mensualidades) filtrados por rango
-                        query_pagos_mensuales = text("""
-                            SELECT mes_anio, apartamento, monto_usd, referencia, fecha_pago, estatus 
-                            FROM pagos_reportados 
-                            WHERE estatus = 'Aprobado' AND (tipo_pago = 'Mensualidad' OR tipo_pago IS NULL) AND mes_anio BETWEEN :desde AND :hasta
-                        """)
-                        df_pagos_mensuales = pd.read_sql(query_pagos_mensuales, conn, params={"desde": periodo_desde.strip(), "hasta": periodo_hasta.strip()})
+        st.markdown("---")
 
-                    st.markdown("---")
-                    st.markdown(f"## 📁 BALANCE Y RENDICIÓN DE CUENTAS (Período: **{periodo_desde}** al **{periodo_hasta}**)")
-                    
-                    # --- SECCIÓN 1: RESUMEN FINANCIERO GLOBAL (ORDINARIO) ---
-                    total_gastos_periodo = float(df_gastos_anual['monto'].sum()) if not df_gastos_anual.empty else 0.0
-                    total_ingresos_mensuales = float(df_pagos_mensuales['monto_usd'].sum()) if not df_pagos_mensuales.empty else 0.0
-                    
-                    balance_periodo = total_ingresos_mensuales - total_gastos_periodo
+        # =====================================================================
+        # 2. REPORTE DE PAGOS DE PROPIETARIOS (EXCLUYENDO CUOTAS EXTRAORDINARIAS)
+        # =====================================================================
+        with st.expander("👤 Reporte de Pagos de Propietarios por Periodo", expanded=True):
+            st.markdown("### 🏢 Pagos Ordinarios de Propietarios (Mensualidades)")
+            st.caption("Este reporte excluye las cuotas extraordinarias y muestra el desglose por unidad, cuota, fecha y saldo.")
 
-                    col_m1, col_m2, col_m3 = st.columns(3)
-                    col_m1.metric("Total Gastos Ordinarios", f"${total_gastos_periodo:,.2f}")
-                    col_m2.metric("Recaudación Mensual", f"${total_ingresos_mensuales:,.2f}")
-                    
-                    if balance_periodo >= 0:
-                        col_m3.metric("Balance del Periodo", f"${balance_periodo:,.2f} (Superávit)")
-                    else:
-                        col_m3.metric("Balance del Periodo", f"-${abs(balance_periodo):,.2f} (Déficit)")
+            try:
+                with engine.connect() as conn:
+                    df_periodos_pagos = pd.read_sql(
+                        text("SELECT DISTINCT mes_anio FROM pagos_reportados ORDER BY mes_anio DESC"), 
+                        conn
+                    )
+                lista_periodos_pagos = df_periodos_pagos['mes_anio'].tolist() if not df_periodos_pagos.empty else []
+            except Exception:
+                lista_periodos_pagos = []
 
-                    st.markdown("---")
+            if lista_periodos_pagos:
+                periodo_prop_sel = st.selectbox("Seleccione el Periodo (AAAA-MM) de Cobranza:", lista_periodos_pagos, key="select_periodo_prop_report")
+                
+                if st.button("Generar Reporte de Propietarios", key="btn_generar_rep_prop", type="primary"):
+                    try:
+                        with engine.connect() as conn:
+                            # 1. Obtener unidades y alícuotas
+                            df_unid = pd.read_sql(text("SELECT unidad, alicuota, propietario, saldo_inicial FROM unidades"), conn)
+                            
+                            # 2. Obtener gastos totales del mes seleccionado para calcular la cuota respectiva
+                            gasto_mes_res = conn.execute(
+                                text("SELECT SUM(monto) as total FROM gastos WHERE mes_anio = :m AND estatus = 'Aprobado'"),
+                                {"m": periodo_prop_sel}
+                            ).scalar()
+                            gasto_total_mes = float(gasto_mes_res) if gasto_mes_res else 0.0
 
-                    # --- SECCIÓN 2: GASTOS DE PROVEEDORES CON MONTOS POR MES ---
-                    st.subheader("🛠️ Desglose de Gastos por Proveedor (Montos por Mes)")
-                    if not df_gastos_anual.empty:
-                        df_gastos_anual['proveedor'] = df_gastos_anual['proveedor'].fillna('No especificado')
-                        
-                        df_pivot_proveedores = df_gastos_anual.pivot_table(
-                            index='proveedor', 
-                            columns='mes_anio', 
-                            values='monto', 
-                            aggfunc='sum', 
-                            fill_value=0.0
-                        )
-                        
-                        df_pivot_proveedores['Total Pagado ($)'] = df_pivot_proveedores.sum(axis=1)
-                        df_pivot_proveedores = df_pivot_proveedores.sort_values(by='Total Pagado ($)', ascending=False)
-                        df_pivot_proveedores = df_pivot_proveedores.reset_index()
-                        df_pivot_proveedores.rename(columns={'proveedor': 'Proveedor / Concepto General'}, inplace=True)
-                        
-                        st.dataframe(df_pivot_proveedores, use_container_width=True)
-                    else:
-                        st.info(f"No se registraron gastos aprobados para el período entre {periodo_desde} y {periodo_hasta}.")
+                            # 3. Obtener pagos aprobados del mes EXCLUYENDO cuotas extraordinarias
+                            df_pagos_mes = pd.read_sql(
+                                text("""
+                                    SELECT apartamento, monto_usd, fecha_pago, referencia, tipo_pago 
+                                    FROM pagos_reportados 
+                                    WHERE mes_anio = :m AND estatus = 'Aprobado' 
+                                    AND (tipo_pago != 'Cuota Extraordinaria' OR tipo_pago IS NULL)
+                                """),
+                                conn,
+                                params={"m": periodo_prop_sel}
+                            )
 
-                    st.markdown("---")
-
-                    # --- SECCIÓN 3: ESTADO DE CUENTA Y MOROSIDAD POR UNIDAD ---
-                    st.subheader("👥 Estatus de Saldos y Morosidad Ordinaria por Unidad")
-                    
-                    if not df_unidades.empty and not df_gastos_anual.empty:
-                        meses_activos = sorted(df_gastos_anual['mes_anio'].unique())
-                        
-                        orden_unidades = ["1A", "1B", "2", "3A", "3B", "4A", "4B", "5A", "5B", "6A", "6B", "7", "PH"]
-                        df_unidades['unidad'] = pd.Categorical(df_unidades['unidad'], categories=orden_unidades, ordered=True)
-                        df_unidades = df_unidades.sort_values('unidad').reset_index(drop=True)
-                        
-                        reporte_morosidad = []
-                        
-                        for _, u_row in df_unidades.iterrows():
-                            apto = str(u_row['unidad'])
+                        # Construir tabla consolidada para el periodo
+                        reporte_propietarios = []
+                        for _, u_row in df_unid.iterrows():
+                            apto = u_row['unidad']
                             prop = u_row['propietario']
-                            alic = float(u_row['alicuota'])
+                            alicuota = float(u_row['alicuota'] or 0.0)
                             
-                            saldo_unidad_acumulado = 0.0
+                            # Cuota mensual obligatoria según alícuota
+                            cuota_mes = gasto_total_mes * (alicuota / 100.0)
+
+                            # Filtrar pagos de esta unidad en este mes
+                            pago_u = df_pagos_mes[df_pagos_mes['apartamento'] == apto] if not df_pagos_mes.empty else pd.DataFrame()
                             
-                            for m in meses_activos:
-                                gasto_mes_val = float(df_gastos_anual[df_gastos_anual['mes_anio'] == m]['monto'].sum())
-                                cuota_parte = gasto_mes_val * (alic / 100.0)
-                                
-                                pagos_unidad_mes = 0.0
-                                if not df_pagos_mensuales.empty:
-                                    p_filtrados = df_pagos_mensuales[(df_pagos_mensuales['apartamento'] == apto) & (df_pagos_mensuales['mes_anio'] == m)]
-                                    pagos_unidad_mes = float(p_filtrados['monto_usd'].sum())
-                                
-                                diferencia = pagos_unidad_mes - cuota_parte
-                                saldo_unidad_acumulado += diferencia
-                            
-                            estatus_str = f"🟢 Solvente / A Favor (+${saldo_unidad_acumulado:,.2f})" if saldo_unidad_acumulado >= 0 else f"🔴 Deudor Pendiente (-${abs(saldo_unidad_acumulado):,.2f})"
-                            
-                            reporte_morosidad.append({
+                            monto_pagado_usd = float(pago_u['monto_usd'].sum()) if not pago_u.empty else 0.0
+                            fecha_pago_str = ", ".join(pago_u['fecha_pago'].astype(str)) if not pago_u.empty else "Sin pago"
+                            ref_str = ", ".join(pago_u['referencia'].astype(str)) if not pago_u.empty else "N/A"
+
+                            # Cálculo del saldo del mes (Pagado - Cuota a cobrar)
+                            diferencia = monto_pagado_usd - cuota_mes
+                            if diferencia >= 0:
+                                estatus_saldo = f"🟢 A favor (+${diferencia:,.2f})"
+                            else:
+                                estatus_saldo = f"🔴 Deudor (-${abs(diferencia):,.2f})"
+
+                            reporte_propietarios.append({
                                 "Unidad": apto,
                                 "Propietario": prop,
-                                "Alícuota (%)": f"{alic}%",
-                                "Saldo Ordinario del Periodo": estatus_str
+                                "Mes Cancelado": periodo_prop_sel,
+                                "Cuota Obligatoria ($)": round(cuota_mes, 2),
+                                "Monto Pagado ($)": round(monto_pagado_usd, 2),
+                                "Fecha de Pago": fecha_pago_str,
+                                "Referencia": ref_str,
+                                "Estado / Saldo": estatus_saldo
                             })
-                        
-                        df_morosidad_final = pd.DataFrame(reporte_morosidad)
-                        st.dataframe(df_morosidad_final, use_container_width=True)
-                    
-                    else:
-                        st.info("Faltan datos de unidades o gastos para calcular el estado de cuentas ordinario en este período.")
 
-                    st.markdown("---")
-                    st.caption("💡 Este reporte consolida exclusivamente el balance de gastos ordinarios, recaudación de mensualidades y morosidad.")
-                except Exception as e:
-                    st.error(f"Error generando el reporte de gestión: {e}")
+                        df_rep_final = pd.DataFrame(reporte_propietarios)
+                        st.dataframe(df_rep_final, use_container_width=True)
+                        st.caption("💡 Este reporte solo contempla las mensualidades ordinarias correspondientes al periodo seleccionado.")
+
+                    except Exception as e:
+                        st.error(f"Error generando el reporte de propietarios: {e}")
+            else:
+                st.warning("No hay periodos de pagos registrados en el sistema.")
+
+        st.markdown("---")
+
+        # =====================================================================
+        # 3. MÓDULO PARA ELIMINAR CUALQUIER REPORTE DE PAGO
+        # =====================================================================
+        with st.expander("🗑️ Eliminar Registro de Pago Erróneo", expanded=False):
+            st.warning("⚠️ Precaución: Esta acción eliminará permanentemente el registro de pago seleccionado de la base de datos.")
+
+            try:
+                with engine.connect() as conn:
+                    # Traer lista de pagos existentes para que el admin pueda identificarlos
+                    df_todos_pagos = pd.read_sql(
+                        text("""
+                            SELECT id, apartamento, mes_anio, monto_original, moneda, monto_usd, referencia, fecha_pago, estatus 
+                            FROM pagos_reportados 
+                            ORDER BY id DESC LIMIT 100
+                        """),
+                        conn
+                    )
+            except Exception:
+                df_todos_pagos = pd.DataFrame()
+
+            if not df_todos_pagos.empty:
+                # Crear una etiqueta descriptiva para cada pago en el selectbox
+                df_todos_pagos['etiqueta_opcion'] = (
+                    "ID: " + df_todos_pagos['id'].astype(str) + 
+                    " | Apto: " + df_todos_pagos['apartamento'].astype(str) + 
+                    " | Mes: " + df_todos_pagos['mes_anio'].astype(str) + 
+                    " | Monto: " + df_todos_pagos['monto_original'].astype(str) + " " + df_todos_pagos['moneda'].astype(str) +
+                    " | Ref: " + df_todos_pagos['referencia'].astype(str)
+                )
+
+                pago_a_eliminar_id = st.selectbox(
+                    "Seleccione el pago a eliminar:",
+                    options=df_todos_pagos['id'].tolist(),
+                    format_func=lambda x: df_todos_pagos.loc[df_todos_pagos['id'] == x, 'etiqueta_opcion'].values[0],
+                    key="select_pago_a_borrar"
+                )
+
+                if st.button("❌ Eliminar Pago Seleccionado", type="secondary", key="btn_ejecutar_borrado_pago"):
+                    try:
+                        with engine.begin() as conn_del:
+                            conn_del.execute(
+                                text("DELETE FROM pagos_reportados WHERE id = :pid"),
+                                {"pid": pago_a_eliminar_id}
+                            )
+                        st.success(f"✅ ¡El registro de pago con ID {pago_a_eliminar_id} ha sido eliminado exitosamente!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al eliminar el pago: {e}")
+            else:
+                st.info("No hay pagos registrados en la base de datos para eliminar.")
 else:
     
     # -------------------------------------------------------------------------
