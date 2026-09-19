@@ -1840,7 +1840,7 @@ if rol_actual == "admin":
         # Selector de Periodo a Conciliar
         periodo_cifras = st.text_input("Periodo a conciliar (AAAA-MM):", value="2026-07", key="input_periodo_t10")
 
-        if periodo_cifra_btn := st.button("Calcular Conciliación del Periodo", key="btn_calc_conciliacion"):
+if periodo_cifra_btn := st.button("Calcular Conciliación del Periodo", key="btn_calc_conciliacion"):
             try:
                 # 1. Ingresos aprobados
                 q_ingresos = "SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"
@@ -1848,7 +1848,8 @@ if rol_actual == "admin":
                 
                 total_ing = 0.0
                 if not df_ing_c.empty and 'monto_usd' in df_ing_c.columns:
-                    total_ing = float(df_ing_c['monto_usd'].astype(float).sum())
+                    # Suma segura convirtiendo explícitamente cada valor a float
+                    total_ing = sum(float(x) for x in df_ing_c['monto_usd'].dropna())
 
                 # 2. Gastos aprobados
                 q_gastos = "SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo"
@@ -1860,7 +1861,8 @@ if rol_actual == "admin":
 
                 total_gas = 0.0
                 if not df_gas_c.empty and 'monto_usd' in df_gas_c.columns:
-                    total_gas = float(df_gas_c['monto_usd'].astype(float).sum())
+                    # Suma segura convirtiendo explícitamente cada valor a float
+                    total_gas = sum(float(x) for x in df_gas_c['monto_usd'].dropna())
 
                 col_c1, col_c2, col_c3 = st.columns(3)
                 with col_c1:
