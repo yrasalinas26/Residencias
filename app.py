@@ -1842,27 +1842,29 @@ if rol_actual == "admin":
 
         if periodo_cifra_btn := st.button("Calcular Conciliación del Periodo", key="btn_calc_conciliacion"):
             try:
-                # 1. Ingresos aprobados
-                q_ingresos = text("SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo")
-                with engine.connect() as conn:
-                    df_ing_c = pd.read_sql(q_ingresos, conn, params={"periodo": periodo_cifras})
-                
+                # 1. Ingresos aprobados (Consulta nativa con ejecución directa por conexión)
                 total_ing = 0.0
-                if not df_ing_c.empty and 'monto_usd' in df_ing_c.columns:
-                    # Convertimos explícitamente toda la columna a float para evitar cualquier conflicto con Decimal
-                    df_ing_c['monto_usd'] = df_ing_c['monto_usd'].astype(float)
-                    total_ing = float(df_ing_c['monto_usd'].sum())
+                with engine.connect() as conn:
+                    result_ing = conn.execute(
+                        text("SELECT monto_usd FROM pagos_reportados WHERE estatus = 'Aprobado' AND mes_anio = :periodo"),
+                        {"periodo": periodo_cifras}
+                    )
+                    for row in result_ing:
+                        # Convertimos cada valor individual a float de forma segura desde el row
+                        if row[0] is not None:
+                            total_ing += float(str(row[0]))
 
-                # 2. Gastos aprobados
+                # 2. Gastos aprobados (Consulta nativa de la misma forma)
                 total_gas = 0.0
                 try:
-                    q_gastos = text("SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo")
                     with engine.connect() as conn:
-                        df_gas_c = pd.read_sql(q_gastos, conn, params={"periodo": periodo_cifras})
-                    
-                    if not df_gas_c.empty and 'monto_usd' in df_gas_c.columns:
-                        df_gas_c['monto_usd'] = df_gas_c['monto_usd'].astype(float)
-                        total_gas = float(df_gas_c['monto_usd'].sum())
+                        result_gas = conn.execute(
+                            text("SELECT monto_usd FROM gastos_proveedores WHERE mes_anio = :periodo"),
+                            {"periodo": periodo_cifras}
+                        )
+                        for row in result_gas:
+                            if row[0] is not None:
+                                total_gas += float(str(row[0]))
                 except Exception:
                     pass
 
